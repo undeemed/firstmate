@@ -76,6 +76,26 @@ test_no_mistakes_dod_wording() {
   pass "fm-brief.sh: no-mistakes DOD wording avoids the apostrophe regression"
 }
 
+# Both crewmate scaffolds (ship and scout) carry the peer-coordination
+# paragraph. It self-gates on a herdr: session-context line inside the brief
+# text itself, so its presence is backend-independent and safe to assert
+# unconditionally.
+test_peer_coordination_paragraph() {
+  local home brief
+  home="$TMP_ROOT/peer-home"
+  mkdir -p "$home/data"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-peer-ship-c1 some-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-peer-scout-c2 some-proj --scout >/dev/null 2>&1
+  for brief in "$home/data/brief-peer-ship-c1/brief.md" "$home/data/brief-peer-scout-c2/brief.md"; do
+    assert_present "$brief" "peer-coordination brief was not scaffolded"
+    assert_grep "# Peer coordination" "$brief" "$brief: missing peer-coordination paragraph"
+    assert_grep "herdr:" "$brief" "$brief: peer paragraph lost its herdr context self-gate"
+    assert_grep "never a channel to the captain" "$brief" "$brief: peer paragraph lost the authority boundary"
+  done
+  pass "fm-brief.sh: ship and scout briefs carry the peer-coordination paragraph"
+}
+
 test_script_parses
 test_ship_modes_generate_clean_briefs
 test_no_mistakes_dod_wording
+test_peer_coordination_paragraph
