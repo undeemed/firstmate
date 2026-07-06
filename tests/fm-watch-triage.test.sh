@@ -639,7 +639,15 @@ SH
   if ! wait_live "$pid" 30; then
     reap "$pid"; fail "watcher exited for a benign signal while testing log capping: $(cat "$out")"
   fi
-  lines=$(awk 'END { print NR + 0 }' "$state/.watch-triage.log")
+  # The cap runs on the absorb path; under load the first absorb can land after
+  # the fixed liveness window above, so wait for the cap instead of racing it.
+  i=0
+  while [ "$i" -lt 100 ]; do
+    lines=$(awk 'END { print NR + 0 }' "$state/.watch-triage.log")
+    [ "$lines" -le 2000 ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
   [ "$lines" -le 2000 ] || { reap "$pid"; fail "triage log was not capped when wc emitted a spaced byte count (lines=$lines)"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "benign signal enqueued a wake while testing log capping"; }
   reap "$pid"
