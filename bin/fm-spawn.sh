@@ -627,26 +627,19 @@ else
 fi
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
 
-# PROJ_ABS can still carry a symlinked path component (e.g. macOS's /tmp ->
-# /private/tmp) when it came from the ship/scout branch's logical `pwd` above.
-# Every backend's own current-path read (tmux's pane_current_path, herdr's
-# foreground_cwd, zellij/cmux's active pwd probe against the live shell) can
-# report the OS-level, physically-resolved cwd, so comparing it against a
-# still-symlinked PROJ_ABS can misfire both ways: false-negative (the poll
-# below never notices the pane left the project) or false-positive (the
-# isolation guard refuses a spawn that never actually tangled). Canonicalize
-# once here so every downstream comparison uses the same physical form
-# (docs/herdr-backend.md "Known gaps").
+# PROJ_ABS can still differ in FORM from a backend's current-path read (tmux's
+# pane_current_path, herdr's foreground_cwd, zellij/cmux's active pwd probe)
+# while naming the same directory: a symlinked path component (e.g. macOS's
+# /tmp -> /private/tmp) survives the ship/scout branch's logical `pwd` above,
+# and on a case-insensitive filesystem (macOS APFS default) a differently-cased
+# session cwd survives even `pwd -P`, which bash derives from $PWD (symlinks
+# resolved, typed case kept) while the backends report the OS-level true-case
+# cwd. String comparison therefore misfires both ways: false "pane already
+# moved" on the very first discovery poll (recording the project clone as the
+# worktree) or a false isolation refusal. Canonicalize symlinks once here and
+# compare filesystem identity (same device+inode, `-ef`) everywhere downstream
+# (docs/herdr-backend.md "Known gaps follow-up notes").
 PROJ_ABS_REAL=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_ABS_REAL="$PROJ_ABS"
-
-real_path_or_raw() {  # <path>
-  local path=$1 real
-  if real=$(cd "$path" 2>/dev/null && pwd -P); then
-    printf '%s\n' "$real"
-  else
-    printf '%s\n' "$path"
-  fi
-}
 
 # Session-provider container-ensure + task creation. tmux stays exactly as P1
 # left it (same session-name / new-window sequence, see bin/backends/tmux.sh);
@@ -668,7 +661,12 @@ validate_spawn_worktree() {  # <source> <inspect-target>
   if ! wt_top_real=$(cd "$wt_top" 2>/dev/null && pwd -P); then
     wt_top_real=
   fi
-  if [ -z "$wt_real" ] || [ -z "$wt_top_real" ] || [ "$wt_real" != "$wt_top_real" ] || [ "$wt_real" = "$proj_real" ]; then
+  # Identity comparisons (-ef, same device+inode), not strings: symlink layers
+  # and case-variant paths of the same directory must compare equal, and two
+  # genuinely distinct directories must not (see the PROJ_ABS_REAL comment).
+  # `||` short-circuits keep -ef off empty operands; -ef on a nonexistent path
+  # is false, matching the old never-equal string behavior.
+  if [ -z "$wt_real" ] || [ -z "$wt_top_real" ] || ! [ "$wt_real" -ef "$wt_top_real" ] || [ "$wt_real" -ef "$proj_real" ]; then
     echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
     exit 1
   fi
@@ -807,12 +805,13 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   spawn_send_text_line "$T" 'treehouse get'
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
-  # Compare against PROJ_ABS_REAL (physical), not PROJ_ABS: a symlinked project
-  # prefix would otherwise make the pane's OS-level cwd read differ from
-  # PROJ_ABS on the very first poll, before the pane has actually moved.
+  # Compare filesystem identity (-ef), not strings: a symlinked or
+  # differently-cased project prefix would otherwise make the pane's OS-level
+  # cwd read differ from PROJ_ABS_REAL on the very first poll, before the pane
+  # has actually moved, false-accepting the project clone as the worktree.
   for _ in $(seq 1 60); do
     p=$(spawn_current_path "$T" || true)
-    if [ -n "$p" ] && [ "$(real_path_or_raw "$p")" != "$PROJ_ABS_REAL" ]; then
+    if [ -n "$p" ] && ! [ "$p" -ef "$PROJ_ABS_REAL" ]; then
       WT="$p"
       break
     fi

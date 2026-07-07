@@ -850,6 +850,53 @@ test_spawn_symlinked_project_prefix_avoids_false_refusal() {
   pass "fm-spawn.sh: a project reached through a symlinked prefix (e.g. macOS /tmp -> /private/tmp) does not trip the isolation guard's false refusal"
 }
 
+# --- case-variant project path must not false-accept the clone ---------------
+#
+# docs/herdr-backend.md "Known gaps follow-up notes": on a case-insensitive
+# filesystem (macOS APFS default), bash's `pwd -P` resolves symlinks but keeps
+# the TYPED case from $PWD, so a project reached via a differently-cased
+# session cwd yields a PROJ_ABS_REAL whose case differs from the true-case cwd
+# the backend reports (tmux's pane_current_path, herdr's foreground_cwd). The
+# worktree-discovery poll used to compare those as strings, mistake the
+# UNMOVED pane for one that had already left the project, and record the
+# project clone as worktree= in the task meta (observed live 2026-07-06, task
+# herdr-e2e-w3). The fake tmux returns the TRUE-CASE project path on the first
+# poll and the real worktree from the second onward, while the project
+# argument is passed lowercased, so this test fails loudly if the -ef identity
+# comparison ever regresses to a string compare.
+test_spawn_case_variant_project_path_waits_for_real_worktree() {
+  local real_proj lower_proj wt id fb data state config log out rc proj_true
+  : > "$TMP_ROOT/CaseProbe.tmp"
+  if [ ! -e "$TMP_ROOT/caseprobe.tmp" ]; then
+    rm -f "$TMP_ROOT/CaseProbe.tmp"
+    pass "fm-spawn.sh: case-variant project path test skipped (case-sensitive filesystem)"
+    return 0
+  fi
+  rm -f "$TMP_ROOT/CaseProbe.tmp"
+  real_proj="$TMP_ROOT/CaseVariant-Proj"
+  lower_proj=$(printf '%s' "$real_proj" | tr '[:upper:]' '[:lower:]')
+  wt="$TMP_ROOT/case-variant-wt"
+  id="spawncasevariant"
+  fm_git_worktree "$real_proj" "$wt" "fm/$id"
+  proj_true=$(cd "$real_proj" && pwd -P)
+  fb=$(make_spawn_symlink_fakebin "$TMP_ROOT/case-variant-fake" "$proj_true" "$wt")
+  data="$TMP_ROOT/case-variant-data"
+  mkdir -p "$data/$id"
+  printf 'test brief content\n' > "$data/$id/brief.md"
+  state="$TMP_ROOT/case-variant-state"; config="$TMP_ROOT/case-variant-config"
+  mkdir -p "$state" "$config"
+  log="$TMP_ROOT/case-variant-spawn.log"
+
+  out=$(run_spawn_case "$ROOT" "$fb" "$log" "$state" "$data" "$config" "$lower_proj" -- "$id" "$lower_proj" claude 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "fm-spawn.sh should succeed for a project reached through a case-variant path"$'\n'"$out"
+  assert_contains "$out" "worktree=$wt" \
+    "fm-spawn.sh false-accepted the project clone as the worktree instead of waiting for the real worktree move on a case-variant project path"
+
+  rm -rf "/tmp/fm-$id"
+  pass "fm-spawn.sh: a project reached through a case-variant path (case-insensitive filesystem) does not false-accept the clone; discovery waits for the real worktree move"
+}
+
 # --- old vs new: fm-teardown.sh ----------------------------------------------
 
 make_teardown_fakebin() {  # <dir> -> echoes fakebin dir; logs tmux+treehouse calls
@@ -1051,6 +1098,7 @@ test_send_conformance_old_vs_new
 test_peek_conformance_old_vs_new
 test_spawn_conformance_old_vs_new
 test_spawn_symlinked_project_prefix_avoids_false_refusal
+test_spawn_case_variant_project_path_waits_for_real_worktree
 test_teardown_conformance_old_vs_new
 test_spawn_refuses_unknown_backend_flag
 test_spawn_refuses_unknown_fm_backend_env
