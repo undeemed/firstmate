@@ -40,7 +40,7 @@ This is.. a directory that turns any agent into your firstmate, and you the capt
 ## Features
 
 - **One liaison** - you talk only to the first mate; it dispatches, supervises, escalates only real decisions, and reports plain outcomes.
-- **A visible crew** - every crewmate works in its own tmux window, experimental herdr/zellij tab, cmux workspace, or Orca terminal you can watch or type into; the first mate reconciles.
+- **A visible crew** - every crewmate works in its own herdr tab (this fork's configured backend), tmux window, zellij tab, cmux workspace, or Orca terminal you can watch or type into; the first mate reconciles.
 - **Disposable worktrees** - each task runs in a clean [treehouse](https://github.com/kunchenguid/treehouse) git worktree, or an Orca-managed worktree when `backend=orca`, so parallel work on one repo never collides.
 - **Two task shapes** - ship tasks deliver a change; scout tasks investigate, plan, reproduce, or audit and leave a report.
 - **Explicit project modes** - each project ships via `no-mistakes`, `direct-PR`, or `local-only`, with an optional `+yolo` autonomy flag.
@@ -54,14 +54,36 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 
 ## Quick Start
 
-**Requirements:** a verified agent harness (claude, codex, opencode, pi, or grok), git with GitHub auth, and tmux for the reference session backend.
+This fork runs its fleet on the [herdr](https://herdr.dev) backend, an agent-native terminal multiplexer with per-pane agent-state detection, verified end to end in [docs/herdr-backend.md](docs/herdr-backend.md).
+
+**Requirements:** a verified agent harness (claude, codex, opencode, pi, or grok), git with GitHub auth, `herdr` (protocol 14 or newer) with `jq`, and tmux (still required by the toolchain check, and the code-level default backend).
 The first mate detects and offers to install everything else.
+
+### Start
 
 ```sh
 gh auth login
-git clone https://github.com/kunchenguid/firstmate
-cd firstmate && claude   # launch your harness here; AGENTS.md takes over
+git clone https://github.com/undeemed/firstmate
+cd firstmate
+mkdir -p config && echo herdr > config/backend   # pin this fork's runtime backend (local, gitignored)
+claude   # launch your harness here; AGENTS.md takes over
 ```
+
+Session start is one command: the first mate opens every session by running `bin/fm-session-start.sh`, which locks the home, runs bootstrap diagnostics, drains queued wakes, and prints the full fleet digest.
+Approve the tool installs bootstrap proposes on the first run; nothing is installed without your consent.
+
+### Add a project
+
+Just ask in chat - "add my github project xyz" - and the first mate clones it under `projects/`, registers it, and initializes its delivery gate.
+Under the hood that is three steps you can also run yourself:
+
+```sh
+git clone <url> projects/<name>
+mkdir -p data && echo '- <name> [no-mistakes] - <one line> (added <date>)' >> data/projects.md
+cd projects/<name> && no-mistakes init && no-mistakes doctor
+```
+
+`no-mistakes init` applies only to the default `no-mistakes` delivery mode; `direct-PR` and `local-only` projects skip it.
 
 Then just talk:
 
@@ -79,7 +101,18 @@ Then just talk:
 > alright merge it
 ```
 
-Setup guides for tmux (the default) and every other supported backend (herdr, zellij, Orca, cmux) are linked in [Documentation](#documentation) below.
+### Watch the crew
+
+Each firstmate home gets its own herdr workspace (the primary uses `firstmate`) with one `fm-<id>` tab per task.
+Attach to your herdr session and switch to that workspace to watch every task, or skip attaching: `bin/fm-peek.sh fm-<id>` reads a task's pane and `bin/fm-send.sh fm-<id> "<text>"` steers it.
+
+### Resume after a restart
+
+Restart is a non-event.
+Kill your harness session anytime; the next launch runs the same `bin/fm-session-start.sh` digest, which reconciles live tasks, queued wakes, and the backlog from disk, and the first mate carries on where it left off.
+Stored herdr pane ids even survive a herdr server restart within the same named session, so recovery reattaches to the same tabs.
+
+Setup guides for tmux (the code-level default) and the other backends (zellij, Orca, cmux) are linked in [Documentation](#documentation) below.
 
 ## How It Works
 
@@ -95,7 +128,7 @@ Setup guides for tmux (the default) and every other supported backend (herdr, ze
     │ backend sends / status files │
     ▼              ▼               ▼
  ┌────────┐   ┌────────┐      ┌────────┐
- │fm-task1│   │fm-task2│  ... │fm-taskN│   tmux windows, herdr/zellij tabs, cmux workspaces, or Orca terminals
+ │fm-task1│   │fm-task2│  ... │fm-taskN│   herdr tabs (this fork), tmux windows, zellij tabs, cmux workspaces, or Orca terminals
  │crewmate│   │crewmate│      │crewmate│   one autonomous agent each
  └───┬────┘   └───┬────┘      └───┬────┘
      ▼            ▼               ▼
@@ -139,8 +172,8 @@ Firstmate's skills live in two separate places with different audiences:
 
 - [docs/architecture.md](docs/architecture.md) - how the crew, supervision, worktrees, secondmates, and project modes work.
 - [docs/configuration.md](docs/configuration.md) - environment variables, `FM_HOME`, runtime backend selection, optional X mode, the files you set, and harness support.
-- [docs/tmux-backend.md](docs/tmux-backend.md) - setup guide for the tmux reference backend: prerequisites, attaching, and watching crew windows.
-- [docs/herdr-backend.md](docs/herdr-backend.md) - setup guide for the experimental herdr backend, plus its verification notes and known gaps.
+- [docs/herdr-backend.md](docs/herdr-backend.md) - setup guide for this fork's herdr backend, plus its verification notes and known gaps.
+- [docs/tmux-backend.md](docs/tmux-backend.md) - setup guide for the tmux reference backend (the code-level default): prerequisites, attaching, and watching crew windows.
 - [docs/zellij-backend.md](docs/zellij-backend.md) - setup guide for the experimental zellij backend, plus its verification notes and known gaps.
 - [docs/orca-backend.md](docs/orca-backend.md) - setup guide for the experimental Orca backend, plus its lifecycle notes and known gaps.
 - [docs/cmux-backend.md](docs/cmux-backend.md) - setup guide for the experimental cmux backend, plus its verification notes and known gaps.
