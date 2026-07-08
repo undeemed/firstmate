@@ -47,14 +47,26 @@ fm_path_age() {
   echo $(( $(date +%s) - m ))
 }
 
+# fm_same_path <a> <b>
+# True when the two path strings name the same filesystem object. Byte equality
+# short-circuits; otherwise both must exist and be the same device+inode (-ef),
+# so a differently-cased spelling on a case-insensitive filesystem or a
+# symlinked spelling of one home still matches, while different-case paths on a
+# case-sensitive filesystem stay genuinely distinct. A recorded path that no
+# longer exists can only match by exact string.
+fm_same_path() {
+  [ -n "$1" ] && [ -n "$2" ] || return 1
+  [ "$1" = "$2" ] || [ "$1" -ef "$2" ]
+}
+
 fm_watcher_lock_matches_pid() {
   local state=$1 watch_path=$2 pid=$3 home=${4:-$FM_HOME} lockdir lock_home lock_path lock_identity current_identity
   lockdir="$state/.watch.lock"
   lock_home=$(cat "$lockdir/fm-home" 2>/dev/null || true)
   lock_path=$(cat "$lockdir/watcher-path" 2>/dev/null || true)
   lock_identity=$(cat "$lockdir/pid-identity" 2>/dev/null || true)
-  [ "$lock_home" = "$home" ] || return 1
-  [ "$lock_path" = "$watch_path" ] || return 1
+  fm_same_path "$lock_home" "$home" || return 1
+  fm_same_path "$lock_path" "$watch_path" || return 1
   [ -n "$lock_identity" ] || return 1
   current_identity=$(fm_pid_identity "$pid") || return 1
   [ "$current_identity" = "$lock_identity" ]

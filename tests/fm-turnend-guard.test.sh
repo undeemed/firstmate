@@ -143,10 +143,17 @@ watcher_identity() {
   FM_STATE_OVERRIDE="$dir/state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$dir/bin/fm-wake-lib.sh" "$pid"
 }
 
+# Optional 4th arg records fm-home/watcher-path under a different SPELLING of
+# the home (symlink alias, case variant, or a genuinely different dir), the way
+# a watcher launched from a differently-spelled session cwd would have.
 record_watcher_lock() {
-  local dir=$1 pid=$2 identity=$3 root bin_dir
+  local dir=$1 pid=$2 identity=$3 spelled=${4:-} root bin_dir
   root=$(cd "$dir" && pwd)
   bin_dir=$(cd "$dir/bin" && pwd)
+  if [ -n "$spelled" ]; then
+    root=$spelled
+    bin_dir="$spelled/bin"
+  fi
   mkdir -p "$dir/state/.watch.lock"
   printf '%s\n' "$pid" > "$dir/state/.watch.lock/pid"
   printf '%s\n' "$root" > "$dir/state/.watch.lock/fm-home"
@@ -227,6 +234,95 @@ test_hook_blocks_with_live_lock_and_stale_beacon() {
   expect_code 2 "$status" "hook must block when a live watcher lock has an ancient beacon"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: blocks on a live watcher lock with an ancient beacon"
+}
+
+# The lock records whatever spelling of the home the watcher was launched from,
+# while the hook resolves its own spelling via CLAUDE_PROJECT_DIR. A session cwd
+# can reach the same physical home through a symlink or, on a case-insensitive
+# filesystem, a differently-cased path - so lock identity must be filesystem
+# identity (same device+inode), not byte-equal strings, or the hook blocks every
+# turn end behind a provably live watcher (observed live 2026-07-06 with
+# /users/xiao/dev/firstmate vs /Users/xiao/Dev/firstmate).
+test_hook_silent_when_lock_spells_home_via_symlink() {
+  local dir link pid identity out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-symlink-home")
+  link="$TMP_ROOT/hook-symlink-home-alias"
+  ln -s "$dir" "$link"
+  : > "$dir/state/task1.meta"
+  : > "$dir/bin/fm-watch.sh"
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live watcher holder"
+  }
+  record_watcher_lock "$dir" "$pid" "$identity" "$link"
+  touch "$dir/state/.last-watcher-beat"
+  out=$(run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "hook must accept a lock spelling the same physical home via a symlink"
+  [ -z "$out" ] || fail "hook produced output for a symlink-spelled same-home lock: $out"
+  pass "fm-turnend-guard: silent when the lock spells the same home via a symlink"
+}
+
+fs_is_case_insensitive() {
+  : > "$TMP_ROOT/.CaseProbe"
+  [ -e "$TMP_ROOT/.caseprobe" ]
+}
+
+test_hook_silent_when_lock_spells_home_with_different_case() {
+  if ! fs_is_case_insensitive; then
+    echo "note: case-sensitive filesystem; skipping the case-variant lock spelling check" >&2
+    pass "fm-turnend-guard: case-variant lock spelling skipped (case-sensitive filesystem)"
+    return 0
+  fi
+  local dir variant pid identity out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-case-home")
+  variant="$TMP_ROOT/HOOK-CASE-HOME"
+  [ -e "$variant" ] || fail "case-insensitivity probe passed but the case-variant path does not resolve"
+  : > "$dir/state/task1.meta"
+  : > "$dir/bin/fm-watch.sh"
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live watcher holder"
+  }
+  record_watcher_lock "$dir" "$pid" "$identity" "$variant"
+  touch "$dir/state/.last-watcher-beat"
+  out=$(run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "hook must accept a lock spelling the same physical home with different case"
+  [ -z "$out" ] || fail "hook produced output for a case-variant same-home lock: $out"
+  pass "fm-turnend-guard: silent when the lock spells the same home with different case"
+}
+
+test_hook_blocks_when_lock_names_a_different_home() {
+  local dir other pid identity out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-foreign-home")
+  other=$(make_primary_dir "$TMP_ROOT/hook-foreign-home-other")
+  : > "$dir/state/task1.meta"
+  : > "$dir/bin/fm-watch.sh"
+  : > "$other/bin/fm-watch.sh"
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live watcher holder"
+  }
+  record_watcher_lock "$dir" "$pid" "$identity" "$other"
+  touch "$dir/state/.last-watcher-beat"
+  out=$(run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "hook must block when the lock names a different physical home"
+  assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
+  pass "fm-turnend-guard: still blocks when the lock belongs to a different physical home"
 }
 
 test_hook_blocks_when_unhealthy_in_primary() {
@@ -372,6 +468,9 @@ test_hook_blocks_when_fresh_beacon_has_no_live_lock
 test_hook_blocks_when_dead_lock_has_fresh_beacon
 test_hook_silent_with_live_lock_and_fresh_beacon
 test_hook_blocks_with_live_lock_and_stale_beacon
+test_hook_silent_when_lock_spells_home_via_symlink
+test_hook_silent_when_lock_spells_home_with_different_case
+test_hook_blocks_when_lock_names_a_different_home
 test_hook_blocks_when_unhealthy_in_primary
 test_hook_blocks_from_fm_home_state
 test_hook_ignores_repo_state_when_fm_home_set

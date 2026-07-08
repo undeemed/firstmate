@@ -57,6 +57,9 @@ It also exposes `fm_supervision_status` for callers that need the individual fie
 `bin/fm-turnend-guard.sh` deliberately uses a sharper end-of-turn predicate.
 It first uses `fm_supervision_status` to count in-flight tasks, then requires `fm_watcher_healthy <state-dir> <watch-path> [grace-seconds] [home]` from `bin/fm-wake-lib.sh`.
 That shared live-watcher check is the same one used by `bin/fm-watch-arm.sh`: the recorded `state/.watch.lock/pid` must name a live process, the lock's recorded home/path/pid-identity must match the current live pid, and `state/.last-watcher-beat` must still be within `FM_GUARD_GRACE`.
+The home/path halves of that match compare filesystem identity (`fm_same_path` in `bin/fm-wake-lib.sh`: string equality, else same device+inode via `-ef`), not raw strings.
+Observed live 2026-07-06: a watcher armed from a session cwd of `/users/xiao/dev/firstmate` recorded that lowercase spelling in its lock, while Claude Code resolved `CLAUDE_PROJECT_DIR` to the true-case `/Users/xiao/Dev/firstmate`; on macOS's case-insensitive filesystem those are the same home, but the pre-fix string compare rejected the lock and the hook blocked every turn end behind a provably live watcher.
+Symlinked spellings of one home match the same way, and a path that no longer exists (a dead watcher's dangling record) falls back to exact-string matching, so genuinely different homes - including different-case paths on a case-sensitive filesystem - still refuse.
 This means a just-exited watcher with a fresh leftover beacon still blocks the Stop hook immediately, while a live but wedged watcher with an ancient beacon also blocks.
 
 ## Scoping to the PRIMARY only
