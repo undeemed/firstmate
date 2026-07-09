@@ -638,7 +638,7 @@ fi
 # moved" on the very first discovery poll (recording the project clone as the
 # worktree) or a false isolation refusal. Canonicalize symlinks once here and
 # compare filesystem identity (same device+inode, `-ef`) everywhere downstream
-# (docs/herdr-backend.md "Known gaps follow-up notes").
+# (docs/herdr-backend.md "Known gaps and follow-up notes").
 PROJ_ABS_REAL=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_ABS_REAL="$PROJ_ABS"
 
 # Session-provider container-ensure + task creation. tmux stays exactly as P1

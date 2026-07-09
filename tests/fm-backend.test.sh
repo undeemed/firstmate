@@ -852,7 +852,7 @@ test_spawn_symlinked_project_prefix_avoids_false_refusal() {
 
 # --- case-variant project path must not false-accept the clone ---------------
 #
-# docs/herdr-backend.md "Known gaps follow-up notes": on a case-insensitive
+# docs/herdr-backend.md "Known gaps and follow-up notes": on a case-insensitive
 # filesystem (macOS APFS default), bash's `pwd -P` resolves symlinks but keeps
 # the TYPED case from $PWD, so a project reached via a differently-cased
 # session cwd yields a PROJ_ABS_REAL whose case differs from the true-case cwd
