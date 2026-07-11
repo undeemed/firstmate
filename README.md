@@ -141,7 +141,7 @@ cd projects/<name> && no-mistakes init && no-mistakes doctor
 ### Watch the crew
 
 Each firstmate home gets its own herdr workspace (the primary uses `firstmate`) with one `fm-<id>` tab per task.
-Attach to your herdr session and switch to that workspace to watch every task, or skip attaching: `bin/fm-peek.sh fm-<id>` reads a task's pane and `bin/fm-send.sh fm-<id> "<text>"` steers it.
+Attach to your herdr session and switch to that workspace to watch every task, or skip attaching: `bin/fm-peek.sh fm-<id>` reads a task's pane and `FM_HOME=<firstmate-home> bin/fm-send.sh fm-<id> "<text>"` steers it (`fm-send` refuses to guess a target without an explicit `FM_HOME`).
 
 ### Resume after a restart
 
