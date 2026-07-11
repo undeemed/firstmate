@@ -41,7 +41,7 @@ All verified primary harnesses have a tracked integration:
 - `opencode`: `.opencode/plugins/fm-primary-turnend-guard.js` listens for `session.idle`, lets the watcher-arm coordinator handle normal idle supervision first, runs the shared guard only when that coordinator does not act, and uses `client.session.promptAsync` to force one follow-up prompt when the guard returns 2.
 - `pi`: `.pi/extensions/fm-primary-turnend-guard.ts` listens for `agent_settled`, marks the extension version loaded for session-start checks, runs the shared guard once per logical agent run, and uses `pi.sendUserMessage(..., { deliverAs: "followUp" })` to force one follow-up prompt when the guard returns 2.
 - `grok`: `.grok/hooks/fm-primary-turnend-guard.json` registers a `Stop` hook that invokes `bin/fm-turnend-guard-grok.sh`.
-  The adapter runs the shared guard and, when it returns 2, invokes `grok --resume <sessionId> -p <guard-reason>` with `GROK_TURNEND_GUARD_ACTIVE=1`.
+  The adapter resolves its root from `GROK_WORKSPACE_ROOT`, falling back to `CLAUDE_PROJECT_DIR`, then runs the shared guard and, when it returns 2, invokes `grok --resume <sessionId> -p <guard-reason> --cwd <root> --output-format plain` with `GROK_TURNEND_GUARD_ACTIVE=1` (defaulting `GROK_HOME` to `~/.grok`).
   It does not pass `--permission-mode`, so the passive Stop hook cannot grant stronger tool permissions than Grok's resumed-session default.
 
 Claude and Codex support a direct blocking Stop hook.
@@ -53,6 +53,7 @@ Their adapters fail open at the hook boundary to avoid corrupting a user session
 Each adapter carries its own in-process or environment loop guard so the forced follow-up does not recursively schedule another follow-up.
 Pi keeps that latch active across every internal tool turn and clears it only when the generated guard follow-up reaches `agent_settled`, or immediately when follow-up delivery fails.
 If a passive adapter cannot call its SDK method, cannot find `grok`, or cannot recover the Grok session id, it fails open and relies on the pull-based `fm-guard.sh` warning at the next fleet command.
+The JSON-registered hooks also carry harness-enforced timeouts (Codex: 10s PreToolUse, 30s Stop; Grok: 10s PreToolUse, 180s Stop) - a guard killed at its timeout is another fail-open path, caught by the same pull-based warning.
 That warning uses `bin/fm-supervision-instructions.sh --repair-line`, so it points back to the active harness protocol instead of hardcoding one background-arm command.
 
 ## Empirical Validation

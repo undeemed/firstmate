@@ -45,8 +45,8 @@ A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herd
 A zellij task additionally records `zellij_session=`, `zellij_tab_id=`, and `zellij_pane_id=`.
 An Orca task additionally records `orca_worktree_id=` and `terminal=`, with `window=fm-<id>` kept as the shared firstmate alias.
 A cmux task additionally records `cmux_workspace_id=` and `cmux_surface_id=`.
-Task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` resolve centrally through `fm_backend_resolve_selector`.
-A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
+Task selectors for `fm-peek.sh` resolve centrally through `fm_backend_resolve_selector`; `fm-send.sh` resolves the same vocabulary fail-closed from the underlying metadata helpers, refusing a bare window name with no recorded metadata, and `fm-crew-state.sh <id>` takes a task id directly with no selector resolution.
+A selector containing `:` is an explicit backend endpoint escape hatch, passed through by `fm-peek.sh` and verified live (exiting non-zero otherwise) by `fm-send.sh`.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.
 A metadata-routed selector returns the recorded backend target (`terminal=` for Orca, otherwise `window=`), and matching explicit targets can still recover the recorded backend when metadata contains the same endpoint.
 Only metadata-routed task selectors carry secondmate-marker and Codex-harness context; explicit endpoint escape hatches do not.

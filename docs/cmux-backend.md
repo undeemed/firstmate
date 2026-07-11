@@ -16,7 +16,7 @@ cmux is **macOS-only** and **GUI-first** - selecting this backend means a real G
 
 Prerequisites:
 
-- The cmux app itself, installed from [cmux.com](https://cmux.com) or `brew install --cask cmux`, version 0.64.17 or newer.
+- The cmux app itself, installed from [cmux.com](https://cmux.com) or `brew install --cask cmux`, version 0.64 or newer (the enforced gate; verified with 0.64.17).
 - `jq`, required to parse cmux's JSON output: `brew install jq` (or your platform's package manager).
 - The universal firstmate prerequisites - a verified crew harness plus the required toolchain, owned by [`docs/configuration.md`](configuration.md) ("Harness support", "Toolchain"); treehouse still provides the worktree, cmux only provides the session.
 - The cmux CLI binary is not guaranteed to be on `PATH` after a plain app install (see "CLI is not on PATH by default" below) - the adapter falls back to the well-known bundle path automatically, so this is not a blocker, just something to be aware of if you want to run `cmux` yourself from a shell.
@@ -169,7 +169,7 @@ No session field is needed - unlike herdr/zellij there is no session layer to re
 | Operation | Verified cmux call | What was verified |
 |---|---|---|
 | Version gate | `cmux version` -> `"cmux 0.64.17 (97) [9ed29d81a]"` | Works with NO socket connection at all - a pure client-version check, verified even while the socket was still rejecting connections. |
-| Reachability/auth gate | `cmux ping` -> `"PONG"` or a typed error | Classified into `ok`\|`denied`\|`unauth`\|`down`\|`error` from the error text (`fm_backend_cmux_ping_state`); `fm_backend_cmux_ensure_running` launches the app (`open -a cmux`) only for `down`, and fails fast with an actionable message for `denied`/`unauth` since relaunching cannot fix a configuration problem. |
+| Reachability/auth gate | `cmux ping` -> `"PONG"` or a typed error | Classified into `ok`\|`denied`\|`unauth`\|`down`\|`error` from the error text (`fm_backend_cmux_ping_state`); `fm_backend_cmux_ensure_running` launches the app (`open -a cmux`) for `down` and for unclassified `error` states, and fails fast with an actionable message for `denied`/`unauth` since relaunching cannot fix a configuration problem. |
 | Duplicate task check | `cmux workspace list --json --id-format uuids`, match by home-scoped `.title` | cmux enforces NO title uniqueness for workspaces OR surfaces/tabs - verified live: two workspaces, and two surfaces within one workspace, all created successfully sharing one title. The adapter's own duplicate check is required, mirroring herdr/zellij, and it checks the scoped title such as `fm-firstmate-<8hex>-<id>`. |
 | Create task workspace | `cmux new-workspace --name <scoped-title> --cwd <dir> --focus false --id-format uuids` | Creates a workspace with exactly one default surface. `--focus` verified to already default to `false` for workspace/surface/pane creation - no focus-restore dance needed, unlike zellij. The caller passes `fm-<id>`, but the adapter creates `fm-<home-label>-<id>`. |
 | Workspace/surface id resolution | `cmux workspace list --json --id-format uuids` (find by home-scoped title), then `cmux list-panes --workspace <id> --json --id-format uuids` (`.panes[0].selected_surface_id`) | A freshly created workspace already has exactly one surface, so no separate `new-surface` call is needed. `--id-format uuids` (or `both`) is required to get a bare `id` field in JSON; the default JSON shape returns only short `ref` strings like `"workspace:2"`. |
