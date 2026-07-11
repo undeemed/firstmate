@@ -6,7 +6,7 @@
 # meta. fm-teardown reads tasktmp= and removes the whole root on cleanup.
 #
 # These tests exercise behavior directly: fm-teardown is run as a subprocess against a
-# fake FM_ROOT (built so the real script resolves into it), with stub helper scripts.
+# fake FM_HOME/FM_ROOT (built so the real script resolves into it), with stub helper scripts.
 # Nothing is sourced. The fm-spawn side is verified both structurally (the source has
 # the contract lines) and behaviorally (the mkdir + meta-write pattern it uses).
 set -u
@@ -35,8 +35,8 @@ trap cleanup EXIT
 
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-gotmp-tests.XXXXXX")
 
-# Build a fake FM_ROOT so the real fm-teardown.sh (symlinked in) resolves FM_ROOT to
-# it via its BASH_SOURCE computation. Stub the helper scripts fm-teardown calls so no
+# Build a fake FM_HOME/FM_ROOT so the real fm-teardown.sh (symlinked in) resolves
+# state and helper scripts inside it. Stub the helper scripts fm-teardown calls so no
 # live tmux/treehouse/fleet state is touched. A nonexistent worktree path makes both
 # `if [ -d "$WT" ]` guards skip, so teardown runs straight to the cleanup + state rm.
 make_fake_root() {
@@ -52,9 +52,10 @@ make_fake_root() {
   ln -s "$ROOT/bin/fm-backend.sh" "$fake/bin/fm-backend.sh"
   ln -s "$ROOT/bin/backends/tmux.sh" "$fake/bin/backends/tmux.sh"
   ln -s "$ROOT/bin/fm-tmux-lib.sh" "$fake/bin/fm-tmux-lib.sh"
-  # fm-wake-lib.sh: symlink the REAL file (teardown sources it for fm_path_mtime,
-  # used by the stale worktree git-lock cleanup; unchanged by this fixture).
-  ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
+  # fm-composer-lib.sh: fm-tmux-lib.sh sources it from its own dirname.
+  ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
+  # fm-lock-lib.sh: teardown sources it for the shared lock-staleness proof.
+  ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
   # fm-guard.sh: stub (teardown calls it with `|| true`).
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
@@ -132,7 +133,7 @@ test_teardown_removes_tasktmp_dir() {
   # Sanity: dir + contents exist before teardown.
   [ -d "$task_tmp/gotmp" ] || fail "precondition: gotmp missing before teardown"
   # Run the REAL teardown against the fake root.
-  bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \
+  FM_HOME="$fake" bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \
     || fail "teardown exited non-zero with a valid tasktmp"
   [ ! -e "$task_tmp" ] \
     || fail "teardown did not remove the tasktmp dir ($task_tmp still exists)"
@@ -149,7 +150,8 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$ROOT/bin/fm-backend.sh" "$fake/bin/fm-backend.sh"
   ln -s "$ROOT/bin/backends/tmux.sh" "$fake/bin/backends/tmux.sh"
   ln -s "$ROOT/bin/fm-tmux-lib.sh" "$fake/bin/fm-tmux-lib.sh"
-  ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
+  ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
+  ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -173,7 +175,7 @@ kind=ship
 mode=no-mistakes
 yolo=off
 META
-  bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \
+  FM_HOME="$fake" bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \
     || fail "teardown exited non-zero when tasktmp= was absent"
   pass "fm-teardown skips gracefully when tasktmp= is absent (backward compat)"
 }
@@ -186,7 +188,7 @@ test_teardown_skips_gracefully_when_dir_missing() {
   [ ! -e "$task_tmp" ] || fail "precondition: task_tmp should not exist yet"
   local fake
   fake=$(make_fake_root "$id" "$task_tmp")
-  bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \
+  FM_HOME="$fake" bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \
     || fail "teardown exited non-zero when tasktmp dir was missing"
   [ ! -e "$task_tmp" ] || fail "teardown created/left the tasktmp dir unexpectedly"
   pass "fm-teardown skips gracefully when tasktmp= points to a nonexistent dir"
