@@ -8,7 +8,7 @@ This is the setup guide; for the shared runtime-backend abstraction and selectio
 tmux is a terminal multiplexer.
 Firstmate gives each crewmate its own tmux window inside a session, so you can attach and watch a task work, or type into its window to intervene directly.
 Pick tmux unless you have a specific reason to try an experimental backend (herdr, zellij, Orca, or cmux) - it is the fully verified reference path for secondmate homes, while Orca and cmux are the backends that do not support secondmate spawns.
-This fork pins herdr instead (`config/backend=herdr`; see [`docs/herdr-backend.md`](herdr-backend.md)), so tmux here is the code-level default and fallback rather than the configured day-to-day backend.
+This fork's README setup recommends pinning herdr via a local, gitignored `config/backend` file (see [`docs/herdr-backend.md`](herdr-backend.md)); without that local setting, tmux remains the code-level default and fallback.
 
 ## Prerequisites
 
