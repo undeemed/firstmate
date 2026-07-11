@@ -110,7 +110,7 @@ Attach to your herdr session and switch to that workspace to watch every task, o
 
 Restart is a non-event.
 Kill your harness session anytime; the next launch runs the same `bin/fm-session-start.sh` digest, which reconciles live tasks, queued wakes, and the backlog from disk, and the first mate carries on where it left off.
-Stored herdr pane ids even survive a herdr server restart within the same named session, so recovery reattaches to the same tabs.
+Stored herdr pane ids even survive a herdr server restart within the same named session and remain valid peek/send targets, though a restored task tab comes back agent-less - a subsequent respawn closes and replaces it automatically, with no manual cleanup needed.
 
 Setup guides for tmux (the code-level default) and the other backends (zellij, Orca, cmux) are linked in [Documentation](#documentation) below.
 
