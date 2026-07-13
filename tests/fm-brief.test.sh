@@ -3,12 +3,16 @@
 #
 # Regression coverage for the heredoc-in-command-substitution parse bug (issue
 # #166): each ship-mode branch builds its Definition-of-done text with
-# `VAR=$(cat <<EOF ... EOF)`. Bash's lexer tracks quote state through the
-# heredoc body while it scans for the matching `)` of the command
-# substitution, so a single unescaped apostrophe anywhere in that body breaks
-# parsing of the *entire rest of the script* - `bash -n` fails, not just the
-# generated brief. A plain `cat > file <<EOF ... EOF` (not wrapped in `$(...)`)
-# is unaffected, so the secondmate charter block does not need this guard.
+# `VAR=$(cat <<EOF ... EOF)`. On bash < 5.2 (macOS ships 3.2) the lexer tracks
+# quote state through the heredoc body while it scans for the matching `)` of
+# the command substitution, so a single unescaped apostrophe anywhere in that
+# body breaks parsing of the *entire rest of the script* - `bash -n` fails,
+# not just the generated brief. Bash >= 5.2 parses `$(...)` with the real
+# recursive parser and accepts the same text, so on modern machines `bash -n`
+# alone is blind to this class; the static apostrophe guard below covers it
+# independently of the ambient bash version. A plain `cat > file <<EOF ... EOF`
+# (not wrapped in `$(...)`) is unaffected, so the secondmate charter block does
+# not need this guard.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -17,11 +21,55 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-brief)
 
 # The script itself must always parse. This is the direct regression test for
-# issue #166: a stray apostrophe in any of the three DOD heredoc bodies
-# (no-mistakes/direct-PR/local-only) breaks `bash -n` on the whole file.
+# issue #166 on bash < 5.2: a stray apostrophe in any command-substitution
+# heredoc body breaks `bash -n` on the whole file there, while bash >= 5.2
+# accepts it - the static guard below catches it on every version.
 test_script_parses() {
   bash -n "$ROOT/bin/fm-brief.sh" 2>&1 || fail "bin/fm-brief.sh fails bash -n (heredoc/quote regression)"
   pass "fm-brief.sh: bash -n succeeds"
+}
+
+# Extract every `$(cat <<EOF ... EOF)` heredoc body (quoted delimiters
+# included) from a script and print any body line containing an apostrophe.
+# Plain `cat > file <<EOF` heredocs are deliberately not matched: apostrophes
+# are safe there on every bash version.
+comsub_heredoc_apostrophes() {
+  awk -v sq="'" '
+    /\$\(cat <</ {
+      delim = $0
+      sub(/.*<<-?[ \t]*/, "", delim)
+      gsub(/"/, "", delim)
+      gsub(sq, "", delim)
+      body = 1
+      next
+    }
+    body && $0 == delim { body = 0; next }
+    body && index($0, sq) { printf "%d: %s\n", NR, $0 }
+  ' "$1"
+}
+
+# Version-independent guard for the issue-#166 class: `bash -n` above only
+# fails on bash < 5.2, so an apostrophe reintroduced into one of the
+# command-substitution heredoc bodies (PEER_NOTE, HERDR_SECTION, the three
+# DODs) sails through the parse test on modern dev/CI machines while still
+# breaking every scaffold on older bash. Assert statically that no such body
+# contains an apostrophe, and prove the extractor flags a known-bad fixture so
+# the guard can never go silently blind.
+test_comsub_heredoc_bodies_are_apostrophe_free() {
+  local fixture offenders
+  mkdir -p "$TMP_ROOT/comsub-guard"
+  fixture="$TMP_ROOT/comsub-guard/apostrophe-fixture.sh"
+  cat > "$fixture" <<'FIXTURE'
+X=$(cat <<EOF
+this body carries firstmate's apostrophe
+EOF
+)
+FIXTURE
+  [ -n "$(comsub_heredoc_apostrophes "$fixture")" ] \
+    || fail "apostrophe guard did not flag a known-bad fixture (extraction is blind)"
+  offenders=$(comsub_heredoc_apostrophes "$ROOT/bin/fm-brief.sh")
+  [ -z "$offenders" ] || fail "fm-brief.sh command-substitution heredoc body contains an apostrophe, which breaks the whole script on bash < 5.2 (issue #166); reword it: $offenders"
+  pass "fm-brief.sh: command-substitution heredoc bodies are apostrophe-free"
 }
 
 test_help_includes_entire_header() {
@@ -301,6 +349,7 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
 }
 
 test_script_parses
+test_comsub_heredoc_bodies_are_apostrophe_free
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_no_mistakes_dod_wording
