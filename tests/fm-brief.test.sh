@@ -83,10 +83,13 @@ test_no_mistakes_dod_wording() {
   pass "fm-brief.sh: no-mistakes DOD wording avoids the apostrophe regression"
 }
 
-# Both crewmate scaffolds (ship and scout) carry the peer-coordination
-# paragraph. It self-gates on a herdr: session-context line inside the brief
-# text itself, so its presence is backend-independent and safe to assert
-# unconditionally.
+# All three scaffolds (ship, scout, and the secondmate charter) carry the
+# peer-coordination paragraph. It self-gates on a herdr: session-context line
+# inside the brief text itself, so its presence is backend-independent and safe
+# to assert unconditionally. Ship and scout share the crewmate note; the
+# secondmate charter carries an adapted one. The broadened scope (see who else
+# is working; contact whenever it helps, not only on strict overlap/blockage) is
+# asserted so a regression to the old overlap-or-blocked-only gate is caught.
 test_peer_coordination_paragraph() {
   local home brief
   home="$TMP_ROOT/peer-home"
@@ -97,9 +100,29 @@ test_peer_coordination_paragraph() {
     assert_present "$brief" "peer-coordination brief was not scaffolded"
     assert_grep "# Peer coordination" "$brief" "$brief: missing peer-coordination paragraph"
     assert_grep "herdr:" "$brief" "$brief: peer paragraph lost its herdr context self-gate"
+    assert_grep "see who else is working" "$brief" "$brief: peer paragraph lost the broadened see-who-is-working scope"
+    assert_grep "not only when your work strictly overlaps or you are blocked" "$brief" \
+      "$brief: peer paragraph regressed to the overlap-or-blocked-only gate"
+    assert_grep "note from brief-peer" "$brief" "$brief: peer paragraph lost the task-id sender identification"
     assert_grep "never a channel to the captain" "$brief" "$brief: peer paragraph lost the authority boundary"
   done
-  pass "fm-brief.sh: ship and scout briefs carry the peer-coordination paragraph"
+
+  # The secondmate charter carries an adapted peer-coordination section: same
+  # herdr self-gate and authority rules, sender identifies by its secondmate id,
+  # and its own spawned crewmates get their own notes through its scaffolds.
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='ops' \
+    "$ROOT/bin/fm-brief.sh" brief-peer-second-c3 --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/brief-peer-second-c3/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded"
+  assert_grep "# Peer coordination" "$brief" "secondmate charter missing peer-coordination section"
+  assert_grep "herdr:" "$brief" "secondmate charter peer section lost its herdr context self-gate"
+  assert_grep "see who else is working" "$brief" "secondmate charter peer section lost the broadened scope"
+  assert_grep "note from brief-peer-second-c3" "$brief" \
+    "secondmate charter peer section lost the secondmate-id sender identification"
+  assert_grep "never a channel to the captain" "$brief" "secondmate charter peer section lost the authority boundary"
+  assert_grep "own spawned crewmates receive their own peer-coordination notes" "$brief" \
+    "secondmate charter peer section lost the crewmate-propagation note"
+  pass "fm-brief.sh: ship, scout, and secondmate scaffolds carry the peer-coordination paragraph"
 }
 
 test_ship_project_memory_wording() {
