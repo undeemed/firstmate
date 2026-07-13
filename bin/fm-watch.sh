@@ -113,6 +113,7 @@ HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
+SWEEP_INTERVAL=${FM_SWEEP_INTERVAL:-300}  # seconds between fm-sweep.sh 3rd-mate reaps
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
@@ -388,6 +389,9 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
 }
 
 [ -e "$STATE/.last-heartbeat" ] || touch "$STATE/.last-heartbeat"
+# Seed the sweep cadence so the first cycle after an arm/restart does not sweep
+# immediately (session start already ran one); it waits a full SWEEP_INTERVAL.
+[ -e "$STATE/.last-sweep" ] || touch "$STATE/.last-sweep"
 
 # Layer 2 + 3 signal scan: status files and turn-end markers. Each file is
 # compared against a persisted size:mtime signature (.seen-*) rather than
@@ -507,6 +511,21 @@ while :; do
       fi
     done
     touch "$STATE/.last-check"
+  fi
+
+  # Constant 3rd-mate sweep: reap this home's landed/dead disposable crewmates
+  # and return orphaned pool worktrees (bin/fm-sweep.sh), on a bounded cadence so
+  # it rides the supervision cycle. Launched DETACHED with output discarded, so
+  # it never adds latency to wake handling or interferes with the classification
+  # backbone below - reaping done/landed crews (including closing a bare-shell
+  # pane that would otherwise keep tripping stale detection) is silent
+  # maintenance. Time-based via .last-sweep mtime so the cadence survives
+  # restarts; touched before launch so a long sweep never re-triggers itself, and
+  # fm-sweep's own lock makes an overlapping run a no-op. Generic per home: a
+  # secondmate's own watcher sweeps that secondmate's children the same way.
+  if [ "$(age_of "$STATE/.last-sweep")" -ge "$SWEEP_INTERVAL" ]; then
+    touch "$STATE/.last-sweep"
+    ( "$SCRIPT_DIR/fm-sweep.sh" >/dev/null 2>&1 & )
   fi
 
   # On the first changed signal, linger one grace period and re-scan before

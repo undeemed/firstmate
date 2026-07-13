@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Tests for bin/fm-consult.sh - the per-tier codex consult gate.
+#
+# Asserts the tier -> codex-model mapping, the xhigh effort flag, and graceful
+# non-blocking degradation when codex is unavailable or fails. It makes NO real
+# codex calls (codex is stubbed via FM_CONSULT_CODEX) so it never touches quota
+# and never triggers a /usage reset.
+set -u
+
+# shellcheck source=tests/lib.sh disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+CONSULT="$ROOT/bin/fm-consult.sh"
+TMP_ROOT=$(fm_test_tmproot fm-consult-tests)
+mkdir -p "$TMP_ROOT"
+
+# A codex stub that records its full argument line to $CODEX_ARGS_LOG and exits 0.
+STUB="$TMP_ROOT/codex-echo"
+cat > "$STUB" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "${CODEX_ARGS_LOG:?}"
+echo "codex answer"
+exit 0
+SH
+chmod +x "$STUB"
+
+# A codex stub that always fails (unauthenticated / quota-exhausted analogue).
+STUB_FAIL="$TMP_ROOT/codex-fail"
+cat > "$STUB_FAIL" <<'SH'
+#!/usr/bin/env bash
+echo "codex: not logged in" >&2
+exit 1
+SH
+chmod +x "$STUB_FAIL"
+
+run_consult() {  # log-file <args...>
+  local log=$1; shift
+  CODEX_ARGS_LOG="$log" FM_CONSULT_CODEX="$STUB" "$CONSULT" "$@"
+}
+
+test_tier_model_mapping() {
+  local log out
+  log="$TMP_ROOT/args"
+
+  out=$(run_consult "$log" firstmate "why is X failing") || fail "firstmate consult failed"
+  assert_contains "$(cat "$log")" "--model gpt-5.6-sol" "firstmate must consult gpt-5.6-sol"
+  assert_contains "$(cat "$log")" 'model_reasoning_effort="xhigh"' "firstmate consult must run at xhigh"
+  assert_contains "$out" "codex answer" "firstmate consult did not relay codex output"
+
+  run_consult "$log" secondmate "advise" >/dev/null || fail "secondmate consult failed"
+  assert_contains "$(cat "$log")" "--model gpt-5.6-sol" "secondmate default must consult gpt-5.6-sol"
+
+  run_consult "$log" --terra secondmate "advise harder" >/dev/null || fail "secondmate --terra consult failed"
+  assert_contains "$(cat "$log")" "--model gpt-5.6-terra" "secondmate --terra must consult gpt-5.6-terra"
+
+  run_consult "$log" crewmate "advise" >/dev/null || fail "crewmate consult failed"
+  assert_contains "$(cat "$log")" "--model gpt-5.6-terra" "crewmate must consult gpt-5.6-terra"
+
+  # --terra only affects the secondmate tier; the other tiers ignore it.
+  run_consult "$log" --terra firstmate "advise" >/dev/null || fail "firstmate --terra consult failed"
+  assert_contains "$(cat "$log")" "--model gpt-5.6-sol" "--terra must not change the firstmate model"
+
+  # A read-only, non-interactive exec, never a git-repo gate.
+  assert_contains "$(cat "$log")" "exec" "consult must use codex exec (non-interactive)"
+  assert_contains "$(cat "$log")" "--sandbox read-only" "consult must run codex in a read-only sandbox"
+  pass "fm-consult maps each tier to its codex model at xhigh (secondmate --terra escalates)"
+}
+
+test_unknown_tier_errors() {
+  local rc
+  set +e
+  run_consult "$TMP_ROOT/args2" bogus "q" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "unknown tier should exit 2"
+  pass "fm-consult rejects an unknown tier with a usage error"
+}
+
+test_missing_question_errors() {
+  local rc
+  set +e
+  run_consult "$TMP_ROOT/args3" firstmate >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "missing question should exit 2"
+  pass "fm-consult requires a question"
+}
+
+test_graceful_when_codex_absent() {
+  local rc out
+  set +e
+  out=$(FM_CONSULT_CODEX="definitely-not-a-real-codex-binary-xyz" "$CONSULT" firstmate "hello" 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "codex-absent: consult must exit non-zero"
+  assert_contains "$out" "codex not found" "codex-absent: consult did not explain the missing codex"
+  assert_contains "$out" "advisory" "codex-absent: consult did not signal it is advisory/non-blocking"
+  pass "fm-consult degrades gracefully (non-zero, advisory) when codex is absent"
+}
+
+test_graceful_when_codex_fails() {
+  local rc out
+  set +e
+  out=$(FM_CONSULT_CODEX="$STUB_FAIL" "$CONSULT" crewmate "hello" 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "codex-fail: consult must exit non-zero when codex fails"
+  assert_contains "$out" "consult failed" "codex-fail: consult did not report the failure"
+  assert_contains "$out" "advisory" "codex-fail: consult did not signal it is advisory/non-blocking"
+  pass "fm-consult degrades gracefully when codex errors (unauth/quota-exhausted)"
+}
+
+test_tier_model_mapping
+test_unknown_tier_errors
+test_missing_question_errors
+test_graceful_when_codex_absent
+test_graceful_when_codex_fails
