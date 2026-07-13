@@ -3,12 +3,16 @@
 #
 # Regression coverage for the heredoc-in-command-substitution parse bug (issue
 # #166): each ship-mode branch builds its Definition-of-done text with
-# `VAR=$(cat <<EOF ... EOF)`. Bash's lexer tracks quote state through the
-# heredoc body while it scans for the matching `)` of the command
-# substitution, so a single unescaped apostrophe anywhere in that body breaks
-# parsing of the *entire rest of the script* - `bash -n` fails, not just the
-# generated brief. A plain `cat > file <<EOF ... EOF` (not wrapped in `$(...)`)
-# is unaffected, so the secondmate charter block does not need this guard.
+# `VAR=$(cat <<EOF ... EOF)`. On bash < 5.2 (macOS ships 3.2) the lexer tracks
+# quote state through the heredoc body while it scans for the matching `)` of
+# the command substitution, so a single unescaped apostrophe anywhere in that
+# body breaks parsing of the *entire rest of the script* - `bash -n` fails,
+# not just the generated brief. Bash >= 5.2 parses `$(...)` with the real
+# recursive parser and accepts the same text, so on modern machines `bash -n`
+# alone is blind to this class; the static apostrophe guard below covers it
+# independently of the ambient bash version. A plain `cat > file <<EOF ... EOF`
+# (not wrapped in `$(...)`) is unaffected, so the secondmate charter block does
+# not need this guard.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -17,11 +21,55 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-brief)
 
 # The script itself must always parse. This is the direct regression test for
-# issue #166: a stray apostrophe in any of the three DOD heredoc bodies
-# (no-mistakes/direct-PR/local-only) breaks `bash -n` on the whole file.
+# issue #166 on bash < 5.2: a stray apostrophe in any command-substitution
+# heredoc body breaks `bash -n` on the whole file there, while bash >= 5.2
+# accepts it - the static guard below catches it on every version.
 test_script_parses() {
   bash -n "$ROOT/bin/fm-brief.sh" 2>&1 || fail "bin/fm-brief.sh fails bash -n (heredoc/quote regression)"
   pass "fm-brief.sh: bash -n succeeds"
+}
+
+# Extract every `$(cat <<EOF ... EOF)` heredoc body (quoted delimiters
+# included) from a script and print any body line containing an apostrophe.
+# Plain `cat > file <<EOF` heredocs are deliberately not matched: apostrophes
+# are safe there on every bash version.
+comsub_heredoc_apostrophes() {
+  awk -v sq="'" '
+    /\$\(cat <</ {
+      delim = $0
+      sub(/.*<<-?[ \t]*/, "", delim)
+      gsub(/"/, "", delim)
+      gsub(sq, "", delim)
+      body = 1
+      next
+    }
+    body && $0 == delim { body = 0; next }
+    body && index($0, sq) { printf "%d: %s\n", NR, $0 }
+  ' "$1"
+}
+
+# Version-independent guard for the issue-#166 class: `bash -n` above only
+# fails on bash < 5.2, so an apostrophe reintroduced into one of the
+# command-substitution heredoc bodies (PEER_NOTE, HERDR_SECTION, the three
+# DODs) sails through the parse test on modern dev/CI machines while still
+# breaking every scaffold on older bash. Assert statically that no such body
+# contains an apostrophe, and prove the extractor flags a known-bad fixture so
+# the guard can never go silently blind.
+test_comsub_heredoc_bodies_are_apostrophe_free() {
+  local fixture offenders
+  mkdir -p "$TMP_ROOT/comsub-guard"
+  fixture="$TMP_ROOT/comsub-guard/apostrophe-fixture.sh"
+  cat > "$fixture" <<'FIXTURE'
+X=$(cat <<EOF
+this body carries firstmate's apostrophe
+EOF
+)
+FIXTURE
+  [ -n "$(comsub_heredoc_apostrophes "$fixture")" ] \
+    || fail "apostrophe guard did not flag a known-bad fixture (extraction is blind)"
+  offenders=$(comsub_heredoc_apostrophes "$ROOT/bin/fm-brief.sh")
+  [ -z "$offenders" ] || fail "fm-brief.sh command-substitution heredoc body contains an apostrophe, which breaks the whole script on bash < 5.2 (issue #166); reword it: $offenders"
+  pass "fm-brief.sh: command-substitution heredoc bodies are apostrophe-free"
 }
 
 test_help_includes_entire_header() {
@@ -83,10 +131,13 @@ test_no_mistakes_dod_wording() {
   pass "fm-brief.sh: no-mistakes DOD wording avoids the apostrophe regression"
 }
 
-# Both crewmate scaffolds (ship and scout) carry the peer-coordination
-# paragraph. It self-gates on a herdr: session-context line inside the brief
-# text itself, so its presence is backend-independent and safe to assert
-# unconditionally.
+# All three scaffolds (ship, scout, and the secondmate charter) carry the
+# peer-coordination paragraph. It self-gates on a herdr: session-context line
+# inside the brief text itself, so its presence is backend-independent and safe
+# to assert unconditionally. Ship and scout share the crewmate note; the
+# secondmate charter carries an adapted one. The broadened scope (see who else
+# is working; contact whenever it helps, not only on strict overlap/blockage) is
+# asserted so a regression to the old overlap-or-blocked-only gate is caught.
 test_peer_coordination_paragraph() {
   local home brief
   home="$TMP_ROOT/peer-home"
@@ -97,9 +148,29 @@ test_peer_coordination_paragraph() {
     assert_present "$brief" "peer-coordination brief was not scaffolded"
     assert_grep "# Peer coordination" "$brief" "$brief: missing peer-coordination paragraph"
     assert_grep "herdr:" "$brief" "$brief: peer paragraph lost its herdr context self-gate"
+    assert_grep "see who else is working" "$brief" "$brief: peer paragraph lost the broadened see-who-is-working scope"
+    assert_grep "not only when your work strictly overlaps or you are blocked" "$brief" \
+      "$brief: peer paragraph regressed to the overlap-or-blocked-only gate"
+    assert_grep "note from brief-peer" "$brief" "$brief: peer paragraph lost the task-id sender identification"
     assert_grep "never a channel to the captain" "$brief" "$brief: peer paragraph lost the authority boundary"
   done
-  pass "fm-brief.sh: ship and scout briefs carry the peer-coordination paragraph"
+
+  # The secondmate charter carries an adapted peer-coordination section: same
+  # herdr self-gate and authority rules, sender identifies by its secondmate id,
+  # and its own spawned crewmates get their own notes through its scaffolds.
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='ops' \
+    "$ROOT/bin/fm-brief.sh" brief-peer-second-c3 --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/brief-peer-second-c3/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded"
+  assert_grep "# Peer coordination" "$brief" "secondmate charter missing peer-coordination section"
+  assert_grep "herdr:" "$brief" "secondmate charter peer section lost its herdr context self-gate"
+  assert_grep "see who else is working" "$brief" "secondmate charter peer section lost the broadened scope"
+  assert_grep "note from brief-peer-second-c3" "$brief" \
+    "secondmate charter peer section lost the secondmate-id sender identification"
+  assert_grep "never a channel to the captain" "$brief" "secondmate charter peer section lost the authority boundary"
+  assert_grep "own spawned crewmates receive their own peer-coordination notes" "$brief" \
+    "secondmate charter peer section lost the crewmate-propagation note"
+  pass "fm-brief.sh: ship, scout, and secondmate scaffolds carry the peer-coordination paragraph"
 }
 
 test_ship_project_memory_wording() {
@@ -278,6 +349,7 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
 }
 
 test_script_parses
+test_comsub_heredoc_bodies_are_apostrophe_free
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_no_mistakes_dod_wording
