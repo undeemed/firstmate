@@ -66,6 +66,28 @@ test_tier_model_mapping() {
   pass "fm-consult maps each tier to its codex model at xhigh (secondmate --terra escalates)"
 }
 
+test_flaglike_words_in_question_are_preserved() {
+  local log out
+  log="$TMP_ROOT/args-flagwords"
+
+  # A -h word inside an unquoted multi-word question must not become a silent
+  # usage-and-exit-0; the consult must still run with the word intact.
+  out=$(run_consult "$log" firstmate what does -h mean here) || fail "flag-words: -h consult failed"
+  assert_contains "$out" "codex answer" "flag-words: -h in the question must still consult codex"
+  assert_contains "$(cat "$log")" "what does -h mean here" "flag-words: -h must stay part of the question"
+
+  # A literal --terra after the tier is question text, never a consumed flag.
+  run_consult "$log" firstmate should I pass --terra here >/dev/null || fail "flag-words: --terra consult failed"
+  assert_contains "$(cat "$log")" "--model gpt-5.6-sol" "flag-words: a mid-question --terra must not change the model"
+  assert_contains "$(cat "$log")" "should I pass --terra here" "flag-words: --terra must stay part of the question"
+
+  # An explicit -- ends flag parsing; flags before it still apply.
+  run_consult "$log" --terra -- secondmate question after separator >/dev/null || fail "flag-words: -- consult failed"
+  assert_contains "$(cat "$log")" "--model gpt-5.6-terra" "flag-words: flags before -- must still apply"
+  assert_contains "$(cat "$log")" "question after separator" "flag-words: positionals after -- must be preserved"
+  pass "fm-consult treats everything from the tier onward as the question (flags only before it)"
+}
+
 test_unknown_tier_errors() {
   local rc
   set +e
@@ -111,6 +133,7 @@ test_graceful_when_codex_fails() {
 }
 
 test_tier_model_mapping
+test_flaglike_words_in_question_are_preserved
 test_unknown_tier_errors
 test_missing_question_errors
 test_graceful_when_codex_absent

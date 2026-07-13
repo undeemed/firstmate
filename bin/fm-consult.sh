@@ -11,11 +11,15 @@
 # owner of that tier -> codex-model mapping; the model names live here, not
 # restated in prose elsewhere.
 #
-# Usage: fm-consult.sh [--terra] <tier> <question...>
+# Usage: fm-consult.sh [--terra] [--] <tier> <question...>
 #          <tier> in {firstmate, secondmate, crewmate}.
 #          --terra is only meaningful for the secondmate tier (pick gpt-5.6-terra
 #          instead of the default gpt-5.6-sol); it is ignored for other tiers.
-#          The question may be a single quoted argument or several words.
+#          The question may be a single quoted argument or several words. Flags
+#          are recognized only BEFORE the first positional (or an explicit `--`):
+#          everything from the tier onward is taken verbatim, so flag-like words
+#          inside a multi-word question (a literal --terra, a quoted -h) are part
+#          of the question, never consumed as flags.
 #
 # ADVISORY AND NON-BLOCKING: a consult is a second opinion, never a dependency.
 # If codex is missing, unauthenticated, quota-exhausted, or errors for any
@@ -42,16 +46,17 @@ EFFORT=${FM_CONSULT_EFFORT:-xhigh}
 CODEX_BIN=${FM_CONSULT_CODEX:-codex}
 
 usage() {
-  echo "usage: fm-consult.sh [--terra] <firstmate|secondmate|crewmate> <question...>" >&2
+  echo "usage: fm-consult.sh [--terra] [--] <firstmate|secondmate|crewmate> <question...>" >&2
 }
 
 TERRA=0
 POS=()
-for a in "$@"; do
-  case "$a" in
-    --terra) TERRA=1 ;;
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --terra) TERRA=1; shift ;;
     -h|--help) usage; exit 0 ;;
-    *) POS+=("$a") ;;
+    --) shift; POS+=("$@"); break ;;
+    *) POS+=("$@"); break ;;
   esac
 done
 

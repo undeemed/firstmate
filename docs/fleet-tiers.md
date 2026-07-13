@@ -57,10 +57,13 @@ Safety is delegated to the single owners; the sweep reimplements no landed-work 
 
 Reap gate (cheap first; teardown is the final safety net either way):
 
-1. dead endpoint (`fm_backend_target_exists` false, or no target recorded) -> candidate (a crashed/exited crew whose lease would otherwise leak);
+1. dead endpoint (`fm_backend_target_exists` false, or no target recorded) -> candidate, but only on the SECOND consecutive dead probe: the first dead reading records `state/<id>.sweep-dead` and skips the task, because a single failed probe can be a transient backend outage (herdr server down, an unauthenticated cmux socket, a CLI blip) rather than a confident dead reading; the marker is cleared whenever the endpoint is observed alive and removed by teardown with the task's other state, so a crashed/exited crew whose lease would otherwise leak is still reaped - one sweep later;
 2. else, alive endpoint: read `bin/fm-crew-state.sh`; `state == done` -> candidate (idle-done); any other alive state - working, parked, blocked, failed, or a just-spawned `unknown` - is LEFT.
 
 Leaving alive non-done crews is what guarantees a live working agent is never reaped and a just-spawned crew is never mistaken for an orphan.
+
+Before tearing down a candidate that still has a pending `state/<id>.check.sh` (firstmate's merged-PR poll), the sweep runs that check once (bounded by `FM_CHECK_TIMEOUT`) and folds any output into the summary as a `check <id>: ...` line, so an externally merged PR is surfaced before teardown removes the poll.
+A swept teardown does none of the normal post-teardown bookkeeping; the `SWEEP:` digest lines are the cue to reconcile the backlog and relay an externally merged PR (the `bootstrap-diagnostics` skill owns the per-line response).
 
 The firstmate repo's OWN pool (where the primary and project-less firstmate-repo crews live) is deliberately out of scope for the automated orphan prune, so the sweep never prunes the pool the running primary lives in; meta-tracked firstmate-repo crews are still reaped by the teardown path, and firstmate-repo-pool orphans are left to manual `treehouse prune`.
 

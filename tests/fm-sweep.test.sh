@@ -8,12 +8,17 @@
 # and secondmates untouched.
 #
 # Matrix (git-level fixtures + tmux/treehouse/crew-state stubs, no herdr):
-#   (a) landed + dead endpoint (ship)          -> REAPED (meta removed)
+#   (a) landed + dead endpoint (ship)          -> REAPED, but only on the SECOND
+#       consecutive dead probe (state/<id>.sweep-dead gates the first)
 #   (b) unlanded + uncommitted changes         -> LEFT (teardown refuses)
 #   (c) unmerged fm/ branch, not landed        -> LEFT (teardown refuses)
 #   (d) live/working crew, work landed         -> LEFT (working never reaped)
 #   (e) kind=secondmate                        -> NEVER swept (skipped)
 #   (f) orphan pass runs `treehouse prune --yes` per pool, never --all/--global
+#   (g) an alive observation clears the sweep-dead marker (transient outage)
+#   (h) a pending check.sh runs once and is surfaced before teardown removes it
+#   (i) a fresh sweep lock is a silent no-op; a provably-abandoned one is reclaimed
+#   (j) idle treehouse-prune output stays quiet; a real prune is reported
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -44,11 +49,13 @@ if [ "${1:-}" = display-message ]; then
 fi
 exit 0
 SH
-  # treehouse stub: return (teardown) and prune (orphan pass) both succeed
-  # silently, and every invocation is logged for the orphan-scoping assertion.
+  # treehouse stub: return (teardown) and prune (orphan pass) both succeed,
+  # printing FM_TEST_TREEHOUSE_OUT when set (silent otherwise), and every
+  # invocation is logged for the orphan-scoping assertion.
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 [ -n "${FM_TEST_TREEHOUSE_LOG:-}" ] && printf '%s\n' "$*" >> "$FM_TEST_TREEHOUSE_LOG"
+[ -n "${FM_TEST_TREEHOUSE_OUT:-}" ] && printf '%s\n' "$FM_TEST_TREEHOUSE_OUT"
 exit 0
 SH
   # No PR associated with any branch (keeps the landed-work check hermetic).
@@ -125,20 +132,48 @@ run_sweep() {
       "$@" "$SWEEP"
 }
 
-test_landed_dead_crew_is_reaped() {
-  local case_dir out
+test_landed_dead_crew_is_reaped_on_second_probe() {
+  local case_dir out marker
   case_dir=$(make_case landed-dead)
   write_meta "$case_dir" local-only ship
   wt_commit_file "$case_dir" feature.txt hello "landed work"
   # Merge the work into local main so it is LANDED for a local-only task.
   git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  marker="$case_dir/home/state/task-x1.sweep-dead"
 
-  # Default tmux stub: display-message exits 1 -> dead endpoint -> candidate.
-  out=$(run_sweep "$case_dir") || fail "landed-dead: sweep exited non-zero"
+  # Default tmux stub: display-message exits 1 -> dead endpoint. The FIRST dead
+  # probe is not a confident reading: it records the marker and skips, quietly.
+  out=$(run_sweep "$case_dir") || fail "landed-dead: first sweep exited non-zero"
+  [ -z "$out" ] || fail "landed-dead: first dead probe must stay quiet (got: $out)"
+  assert_present "$case_dir/home/state/task-x1.meta" "landed-dead: first dead probe must not reap"
+  assert_present "$marker" "landed-dead: first dead probe must record the sweep-dead marker"
 
+  # SECOND consecutive dead probe: confident dead reading -> candidate -> reaped.
+  out=$(run_sweep "$case_dir") || fail "landed-dead: second sweep exited non-zero"
   assert_absent "$case_dir/home/state/task-x1.meta" "landed-dead: meta should be removed (reaped)"
   assert_contains "$out" "reaped task-x1" "landed-dead: sweep did not report the reap"
-  pass "landed + dead-endpoint crew is reaped (delegates to fm-teardown)"
+  assert_absent "$marker" "landed-dead: teardown must remove the sweep-dead marker"
+  pass "landed + dead-endpoint crew is reaped on the second consecutive dead probe"
+}
+
+test_alive_observation_clears_dead_marker() {
+  local case_dir out stub marker
+  case_dir=$(make_case transient-dead)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt hello "landed work"
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  marker="$case_dir/home/state/task-x1.sweep-dead"
+  touch "$marker"   # a previous sweep hit a transient outage (dead probe)
+  stub=$(make_crew_state_stub "$case_dir" "state: working · source: pane · harness busy")
+
+  # The endpoint is back: the marker must be cleared and the crew left alone.
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_DISPLAY_RC=0 FM_CREW_STATE_BIN="$stub") \
+    || fail "transient-dead: sweep exited non-zero"
+
+  assert_absent "$marker" "transient-dead: an alive observation must clear the sweep-dead marker"
+  assert_present "$case_dir/home/state/task-x1.meta" "transient-dead: crew must not be reaped"
+  assert_not_contains "$out" "reaped task-x1" "transient-dead: sweep wrongly reaped after a transient outage"
+  pass "an alive observation clears the sweep-dead marker (transient outage never reaps)"
 }
 
 test_unlanded_uncommitted_is_left() {
@@ -148,6 +183,9 @@ test_unlanded_uncommitted_is_left() {
   wt_commit_file "$case_dir" feature.txt hello "committed"
   printf '%s\n' "uncommitted edit" > "$case_dir/wt/feature.txt"   # dirty
 
+  # Two sweeps: the first dead probe only records the marker; the second is the
+  # confident-dead candidate teardown then refuses.
+  run_sweep "$case_dir" >/dev/null || fail "unlanded-dirty: first sweep exited non-zero"
   out=$(run_sweep "$case_dir") || fail "unlanded-dirty: sweep exited non-zero"
 
   assert_present "$case_dir/home/state/task-x1.meta" "unlanded-dirty: meta must remain (left)"
@@ -162,6 +200,7 @@ test_unmerged_branch_is_left() {
   # Real commit on the fm/ branch, never pushed, no PR, not on origin/main.
   wt_commit_file "$case_dir" feature.txt hello "unmerged work"
 
+  run_sweep "$case_dir" >/dev/null || fail "unmerged-branch: first sweep exited non-zero"
   out=$(run_sweep "$case_dir") || fail "unmerged-branch: sweep exited non-zero"
 
   assert_present "$case_dir/home/state/task-x1.meta" "unmerged-branch: meta must remain (left)"
@@ -206,6 +245,64 @@ test_secondmate_is_never_swept() {
   pass "kind=secondmate meta is NEVER swept (persistent by design)"
 }
 
+# A landed, confidently-dead crew that a single sweep run will reap (the
+# sweep-dead marker is pre-seeded so the two-probe gate is already satisfied).
+make_reap_ready_case() {  # name
+  local case_dir
+  case_dir=$(make_case "$1")
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt hello "landed work"
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  touch "$case_dir/home/state/task-x1.sweep-dead"
+  printf '%s\n' "$case_dir"
+}
+
+test_pending_check_runs_before_teardown() {
+  local case_dir out
+  case_dir=$(make_reap_ready_case check-before-teardown)
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "PR https://github.com/o/r/pull/7 merged"' \
+    > "$case_dir/home/state/task-x1.check.sh"
+
+  out=$(run_sweep "$case_dir") || fail "check-before-teardown: sweep exited non-zero"
+
+  assert_contains "$out" "check task-x1: PR https://github.com/o/r/pull/7 merged" \
+    "check-before-teardown: pending check output must be folded into the summary"
+  assert_contains "$out" "reaped task-x1" "check-before-teardown: the reap should still proceed"
+  assert_absent "$case_dir/home/state/task-x1.check.sh" "check-before-teardown: teardown should remove the check"
+  pass "a pending check.sh runs once and its wake output is surfaced before teardown removes it"
+}
+
+test_fresh_sweep_lock_is_silent_noop() {
+  local case_dir out
+  case_dir=$(make_reap_ready_case fresh-lock)
+  mkdir "$case_dir/home/state/.sweep.lock"   # fresh: another sweep is running
+
+  out=$(run_sweep "$case_dir") || fail "fresh-lock: sweep exited non-zero"
+
+  [ -z "$out" ] || fail "fresh-lock: sweep must stay quiet while the lock is held (got: $out)"
+  assert_present "$case_dir/home/state/task-x1.meta" "fresh-lock: meta must remain while the lock is held"
+  pass "a fresh (live) sweep lock makes an overlapping run a silent no-op"
+}
+
+test_stale_sweep_lock_is_reclaimed() {
+  local case_dir out lock
+  case_dir=$(make_reap_ready_case stale-lock)
+
+  # An abandoned lock (a sweep killed without its EXIT trap running): old mtime,
+  # no live holder. The lsof stub proves "no holder" (exit 1, empty output).
+  lock="$case_dir/home/state/.sweep.lock"
+  mkdir "$lock"
+  touch -t 202001010000 "$lock"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$case_dir/fakebin/lsof"
+  chmod +x "$case_dir/fakebin/lsof"
+
+  out=$(run_sweep "$case_dir") || fail "stale-lock: sweep exited non-zero"
+
+  assert_contains "$out" "reaped task-x1" "stale-lock: an abandoned sweep lock must be reclaimed"
+  assert_absent "$case_dir/home/state/task-x1.meta" "stale-lock: meta should be removed after the reclaim"
+  pass "a provably-abandoned sweep lock is reclaimed (a killed sweep cannot disable the sweep forever)"
+}
+
 test_orphan_pass_scopes_prune_per_pool() {
   local case_dir log out
   case_dir=$(make_case orphan-prune)
@@ -223,9 +320,42 @@ test_orphan_pass_scopes_prune_per_pool() {
   pass "orphan pass runs 'treehouse prune --yes' per pool, never --all/--global"
 }
 
-test_landed_dead_crew_is_reaped
+test_orphan_idle_output_stays_quiet() {
+  local case_dir out idle
+  case_dir=$(make_case orphan-idle)
+  git init -q "$case_dir/home/projects/proj"
+  git -C "$case_dir/home/projects/proj" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+
+  for idle in "nothing to prune" "No worktrees removed" "0 removed"; do
+    out=$(run_sweep "$case_dir" FM_TEST_TREEHOUSE_OUT="$idle") \
+      || fail "orphan-idle: sweep exited non-zero for '$idle'"
+    [ -z "$out" ] || fail "orphan-idle: idle output '$idle' must stay quiet (got: $out)"
+  done
+  pass "idle treehouse-prune output (nothing to prune / nothing removed / 0 removed) stays quiet"
+}
+
+test_orphan_action_output_is_reported() {
+  local case_dir out
+  case_dir=$(make_case orphan-action)
+  git init -q "$case_dir/home/projects/proj"
+  git -C "$case_dir/home/projects/proj" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+
+  out=$(run_sweep "$case_dir" FM_TEST_TREEHOUSE_OUT="Pruned 1 worktree (task-old-z9)") \
+    || fail "orphan-action: sweep exited non-zero"
+
+  assert_contains "$out" "orphan worktrees proj: Pruned 1 worktree" "orphan-action: a real prune must be reported"
+  pass "a real treehouse prune is reported as an orphan-worktrees line"
+}
+
+test_landed_dead_crew_is_reaped_on_second_probe
+test_alive_observation_clears_dead_marker
 test_unlanded_uncommitted_is_left
 test_unmerged_branch_is_left
 test_live_working_crew_is_left
 test_secondmate_is_never_swept
+test_pending_check_runs_before_teardown
+test_fresh_sweep_lock_is_silent_noop
+test_stale_sweep_lock_is_reclaimed
 test_orphan_pass_scopes_prune_per_pool
+test_orphan_idle_output_stays_quiet
+test_orphan_action_output_is_reported
