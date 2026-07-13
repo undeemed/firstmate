@@ -14,6 +14,12 @@ set -u
 CHECK="$ROOT/bin/fm-arm-pretool-check.sh"
 POLICY="$ROOT/bin/fm-arm-command-policy.mjs"
 
+# The wrapper resolves the active home from FM_HOME ahead of the repo root.
+# The matrix's home-sensitive cases (e.g. A13's absolute x-mode.env source
+# path) are written against home == this repo root, so pin it here rather
+# than inherit an ambient operator FM_HOME.
+export FM_HOME="$ROOT"
+
 # --- full cross-harness acceptance matrix ----------------------------------
 
 MATRIX_IDS=()

@@ -9,6 +9,15 @@ BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(fm_test_tmproot fm-dispatch-select-tests)
 mkdir -p "$TMP_ROOT"
 
+# The restricted-PATH cases below simulate quota-axi's absence, never jq's.
+# jq may live outside the minimal base path (e.g. /usr/local/bin), so expose
+# exactly jq through a dedicated dir instead of appending its whole directory,
+# which could leak a host quota-axi back into the "missing" case.
+jq_real=$(command -v jq) || fail "jq is required by fm-dispatch-select.sh"
+mkdir -p "$TMP_ROOT/jq-only"
+ln -s "$jq_real" "$TMP_ROOT/jq-only/jq"
+BASE_PATH="$BASE_PATH:$TMP_ROOT/jq-only"
+
 write_quota() {
   local file=$1 claude_status=$2 claude_five=$3 claude_week=$4 codex_status=$5 codex_five=$6 codex_week=$7
   mkdir -p "$(dirname "$file")"
