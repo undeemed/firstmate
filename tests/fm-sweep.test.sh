@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # Tests for bin/fm-sweep.sh - the constant, safety-gated 3rd-mate sweep/prune.
 #
-# fm-sweep reaps this home's disposable crewmates (kind=ship/scout) whose work
-# has LANDED or whose endpoint is dead, delegating every landed-work decision to
-# bin/fm-teardown.sh (never --force) and every orphan-pool decision to
-# `treehouse prune`. It must PROVABLY leave unlanded work, live/working crews,
-# and secondmates untouched.
+# fm-sweep reaps this home's disposable crewmates (kind=ship/scout) whose agent
+# is confidently dead (fm_backend_agent_alive) or idle-done, delegating every
+# landed-work decision to bin/fm-teardown.sh (never --force) and every
+# orphan-pool decision to `treehouse prune`. It must PROVABLY leave unlanded
+# work, live/working crews, unknown agent readings, tasks with an armed
+# check.sh merge poll, and secondmates untouched.
 #
 # Matrix (git-level fixtures + tmux/treehouse/crew-state stubs, no herdr):
-#   (a) landed + dead endpoint (ship)          -> REAPED, but only on the SECOND
-#       consecutive dead probe (state/<id>.sweep-dead gates the first)
-#   (b) unlanded + uncommitted changes         -> LEFT (teardown refuses)
-#   (c) unmerged fm/ branch, not landed        -> LEFT (teardown refuses)
-#   (d) live/working crew, work landed         -> LEFT (working never reaped)
-#   (e) kind=secondmate                        -> NEVER swept (skipped)
-#   (f) orphan pass runs `treehouse prune --yes` per pool, never --all/--global
-#   (g) an alive observation clears the sweep-dead marker (transient outage)
-#   (h) a pending check.sh runs once and is surfaced before teardown removes it
+#   (a) landed + confidently-dead agent (ship) -> REAPED (bare-shell pane, the
+#       fm_backend_agent_alive dead reading)
+#   (b) unknown agent reading                  -> LEFT (an unreadable pane, an
+#       unattributable command, or no recorded target never licenses a reap)
+#   (c) unlanded + uncommitted changes         -> LEFT (teardown refuses)
+#   (d) unmerged fm/ branch, not landed        -> LEFT (teardown refuses)
+#   (e) live/working crew, work landed         -> LEFT (working never reaped)
+#   (f) alive+done PR-ready crew, armed check.sh -> LEFT (pending-check gate)
+#   (g) kind=secondmate                        -> NEVER swept (skipped)
+#   (h) orphan pass runs `treehouse prune --yes` per pool, never --all/--global
 #   (i) a fresh sweep lock is a silent no-op; a provably-abandoned one is reclaimed
 #   (j) idle treehouse-prune output stays quiet; a real prune is reported
 set -u
@@ -39,12 +41,15 @@ make_case() {
   fakebin="$case_dir/fakebin"
   mkdir -p "$case_dir/home/state" "$case_dir/home/projects" "$case_dir/home/config" "$fakebin"
 
-  # tmux stub: `display-message` decides endpoint liveness via
-  # FM_TEST_TMUX_DISPLAY_RC (default 1 = dead endpoint); everything else (e.g.
-  # kill-window) succeeds silently.
+  # tmux stub: `display-message` prints FM_TEST_TMUX_COMM (the pane's
+  # foreground command, which fm_backend_agent_alive classifies: a harness
+  # name = alive, a bare shell = dead, anything else = unknown) and exits
+  # FM_TEST_TMUX_DISPLAY_RC (default 1 = unreadable pane -> unknown);
+  # everything else (e.g. kill-window) succeeds silently.
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = display-message ]; then
+  [ -n "${FM_TEST_TMUX_COMM:-}" ] && printf '%s\n' "$FM_TEST_TMUX_COMM"
   exit "${FM_TEST_TMUX_DISPLAY_RC:-1}"
 fi
 exit 0
@@ -132,48 +137,51 @@ run_sweep() {
       "$@" "$SWEEP"
 }
 
-test_landed_dead_crew_is_reaped_on_second_probe() {
-  local case_dir out marker
+test_landed_dead_crew_is_reaped() {
+  local case_dir out
   case_dir=$(make_case landed-dead)
   write_meta "$case_dir" local-only ship
   wt_commit_file "$case_dir" feature.txt hello "landed work"
   # Merge the work into local main so it is LANDED for a local-only task.
   git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
-  marker="$case_dir/home/state/task-x1.sweep-dead"
 
-  # Default tmux stub: display-message exits 1 -> dead endpoint. The FIRST dead
-  # probe is not a confident reading: it records the marker and skips, quietly.
-  out=$(run_sweep "$case_dir") || fail "landed-dead: first sweep exited non-zero"
-  [ -z "$out" ] || fail "landed-dead: first dead probe must stay quiet (got: $out)"
-  assert_present "$case_dir/home/state/task-x1.meta" "landed-dead: first dead probe must not reap"
-  assert_present "$marker" "landed-dead: first dead probe must record the sweep-dead marker"
+  # A bare-shell pane is fm_backend_agent_alive's CONFIDENT dead reading: the
+  # agent process exited and left the shell behind.
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "landed-dead: sweep exited non-zero"
 
-  # SECOND consecutive dead probe: confident dead reading -> candidate -> reaped.
-  out=$(run_sweep "$case_dir") || fail "landed-dead: second sweep exited non-zero"
   assert_absent "$case_dir/home/state/task-x1.meta" "landed-dead: meta should be removed (reaped)"
   assert_contains "$out" "reaped task-x1" "landed-dead: sweep did not report the reap"
-  assert_absent "$marker" "landed-dead: teardown must remove the sweep-dead marker"
-  pass "landed + dead-endpoint crew is reaped on the second consecutive dead probe"
+  pass "landed crew with a confidently-dead agent (bare-shell pane) is reaped"
 }
 
-test_alive_observation_clears_dead_marker() {
-  local case_dir out stub marker
-  case_dir=$(make_case transient-dead)
+test_unknown_agent_reading_is_left() {
+  local case_dir out
+  case_dir=$(make_case unknown-agent)
   write_meta "$case_dir" local-only ship
+  # Work IS landed: if the unknown-guard were broken, teardown would reap it.
   wt_commit_file "$case_dir" feature.txt hello "landed work"
   git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
-  marker="$case_dir/home/state/task-x1.sweep-dead"
-  touch "$marker"   # a previous sweep hit a transient outage (dead probe)
-  stub=$(make_crew_state_stub "$case_dir" "state: working · source: pane · harness busy")
+  # A meta with no recorded target cannot be confirmed either way -> unknown.
+  fm_write_meta "$case_dir/home/state/task-n2.meta" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=local-only"
 
-  # The endpoint is back: the marker must be cleared and the crew left alone.
-  out=$(run_sweep "$case_dir" FM_TEST_TMUX_DISPLAY_RC=0 FM_CREW_STATE_BIN="$stub") \
-    || fail "transient-dead: sweep exited non-zero"
+  # Unreadable pane (default stub: display-message exits 1) -> unknown -> LEFT.
+  out=$(run_sweep "$case_dir") || fail "unknown-agent: sweep exited non-zero"
+  [ -z "$out" ] || fail "unknown-agent: an unreadable pane must stay quiet (got: $out)"
+  assert_present "$case_dir/home/state/task-x1.meta" "unknown-agent: an unreadable pane must never reap"
 
-  assert_absent "$marker" "transient-dead: an alive observation must clear the sweep-dead marker"
-  assert_present "$case_dir/home/state/task-x1.meta" "transient-dead: crew must not be reaped"
-  assert_not_contains "$out" "reaped task-x1" "transient-dead: sweep wrongly reaped after a transient outage"
-  pass "an alive observation clears the sweep-dead marker (transient outage never reaps)"
+  # A foreground command that is neither a harness nor a bare shell (a generic
+  # interpreter, transient wrapper, ...) is also unknown -> LEFT.
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=node FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "unknown-agent: sweep exited non-zero"
+  [ -z "$out" ] || fail "unknown-agent: an unattributable command must stay quiet (got: $out)"
+  assert_present "$case_dir/home/state/task-x1.meta" "unknown-agent: an unattributable command must never reap"
+  assert_present "$case_dir/home/state/task-n2.meta" "unknown-agent: a meta with no recorded target must never be reaped"
+  pass "an unknown agent reading (unreadable pane / unattributable command / no target) never reaps"
 }
 
 test_unlanded_uncommitted_is_left() {
@@ -183,10 +191,9 @@ test_unlanded_uncommitted_is_left() {
   wt_commit_file "$case_dir" feature.txt hello "committed"
   printf '%s\n' "uncommitted edit" > "$case_dir/wt/feature.txt"   # dirty
 
-  # Two sweeps: the first dead probe only records the marker; the second is the
-  # confident-dead candidate teardown then refuses.
-  run_sweep "$case_dir" >/dev/null || fail "unlanded-dirty: first sweep exited non-zero"
-  out=$(run_sweep "$case_dir") || fail "unlanded-dirty: sweep exited non-zero"
+  # A confidently-dead candidate (bare-shell pane) that teardown then refuses.
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "unlanded-dirty: sweep exited non-zero"
 
   assert_present "$case_dir/home/state/task-x1.meta" "unlanded-dirty: meta must remain (left)"
   assert_contains "$out" "left task-x1" "unlanded-dirty: sweep did not report leaving it"
@@ -200,8 +207,8 @@ test_unmerged_branch_is_left() {
   # Real commit on the fm/ branch, never pushed, no PR, not on origin/main.
   wt_commit_file "$case_dir" feature.txt hello "unmerged work"
 
-  run_sweep "$case_dir" >/dev/null || fail "unmerged-branch: first sweep exited non-zero"
-  out=$(run_sweep "$case_dir") || fail "unmerged-branch: sweep exited non-zero"
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "unmerged-branch: sweep exited non-zero"
 
   assert_present "$case_dir/home/state/task-x1.meta" "unmerged-branch: meta must remain (left)"
   assert_contains "$out" "left task-x1" "unmerged-branch: sweep did not report leaving it"
@@ -217,8 +224,8 @@ test_live_working_crew_is_left() {
   git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
   stub=$(make_crew_state_stub "$case_dir" "state: working · source: pane · harness busy")
 
-  # Alive endpoint (display-message exits 0) so crew-state is consulted.
-  out=$(run_sweep "$case_dir" FM_TEST_TMUX_DISPLAY_RC=0 FM_CREW_STATE_BIN="$stub") \
+  # A live agent process (a harness name in the pane) so crew-state is consulted.
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=claude FM_TEST_TMUX_DISPLAY_RC=0 FM_CREW_STATE_BIN="$stub") \
     || fail "live-working: sweep exited non-zero"
 
   assert_present "$case_dir/home/state/task-x1.meta" "live-working: a working crew must never be reaped"
@@ -237,39 +244,55 @@ test_secondmate_is_never_swept() {
     "mode=secondmate" \
     "home=$case_dir/home/dom-home"
 
-  # Even with a dead endpoint (default stub), a secondmate is never a candidate.
-  out=$(run_sweep "$case_dir") || fail "secondmate-skip: sweep exited non-zero"
+  # Even with a confidently-dead agent (bare-shell pane), a secondmate is
+  # never a candidate.
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "secondmate-skip: sweep exited non-zero"
 
   assert_present "$case_dir/home/state/dom-a1.meta" "secondmate-skip: secondmate meta must never be swept"
   assert_not_contains "$out" "dom-a1" "secondmate-skip: sweep touched a secondmate"
   pass "kind=secondmate meta is NEVER swept (persistent by design)"
 }
 
-# A landed, confidently-dead crew that a single sweep run will reap (the
-# sweep-dead marker is pre-seeded so the two-probe gate is already satisfied).
+# A landed crew that a sweep run with a confidently-dead agent reading
+# (FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) will reap.
 make_reap_ready_case() {  # name
   local case_dir
   case_dir=$(make_case "$1")
   write_meta "$case_dir" local-only ship
   wt_commit_file "$case_dir" feature.txt hello "landed work"
   git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
-  touch "$case_dir/home/state/task-x1.sweep-dead"
   printf '%s\n' "$case_dir"
 }
 
-test_pending_check_runs_before_teardown() {
-  local case_dir out
-  case_dir=$(make_reap_ready_case check-before-teardown)
-  printf '%s\n' '#!/usr/bin/env bash' 'echo "PR https://github.com/o/r/pull/7 merged"' \
-    > "$case_dir/home/state/task-x1.check.sh"
+test_pr_ready_armed_check_is_left() {
+  local case_dir out stub chk
+  case_dir=$(make_case pr-ready-check)
+  write_meta "$case_dir" no-mistakes ship
+  # Work is pushed (remote-reachable), so teardown WOULD reap if the
+  # pending-check gate were broken.
+  wt_commit_file "$case_dir" feature.txt hello "PR work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  # PR open, checks green: crew-state reports done and the merge poll is armed.
+  stub=$(make_crew_state_stub "$case_dir" "state: done · source: run · checks green: PR ready for review")
+  chk="$case_dir/home/state/task-x1.check.sh"
+  printf '%s\n' '#!/usr/bin/env bash' "touch '$case_dir/check-ran'" > "$chk"
 
-  out=$(run_sweep "$case_dir") || fail "check-before-teardown: sweep exited non-zero"
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=claude FM_TEST_TMUX_DISPLAY_RC=0 FM_CREW_STATE_BIN="$stub") \
+    || fail "pr-ready-check: sweep exited non-zero"
 
-  assert_contains "$out" "check task-x1: PR https://github.com/o/r/pull/7 merged" \
-    "check-before-teardown: pending check output must be folded into the summary"
-  assert_contains "$out" "reaped task-x1" "check-before-teardown: the reap should still proceed"
-  assert_absent "$case_dir/home/state/task-x1.check.sh" "check-before-teardown: teardown should remove the check"
-  pass "a pending check.sh runs once and its wake output is surfaced before teardown removes it"
+  [ -z "$out" ] || fail "pr-ready-check: an armed merge poll must stay quiet (got: $out)"
+  assert_present "$case_dir/home/state/task-x1.meta" "pr-ready-check: a PR-ready crew must not be reaped while its merge poll is armed"
+  assert_present "$chk" "pr-ready-check: the armed merge poll must be preserved for the watcher's check pass"
+  assert_absent "$case_dir/check-ran" "pr-ready-check: the sweep must not run the check itself"
+
+  # The gate holds on the confident-dead path too (a crew that exited after
+  # opening its PR still awaits the captain's merge).
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "pr-ready-check: dead-path sweep exited non-zero"
+  assert_present "$case_dir/home/state/task-x1.meta" "pr-ready-check: a dead PR-ready crew with an armed poll must also be LEFT"
+  assert_present "$chk" "pr-ready-check: the dead path must preserve the armed merge poll too"
+  pass "an alive+done PR-ready crew with an armed check.sh is LEFT (pending-check gate)"
 }
 
 test_fresh_sweep_lock_is_silent_noop() {
@@ -277,7 +300,8 @@ test_fresh_sweep_lock_is_silent_noop() {
   case_dir=$(make_reap_ready_case fresh-lock)
   mkdir "$case_dir/home/state/.sweep.lock"   # fresh: another sweep is running
 
-  out=$(run_sweep "$case_dir") || fail "fresh-lock: sweep exited non-zero"
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "fresh-lock: sweep exited non-zero"
 
   [ -z "$out" ] || fail "fresh-lock: sweep must stay quiet while the lock is held (got: $out)"
   assert_present "$case_dir/home/state/task-x1.meta" "fresh-lock: meta must remain while the lock is held"
@@ -296,7 +320,8 @@ test_stale_sweep_lock_is_reclaimed() {
   printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$case_dir/fakebin/lsof"
   chmod +x "$case_dir/fakebin/lsof"
 
-  out=$(run_sweep "$case_dir") || fail "stale-lock: sweep exited non-zero"
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "stale-lock: sweep exited non-zero"
 
   assert_contains "$out" "reaped task-x1" "stale-lock: an abandoned sweep lock must be reclaimed"
   assert_absent "$case_dir/home/state/task-x1.meta" "stale-lock: meta should be removed after the reclaim"
@@ -347,13 +372,13 @@ test_orphan_action_output_is_reported() {
   pass "a real treehouse prune is reported as an orphan-worktrees line"
 }
 
-test_landed_dead_crew_is_reaped_on_second_probe
-test_alive_observation_clears_dead_marker
+test_landed_dead_crew_is_reaped
+test_unknown_agent_reading_is_left
 test_unlanded_uncommitted_is_left
 test_unmerged_branch_is_left
 test_live_working_crew_is_left
 test_secondmate_is_never_swept
-test_pending_check_runs_before_teardown
+test_pr_ready_armed_check_is_left
 test_fresh_sweep_lock_is_silent_noop
 test_stale_sweep_lock_is_reclaimed
 test_orphan_pass_scopes_prune_per_pool
