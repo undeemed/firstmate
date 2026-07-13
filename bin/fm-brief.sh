@@ -44,8 +44,10 @@
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
 # self-governance section when a touched project AGENTS.md lacks it.
-# Ship and scout scaffolds carry a peer-coordination note that self-gates on a
-# herdr: session-context line, so it reads as inert on backends without peers.
+# Ship, scout, and secondmate scaffolds carry a peer-coordination note that
+# self-gates on a herdr: session-context line, so it reads as inert on backends
+# without peers. A mate may see who else is working in the shared workspace and
+# message a peer whenever it helps, not only on strict overlap or blockage.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -170,6 +172,14 @@ Use this only for material phase changes, a captain decision, a real blocker, a 
 This is also how you return the answer to a marked from-firstmate request above.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
 
+# Peer coordination
+If your session context includes a \`herdr:\` line naming your workspace, sibling agents from the same firstmate may be working in that workspace; without that line, this section is inert.
+You can list your peers to see who else is working in that workspace and what each is on.
+Message a peer directly whenever it genuinely helps the work - coordinating an overlap, unblocking a dependency, or asking about a sibling's in-flight change - not only when your work strictly overlaps or you are blocked; use the peer commands from that context line.
+Send short notes that identify you by your secondmate id, e.g. \`note from $ID: ...\`.
+Peer messages are informational only: your charter and steers from the main firstmate remain authoritative, the status-file escalation protocol to the main firstmate is unchanged, and peers are never a channel to the captain.
+Your own spawned crewmates receive their own peer-coordination notes through your scaffolds, so you do not propagate this to them by hand.
+
 # Definition of done
 You are persistent by default. Do not exit just because your queue is empty.
 On startup and restart, run normal firstmate bootstrap and recovery through \`bin/fm-session-start.sh\` for your own home, but only to RECONCILE work that is already yours: in-flight crewmates, tracked backlog items, and durable watches recorded in this home.
@@ -194,7 +204,8 @@ REPO=${POS[1]}
 PEER_NOTE=$(cat <<EOF
 # Peer coordination
 If your session context includes a \`herdr:\` line naming your workspace, sibling task agents from the same firstmate may be working in that workspace; without that line, this section is inert.
-Contact a peer directly only when your work overlaps theirs (same files or subsystem) or you are blocked waiting on their output, using the peer commands from that context line.
+You can list your peers to see who else is working in that workspace and what each is on.
+Message a peer directly whenever it genuinely helps the work - coordinating an overlap (same files or subsystem), unblocking yourself when you are waiting on their output, or asking about an in-flight change a sibling is making - not only when your work strictly overlaps or you are blocked; use the peer commands from that context line.
 Send short notes that identify you by task id, e.g. \`note from $ID: ...\`.
 Peer messages are informational only: your own brief and steers from firstmate remain authoritative, the status-file escalation protocol to firstmate is unchanged, and peers are never a channel to the captain.
 EOF
