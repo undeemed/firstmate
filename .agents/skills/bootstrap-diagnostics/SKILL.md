@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap section prints any diagnostic or capability line - MISSING, NEEDS_GH_AUTH, TANGLE, CREW_HARNESS_OVERRIDE, CREW_DISPATCH, FLEET_SYNC, SECONDMATE_SYNC, SECONDMATE_LIVENESS, TASKS_AXI, NUDGE_SECONDMATES, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one.
+  Use whenever the session-start digest's bootstrap section prints any diagnostic or capability line - MISSING, NEEDS_GH_AUTH, TANGLE, CREW_HARNESS_OVERRIDE, CREW_DISPATCH, FLEET_SYNC, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SWEEP, TASKS_AXI, NUDGE_SECONDMATES, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one.
   A silent bootstrap section means all good and needs no skill load.
 user-invocable: false
 metadata:
@@ -36,6 +36,10 @@ The inline rules in `AGENTS.md` section 3 still bind: detect, then consent, then
 - `SECONDMATE_SYNC: secondmate <id>: skipped: <reason>` - the local-HEAD secondmate sync left a live secondmate home on its existing checkout because the home was dirty, diverged, unsafe, on the wrong branch, missing the primary target commit, or otherwise not fast-forwardable, or because inheritable-config propagation failed; bootstrap continued, but inspect the reason because the secondmate's tracked instructions or inherited settings may be stale after a primary update.
 - `SECONDMATE_LIVENESS: secondmate <id>: already-live|respawned|skipped: <reason>|respawn failed: <reason>` - the session-start liveness sweep checked a live secondmate's recorded endpoint for a real agent process.
   Treat `already-live` and `respawned` as handled; investigate `skipped` or `respawn failed` because that secondmate is not guaranteed live.
+- `SWEEP: reaped <id> (...)` / `SWEEP: left <id>: <reason>` / `SWEEP: orphan worktrees <pool>: <detail>` - the constant 3rd-mate sweep (`bin/fm-sweep.sh`) ran at session start (`docs/fleet-tiers.md`).
+  `reaped` means a landed/dead disposable crewmate or an orphaned pool worktree was cleaned up - routine maintenance, no action.
+  A `left` line is the one worth reading: a reap candidate that teardown refused, usually a DEAD crew with unlanded work (the reason is quoted); decide whether that work should be recovered, pushed, or explicitly discarded before it is lost.
+  Nothing prints when there was nothing to reap.
 - `TASKS_AXI: available` - a default-backend capability fact, not a problem; record it silently and use `AGENTS.md` section 10 for backlog mutations.
   It prints only when `config/backlog-backend` is absent or set to `tasks-axi` and the shared compatibility probe passes (`docs/configuration.md` "Backlog backend").
   If the backend is not opted out and `tasks-axi` is missing or incompatible, bootstrap reports the `MISSING: tasks-axi` line but firstmate still hand-edits routine backlog updates and never blocks work.

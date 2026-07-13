@@ -348,6 +348,27 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
   pass "fm-brief.sh: custom pause verb renders in every scaffold"
 }
 
+test_secondmate_charter_carries_tier_role() {
+  local home brief
+  home="$TMP_ROOT/tier-role-home"
+  mkdir -p "$home/data"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='ops' \
+    "$ROOT/bin/fm-brief.sh" brief-tier-role --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/brief-tier-role/brief.md"
+  assert_present "$brief" "tier-role charter was not scaffolded"
+  assert_grep "strict three-tier hierarchy" "$brief" "charter did not state the three-tier hierarchy"
+  # shellcheck disable=SC2016 # literal backtick path must remain unexpanded
+  assert_grep 'sweep your own 3rd mates' "$brief" "charter did not say the secondmate sweeps its own 3rd mates"
+  # shellcheck disable=SC2016 # literal backtick path must remain unexpanded
+  assert_grep '`bin/fm-sweep.sh`' "$brief" "charter did not point at the sweep script"
+  # shellcheck disable=SC2016 # literal backtick path must remain unexpanded
+  assert_grep '`bin/fm-consult.sh secondmate' "$brief" "charter did not offer the codex consult gate"
+  assert_grep "never coordinate with other secondmates" "$brief" \
+    "charter did not state secondmates never coordinate with each other"
+  assert_grep "compacts your context" "$brief" "charter did not note main-firstmate context compaction"
+  pass "fm-brief.sh: secondmate charter carries the three-tier role, sweep, consult, and context-compaction contract"
+}
+
 test_script_parses
 test_comsub_heredoc_bodies_are_apostrophe_free
 test_help_includes_entire_header
@@ -361,3 +382,4 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
 test_secondmate_no_projects_charter
 test_pause_verb_override_renders_all_brief_scaffolds
+test_secondmate_charter_carries_tier_role
