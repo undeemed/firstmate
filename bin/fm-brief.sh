@@ -205,7 +205,7 @@ PEER_NOTE=$(cat <<EOF
 # Peer coordination
 If your session context includes a \`herdr:\` line naming your workspace, sibling task agents from the same firstmate may be working in that workspace; without that line, this section is inert.
 You can list your peers to see who else is working in that workspace and what each is on.
-Message a peer directly whenever it genuinely helps the work - coordinating an overlap (same files or subsystem), unblocking yourself when you are waiting on their output, or asking about a sibling's in-flight change - not only when your work strictly overlaps or you are blocked; use the peer commands from that context line.
+Message a peer directly whenever it genuinely helps the work - coordinating an overlap (same files or subsystem), unblocking yourself when you are waiting on their output, or asking about an in-flight change a sibling is making - not only when your work strictly overlaps or you are blocked; use the peer commands from that context line.
 Send short notes that identify you by task id, e.g. \`note from $ID: ...\`.
 Peer messages are informational only: your own brief and steers from firstmate remain authoritative, the status-file escalation protocol to firstmate is unchanged, and peers are never a channel to the captain.
 EOF
