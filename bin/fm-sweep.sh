@@ -45,7 +45,17 @@
 #
 # REAP GATE (cheap-first; fm-teardown is the final safety net either way):
 #   1. dead endpoint (fm_backend_target_exists is false, or no target recorded)
-#      -> candidate. A crashed/exited crew, whose lease would otherwise leak.
+#      -> candidate, but only on the SECOND consecutive dead probe. A single
+#      failed probe is not a confident dead reading: fm_backend_target_exists
+#      reports an unqueryable pane (herdr server down, an unauthenticated cmux
+#      socket, a transient CLI error) as gone, so the first dead reading only
+#      records state/<id>.sweep-dead and SKIPS the task this sweep. The task
+#      becomes a candidate when that marker already existed, i.e. it was dead
+#      on the previous sweep too - the same confident-dead bar the secondmate
+#      liveness sweep requires. The marker is cleared whenever the endpoint is
+#      observed alive, and fm-teardown removes it with the task's other state
+#      files so it never leaks. A crashed/exited crew, whose lease would
+#      otherwise leak, is still reaped - one sweep later.
 #   2. else the endpoint is alive: read the crew's authoritative current state
 #      (bin/fm-crew-state.sh). state == done -> candidate (idle-done: a merged
 #      ship, a checks-passed PR that teardown will refuse until merged, or a
@@ -55,19 +65,26 @@
 #      critically, that a just-spawned crew (alive, state unknown until it starts)
 #      is never mistaken for an orphan.
 #
+# Before tearing down a candidate that still has a pending state/<id>.check.sh
+# (e.g. firstmate's merged-PR poll), the sweep runs that check ONCE (bounded by
+# FM_CHECK_TIMEOUT) and folds any output into the summary as a "check <id>: ..."
+# line, so an externally-merged PR is surfaced before teardown removes the poll.
+#
 # PROPERTIES: lock-gated by its callers (session-start runs it only when it holds
 # the fleet lock; the watcher is a per-home singleton), best-effort and non-fatal
 # (one task's failure never aborts the sweep), idempotent, fast, and quiet when
 # there is nothing to reap. When it does act it prints a bounded plain-text
-# summary to stdout (reaped/left-why/orphans); callers relay it (session-start as
-# a SWEEP: digest line) or discard it (the watcher, for which reaping is silent
-# maintenance). A best-effort concurrency guard makes overlapping runs a no-op.
+# summary to stdout (checks/reaped/left-why/orphans); callers relay it
+# (session-start as a SWEEP: digest line) or discard it (the watcher, for which
+# reaping is silent maintenance). A best-effort concurrency guard makes
+# overlapping runs a no-op.
 #
 # Usage: fm-sweep.sh
 # Env:
 #   FM_CREW_STATE_BIN   override the crew-state reader (tests stub it)
 #   FM_SWEEP_MAX_LINES  cap the summary at N lines (default 40)
 #   FM_SWEEP_PRUNE_ORPHANS=0  skip the treehouse-prune orphan pass
+#   FM_CHECK_TIMEOUT    seconds allowed for a pre-teardown check.sh run (default 30)
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -88,6 +105,8 @@ TEARDOWN="$SCRIPT_DIR/fm-teardown.sh"
 FM_LOCK_LOG_PREFIX=fm-sweep
 MAX_LINES=${FM_SWEEP_MAX_LINES:-40}
 case "$MAX_LINES" in ''|*[!0-9]*) MAX_LINES=40 ;; esac
+CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}
+case "$CHECK_TIMEOUT" in ''|*[!0-9]*) CHECK_TIMEOUT=30 ;; esac
 SWEEP_LOCK="$STATE/.sweep.lock"
 SWEEP_LOCK_STALE_SECS=${FM_SWEEP_LOCK_STALE_SECS:-600}
 case "$SWEEP_LOCK_STALE_SECS" in ''|*[!0-9]*) SWEEP_LOCK_STALE_SECS=600 ;; esac
@@ -96,9 +115,12 @@ case "$SWEEP_LOCK_STALE_SECS" in ''|*[!0-9]*) SWEEP_LOCK_STALE_SECS=600 ;; esac
 # manual run over a watcher-launched one, say) cannot race fm-teardown on the
 # same task. A stale lock left by a killed sweep is reclaimed once it is provably
 # abandoned (no live holder AND old enough), reusing the shared staleness proof.
+# The lock directory itself is the existence/age-checked path: it is created
+# atomically by the mkdir, so there is no window in which a killed sweep leaves
+# a lock the proof cannot see.
 acquire_sweep_lock() {
   mkdir "$SWEEP_LOCK" 2>/dev/null && return 0
-  if fm_lock_is_provably_stale "$SWEEP_LOCK/held" "$SWEEP_LOCK" "$SWEEP_LOCK_STALE_SECS"; then
+  if fm_lock_is_provably_stale "$SWEEP_LOCK" "" "$SWEEP_LOCK_STALE_SECS"; then
     rm -rf "$SWEEP_LOCK" 2>/dev/null || true
     mkdir "$SWEEP_LOCK" 2>/dev/null && return 0
   fi
@@ -114,12 +136,29 @@ crew_state_token() {  # <id>
   printf '%s' "${line%% *}"
 }
 
+# Run a task's pending state/<id>.check.sh once, bounded, best-effort. Same
+# contract and timeout ladder as the watcher's check pass (bin/fm-watch.sh
+# run_check): output only when firstmate should wake.
+run_task_check() {  # <check-script>
+  local c=$1
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$CHECK_TIMEOUT" bash "$c" 2>/dev/null || true
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$CHECK_TIMEOUT" bash "$c" 2>/dev/null || true
+  else
+    # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
+    perl -e 'my $t = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV } local $SIG{ALRM} = sub { kill "TERM", -$pid; select undef, undef, undef, 0.2; kill "KILL", -$pid; exit 124 }; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$CHECK_TIMEOUT" bash "$c" 2>/dev/null || true
+  fi
+}
+
+CHECKS=()
 REAPED=()
 LEFT=()
 ORPHANS=()
 
 sweep_metas() {
   local meta id kind wt backend target state exists out reason
+  local dead_marker chk chk_out
   [ -d "$STATE" ] || return 0
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
@@ -139,11 +178,15 @@ sweep_metas() {
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
 
-    # Cheap first: a gone endpoint is a candidate outright (a crashed/exited crew
-    # whose lease would otherwise leak). Only for a still-alive endpoint do we
-    # pay the crew-state read, and only to distinguish idle-done from everything
-    # else. A live non-done crew (working, parked, blocked, failed, or a
-    # just-spawned unknown) is always left.
+    # Cheap first: a gone endpoint is a candidate, but only on the SECOND
+    # consecutive dead probe (see the REAP GATE header): a single failed probe
+    # can be a transient backend outage, not a confident dead reading, so the
+    # first one records state/<id>.sweep-dead and skips the task this sweep.
+    # An alive observation clears the marker. Only for a still-alive endpoint
+    # do we pay the crew-state read, and only to distinguish idle-done from
+    # everything else. A live non-done crew (working, parked, blocked, failed,
+    # or a just-spawned unknown) is always left.
+    dead_marker="$STATE/$id.sweep-dead"
     exists=yes
     if [ -n "$target" ]; then
       fm_backend_target_exists "$backend" "$target" "fm-$id" 2>/dev/null || exists=no
@@ -151,8 +194,20 @@ sweep_metas() {
       exists=no
     fi
     if [ "$exists" = yes ]; then
+      rm -f "$dead_marker" 2>/dev/null || true
       state=$(crew_state_token "$id")
       [ "$state" = "done" ] || continue
+    elif [ ! -e "$dead_marker" ]; then
+      touch "$dead_marker" 2>/dev/null || true
+      continue
+    fi
+
+    # Surface a pending merge/check poll before teardown removes it: run the
+    # task's check.sh once and fold any wake output into the summary.
+    chk="$STATE/$id.check.sh"
+    if [ -f "$chk" ]; then
+      chk_out=$(run_task_check "$chk" | sed -n '1p')
+      [ -n "$chk_out" ] && CHECKS+=("$id: $chk_out")
     fi
 
     if out=$("$TEARDOWN" "$id" 2>&1); then
@@ -178,21 +233,28 @@ sweep_orphan_worktrees() {
     # pool via cwd (never --all/--global). Best-effort: a prune failure or a
     # non-treehouse-managed clone is a silent no-op.
     out=$( cd "$proj" && treehouse prune --yes 2>&1 ) || continue
-    # Report only when it plainly reclaimed something; the common "nothing to
-    # prune" answer stays quiet.
-    case "$out" in
-      *[Rr]emov*|*[Pp]run*[ed]*|*[Rr]eclaim*)
-        summary=$(printf '%s\n' "$out" | grep -iE 'remov|prun|reclaim' | head -1 | sed 's/^[[:space:]]*//')
-        [ -n "$summary" ] && ORPHANS+=("$name: $summary")
-        ;;
-    esac
+    # Report only when it plainly reclaimed something: a past-tense action word
+    # on a line that is not an idle answer ("nothing to prune", "nothing
+    # removed", "0 removed"). The common no-op answer stays quiet.
+    summary=$(printf '%s\n' "$out" \
+      | grep -iE 'pruned|removed|reclaimed' \
+      | grep -ivE '(^|[[:space:]])(nothing|none|no|0)([[:space:]]|$)' \
+      | head -1 | sed 's/^[[:space:]]*//' || true)
+    if [ -n "$summary" ]; then
+      ORPHANS+=("$name: $summary")
+    fi
   done
 }
 
 emit_summary() {
   local total=0 item printed=0
-  total=$(( ${#REAPED[@]} + ${#LEFT[@]} + ${#ORPHANS[@]} ))
+  total=$(( ${#CHECKS[@]} + ${#REAPED[@]} + ${#LEFT[@]} + ${#ORPHANS[@]} ))
   [ "$total" -gt 0 ] || return 0
+  for item in "${CHECKS[@]:-}"; do
+    [ -n "$item" ] || continue
+    [ "$printed" -lt "$MAX_LINES" ] && printf 'check %s\n' "$item"
+    printed=$((printed + 1))
+  done
   for item in "${REAPED[@]:-}"; do
     [ -n "$item" ] || continue
     [ "$printed" -lt "$MAX_LINES" ] && printf 'reaped %s\n' "$item"
