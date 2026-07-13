@@ -44,37 +44,43 @@
 #     pruning the pool the running primary lives in.
 #
 # REAP GATE (cheap-first; fm-teardown is the final safety net either way):
-#   1. dead endpoint (fm_backend_target_exists is false, or no target recorded)
-#      -> candidate, but only on the SECOND consecutive dead probe. A single
-#      failed probe is not a confident dead reading: fm_backend_target_exists
-#      reports an unqueryable pane (herdr server down, an unauthenticated cmux
-#      socket, a transient CLI error) as gone, so the first dead reading only
-#      records state/<id>.sweep-dead and SKIPS the task this sweep. The task
-#      becomes a candidate when that marker already existed, i.e. it was dead
-#      on the previous sweep too - the same confident-dead bar the secondmate
-#      liveness sweep requires. The marker is cleared whenever the endpoint is
-#      observed alive, and fm-teardown removes it with the task's other state
-#      files so it never leaks. A crashed/exited crew, whose lease would
-#      otherwise leak, is still reaped - one sweep later.
-#   2. else the endpoint is alive: read the crew's authoritative current state
-#      (bin/fm-crew-state.sh). state == done -> candidate (idle-done: a merged
-#      ship, a checks-passed PR that teardown will refuse until merged, or a
-#      finished scout whose report exists). Any other alive state - working,
-#      parked, blocked, failed, or unknown - is LEFT untouched. Leaving alive
-#      non-done crews is what guarantees a live WORKING agent is never reaped and,
-#      critically, that a just-spawned crew (alive, state unknown until it starts)
-#      is never mistaken for an orphan.
+#   1. fm_backend_agent_alive (bin/fm-backend.sh) reads the endpoint for a live
+#      harness-agent PROCESS - the same confident-dead bar the session-start
+#      secondmate liveness sweep requires, NOT the pane-presence-only
+#      fm_backend_target_exists (which reports an unqueryable pane - herdr
+#      server down, an unauthenticated cmux socket, a transient CLI error - as
+#      gone). dead (confident: a bare shell, or a structurally-gone/no-agent
+#      pane) -> candidate, so a crashed/exited crew whose lease would otherwise
+#      leak is reaped.
+#   2. alive (a real agent process): read the crew's authoritative current
+#      state (bin/fm-crew-state.sh). state == done -> candidate (idle-done: a
+#      merged ship, or a finished scout whose report exists; a checks-passed
+#      PR-ready ship task is instead protected by its armed check.sh, below).
+#      Any other alive state - working, parked, blocked, failed, or unknown -
+#      is LEFT untouched. Leaving alive non-done crews is what guarantees a
+#      live WORKING agent is never reaped and, critically, that a just-spawned
+#      crew (alive, state unknown until it starts) is never mistaken for an
+#      orphan.
+#   3. unknown (ambiguous, unreadable, a transient backend outage, or a backend
+#      whose agent classifier is unverified - zellij, orca, cmux) -> ALWAYS
+#      LEFT, never a candidate: the fm_backend_agent_alive contract forbids
+#      licensing an action from unknown alone. A meta with no recorded target
+#      cannot be confirmed either way and is treated the same.
 #
-# Before tearing down a candidate that still has a pending state/<id>.check.sh
-# (e.g. firstmate's merged-PR poll), the sweep runs that check ONCE (bounded by
-# FM_CHECK_TIMEOUT) and folds any output into the summary as a "check <id>: ..."
-# line, so an externally-merged PR is surfaced before teardown removes the poll.
+# A candidate that still has an armed state/<id>.check.sh (e.g. firstmate's
+# merged-PR poll) is LEFT this sweep, whichever path made it a candidate: an
+# armed check means the task deliberately awaits an external event - a PR-ready
+# ship task awaiting the captain's merge - so the sweep preserves its meta
+# (pr=, pr_head=, X-mode links), worktree, and poll, and the watcher's check
+# pass fires the normal durable merge wake. Scout tasks never arm a check and
+# stay reapable; a ship task's normal post-merge teardown flow removes the poll
+# with the rest of its state.
 #
 # PROPERTIES: lock-gated by its callers (session-start runs it only when it holds
 # the fleet lock; the watcher is a per-home singleton), best-effort and non-fatal
 # (one task's failure never aborts the sweep), idempotent, fast, and quiet when
 # there is nothing to reap. When it does act it prints a bounded plain-text
-# summary to stdout (checks/reaped/left-why/orphans); callers relay it
+# summary to stdout (reaped/left-why/orphans); callers relay it
 # (session-start as a SWEEP: digest line) or discard it (the watcher, for which
 # reaping is silent maintenance). A best-effort concurrency guard makes
 # overlapping runs a no-op.
@@ -84,7 +90,6 @@
 #   FM_CREW_STATE_BIN   override the crew-state reader (tests stub it)
 #   FM_SWEEP_MAX_LINES  cap the summary at N lines (default 40)
 #   FM_SWEEP_PRUNE_ORPHANS=0  skip the treehouse-prune orphan pass
-#   FM_CHECK_TIMEOUT    seconds allowed for a pre-teardown check.sh run (default 30)
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -105,8 +110,6 @@ TEARDOWN="$SCRIPT_DIR/fm-teardown.sh"
 FM_LOCK_LOG_PREFIX=fm-sweep
 MAX_LINES=${FM_SWEEP_MAX_LINES:-40}
 case "$MAX_LINES" in ''|*[!0-9]*) MAX_LINES=40 ;; esac
-CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}
-case "$CHECK_TIMEOUT" in ''|*[!0-9]*) CHECK_TIMEOUT=30 ;; esac
 SWEEP_LOCK="$STATE/.sweep.lock"
 SWEEP_LOCK_STALE_SECS=${FM_SWEEP_LOCK_STALE_SECS:-600}
 case "$SWEEP_LOCK_STALE_SECS" in ''|*[!0-9]*) SWEEP_LOCK_STALE_SECS=600 ;; esac
@@ -136,29 +139,12 @@ crew_state_token() {  # <id>
   printf '%s' "${line%% *}"
 }
 
-# Run a task's pending state/<id>.check.sh once, bounded, best-effort. Same
-# contract and timeout ladder as the watcher's check pass (bin/fm-watch.sh
-# run_check): output only when firstmate should wake.
-run_task_check() {  # <check-script>
-  local c=$1
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$CHECK_TIMEOUT" bash "$c" 2>/dev/null || true
-  elif command -v gtimeout >/dev/null 2>&1; then
-    gtimeout "$CHECK_TIMEOUT" bash "$c" 2>/dev/null || true
-  else
-    # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
-    perl -e 'my $t = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV } local $SIG{ALRM} = sub { kill "TERM", -$pid; select undef, undef, undef, 0.2; kill "KILL", -$pid; exit 124 }; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$CHECK_TIMEOUT" bash "$c" 2>/dev/null || true
-  fi
-}
-
-CHECKS=()
 REAPED=()
 LEFT=()
 ORPHANS=()
 
 sweep_metas() {
-  local meta id kind wt backend target state exists out reason
-  local dead_marker chk chk_out
+  local meta id kind wt backend target agent state out reason
   [ -d "$STATE" ] || return 0
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
@@ -178,37 +164,32 @@ sweep_metas() {
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
 
-    # Cheap first: a gone endpoint is a candidate, but only on the SECOND
-    # consecutive dead probe (see the REAP GATE header): a single failed probe
-    # can be a transient backend outage, not a confident dead reading, so the
-    # first one records state/<id>.sweep-dead and skips the task this sweep.
-    # An alive observation clears the marker. Only for a still-alive endpoint
-    # do we pay the crew-state read, and only to distinguish idle-done from
-    # everything else. A live non-done crew (working, parked, blocked, failed,
-    # or a just-spawned unknown) is always left.
-    dead_marker="$STATE/$id.sweep-dead"
-    exists=yes
+    # Confident-dead gate (see the REAP GATE header): only a confident dead
+    # agent-process reading (fm_backend_agent_alive) makes a candidate outright.
+    # unknown - ambiguous, unreadable, a transient backend outage, an unverified
+    # backend classifier, or no recorded target - never licenses a reap. Only
+    # for a live agent do we pay the crew-state read, and only to distinguish
+    # idle-done from everything else: a live non-done crew (working, parked,
+    # blocked, failed, or a just-spawned unknown) is always left.
+    agent=unknown
     if [ -n "$target" ]; then
-      fm_backend_target_exists "$backend" "$target" "fm-$id" 2>/dev/null || exists=no
-    else
-      exists=no
+      agent=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null)
     fi
-    if [ "$exists" = yes ]; then
-      rm -f "$dead_marker" 2>/dev/null || true
-      state=$(crew_state_token "$id")
-      [ "$state" = "done" ] || continue
-    elif [ ! -e "$dead_marker" ]; then
-      touch "$dead_marker" 2>/dev/null || true
-      continue
-    fi
+    case "$agent" in
+      dead) ;;
+      alive)
+        state=$(crew_state_token "$id")
+        [ "$state" = "done" ] || continue
+        ;;
+      *) continue ;;
+    esac
 
-    # Surface a pending merge/check poll before teardown removes it: run the
-    # task's check.sh once and fold any wake output into the summary.
-    chk="$STATE/$id.check.sh"
-    if [ -f "$chk" ]; then
-      chk_out=$(run_task_check "$chk" | sed -n '1p')
-      [ -n "$chk_out" ] && CHECKS+=("$id: $chk_out")
-    fi
+    # Pending-check gate: an armed check.sh (e.g. the merged-PR poll) means the
+    # task deliberately awaits an external event - a PR-ready ship task awaiting
+    # the captain's merge. Leave it this sweep, whichever path made it a
+    # candidate; the watcher's check pass owns the wake, and the normal
+    # post-merge teardown flow removes the poll with the rest of its state.
+    [ -f "$STATE/$id.check.sh" ] && continue
 
     if out=$("$TEARDOWN" "$id" 2>&1); then
       REAPED+=("$id ($kind)")
@@ -248,13 +229,8 @@ sweep_orphan_worktrees() {
 
 emit_summary() {
   local total=0 item printed=0
-  total=$(( ${#CHECKS[@]} + ${#REAPED[@]} + ${#LEFT[@]} + ${#ORPHANS[@]} ))
+  total=$(( ${#REAPED[@]} + ${#LEFT[@]} + ${#ORPHANS[@]} ))
   [ "$total" -gt 0 ] || return 0
-  for item in "${CHECKS[@]:-}"; do
-    [ -n "$item" ] || continue
-    [ "$printed" -lt "$MAX_LINES" ] && printf 'check %s\n' "$item"
-    printed=$((printed + 1))
-  done
   for item in "${REAPED[@]:-}"; do
     [ -n "$item" ] || continue
     [ "$printed" -lt "$MAX_LINES" ] && printf 'reaped %s\n' "$item"

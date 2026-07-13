@@ -365,8 +365,10 @@ test_secondmate_charter_carries_tier_role() {
   assert_grep '`bin/fm-consult.sh secondmate' "$brief" "charter did not offer the codex consult gate"
   assert_grep "never coordinate with other secondmates" "$brief" \
     "charter did not state secondmates never coordinate with each other"
-  assert_grep "compacts your context" "$brief" "charter did not note main-firstmate context compaction"
-  pass "fm-brief.sh: secondmate charter carries the three-tier role, sweep, consult, and context-compaction contract"
+  assert_grep "harness compacts your chat context" "$brief" "charter did not note the harness's own context compaction"
+  assert_no_grep "main firstmate compacts" "$brief" \
+    "charter must not claim the main firstmate manages the secondmate's context"
+  pass "fm-brief.sh: secondmate charter carries the three-tier role, sweep, consult, and context-durability contract"
 }
 
 test_script_parses
