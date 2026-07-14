@@ -60,6 +60,8 @@ If you have changed away from the firstmate home in an interactive shell, invoke
 | `fm-pr-merge.sh`         | Record PR metadata, then merge a task's PR from its full GitHub URL                  |
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task                               |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require scout reports, retire secondmate homes |
+| `fm-sweep.sh`            | Constant per-home 3rd-mate sweep: reap landed/dead crewmates via teardown and orphan pool worktrees via `treehouse prune` (docs/fleet-tiers.md) |
+| `fm-consult.sh`          | Per-tier codex consult gate: map tier to codex model at xhigh, advisory and non-blocking (docs/fleet-tiers.md) |
 | `fm-harness.sh`          | Detect the running harness and resolve crew or secondmate harness, model, and effort |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                      |
 | `fm-x-lib.sh`            | Shared X-mode config, relay, and reply-threading helpers                             |
