@@ -30,6 +30,10 @@
 #                       MUTATING sweeps (secondmate fast-forward, secondmate
 #                       liveness, X-mode artifact writes, fleet sync) run only
 #                       when this session actually holds the lock.
+#   2b. sweep         - reap this home's landed/dead disposable 3rd mates and
+#                       return orphaned pool worktrees (bin/fm-sweep.sh); mutates,
+#                       so locked-only, and the watcher runs the same sweep on a
+#                       bounded cadence. Reported as SWEEP: lines.
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
 #                       when locked.
 #   4. context digest - data/projects.md, data/secondmates.md, data/captain.md,
@@ -155,7 +159,7 @@ if [ "$LOCK_RC" -ne 0 ]; then
     printf '●  READ-ONLY SESSION - ANOTHER LIVE FIRSTMATE SESSION HOLDS THE FLEET LOCK\n'
     printf '●  %s\n' "$LOCK_OUT"
     printf '●  Skipping every mutating step: secondmate sync, X-mode artifacts,\n'
-    printf '●  fleet sync, and wake-queue drain. Detect-only bootstrap diagnostics and\n'
+    printf '●  fleet sync, 3rd-mate sweep, and wake-queue drain. Detect-only bootstrap diagnostics and\n'
     printf '●  the rest of this read-only-safe digest still ran below.\n'
     printf '●  Operate read-only until this resolves - do not spawn, steer, merge, or\n'
     printf '●  otherwise mutate fleet state from this session.\n'
@@ -174,6 +178,22 @@ if [ -n "$BOOT_OUT" ]; then
   printf '%s\n' "$BOOT_OUT"
 else
   printf '(silent - all good)\n'
+fi
+
+# --- 2b. sweep (locked; the session-start half of the constant 3rd-mate sweep) -
+# Reap this home's landed/dead disposable crewmates and return orphaned pool
+# worktrees (bin/fm-sweep.sh). It mutates, so it runs only when this session
+# holds the fleet lock - alongside bootstrap's other locked sweeps - and is
+# skipped on the read-only path. The watcher runs the same sweep on a bounded
+# cadence; here it runs once at session start. Best-effort and non-fatal; quiet
+# when there is nothing to reap.
+if [ "$READ_ONLY" -eq 0 ]; then
+  SWEEP_OUT=$("$SCRIPT_DIR/fm-sweep.sh" 2>/dev/null || true)
+  if [ -n "$SWEEP_OUT" ]; then
+    printf '%s\n' "$SWEEP_OUT" | while IFS= read -r sweep_line; do
+      [ -n "$sweep_line" ] && printf 'SWEEP: %s\n' "$sweep_line"
+    done
+  fi
 fi
 
 # --- 3. wake-drain -------------------------------------------------------

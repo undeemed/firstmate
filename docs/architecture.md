@@ -21,6 +21,8 @@ Absorbed wakes advance their suppression markers, log to `state/.watch-triage.lo
 After each drain, `fm-wake-drain.sh` runs the same liveness guard as the supervision scripts, so a lapsed watcher chain surfaces even on a turn that only drains and handles queued wakes.
 Routine watcher polling, supervision no-ops, elapsed waiting time, and absorbed benign wakes stay silent.
 A declared external wait trades that silence for one bounded recheck per pause window, so a forgotten pause cannot remain invisible indefinitely.
+On the same poll loop, the watcher also launches the constant 3rd-mate sweep (`bin/fm-sweep.sh`) every `FM_SWEEP_INTERVAL` (default 300s), detached so silently reaping this home's landed or dead disposable crewmates and orphaned pool worktrees never delays wake handling.
+The sweep's scope, reap gate, and delegated landed-safety checks are owned by [fleet-tiers.md](fleet-tiers.md); session start runs the same sweep once when it holds the fleet lock and relays its output as `SWEEP:` lines.
 Crew status files are append-only wake-event logs, not current-state fields.
 `bin/fm-crew-state.sh <id>` is the cheap current-state read for an actionable heartbeat review: it attributes the matching no-mistakes run, active or terminal, to the crew's own branch and keeps that run-step authoritative even if the pane has closed.
 During no-mistakes' `ci` monitor phase, it also reads the ci step log tail because `axi status` reports both "still waiting on checks" and "checks green, waiting on merge" as `ci,running`.
@@ -107,8 +109,10 @@ Secondmate launches are exempt because they resolve the secondmate harness and a
 Unsupported effort values are still recorded in task meta when passed to `fm-spawn.sh`, but the launch template omits any effort flag that the selected harness does not accept.
 That keeps spawn launch compatible across claude, codex, grok, pi, and opencode while preserving the requested profile for later audit.
 
-## Optional secondmates
+## Secondmates
 
+The fleet is a strict three-tier hierarchy - firstmate, one persistent secondmate per project repo, disposable 3rd mates (crewmates) - with each repo's secondmate created on demand the first time work is routed there; [fleet-tiers.md](fleet-tiers.md) owns the tier model, the constant 3rd-mate sweep, the per-tier codex consult gate (`bin/fm-consult.sh`), and the per-tier model policy pointers.
+The main firstmate spawns crewmates directly only for the firstmate repo itself and for `local-only` projects.
 `data/secondmates.md` records persistent domain supervisors with natural-language scopes, project clone lists, and home paths.
 `fm-home-seed.sh` provisions the isolated home, clones the listed PR-based projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and `fm-spawn.sh --secondmate` launches it through the same session-provider and status-file path as any direct report.
 For a domain whose subject is the firstmate repo itself, a deliberate `--no-projects` seed creates a project-less home whose crews take pooled worktrees of that repo instead of separate clones.
