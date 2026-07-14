@@ -363,6 +363,9 @@ test_secondmate_charter_carries_tier_role() {
   assert_grep '`bin/fm-sweep.sh`' "$brief" "charter did not point at the sweep script"
   # shellcheck disable=SC2016 # literal backtick path must remain unexpanded
   assert_grep '`bin/fm-consult.sh secondmate' "$brief" "charter did not offer the codex consult gate"
+  # shellcheck disable=SC2016 # literal backtick path must remain unexpanded
+  assert_grep '`bin/fm-consult.sh --terra secondmate' "$brief" \
+    "charter did not show the escalation flag before the tier"
   assert_grep "never coordinate with other secondmates" "$brief" \
     "charter did not state secondmates never coordinate with each other"
   assert_grep "harness compacts your chat context" "$brief" "charter did not note the harness's own context compaction"

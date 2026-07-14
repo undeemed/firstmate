@@ -76,6 +76,17 @@
 # stay reapable; a ship task's normal post-merge teardown flow removes the poll
 # with the rest of its state.
 #
+# The poll has an ARMING WINDOW the check gate alone cannot see: in PR-based
+# ship modes (mode=no-mistakes or mode=direct-PR) the crew reports done (checks
+# green) BEFORE firstmate handles that wake with bin/fm-pr-check.sh, which is
+# what arms check.sh and records pr= - deterministically so at session start,
+# where the sweep runs before drained wakes are acted on. In that window the
+# task is pushed+clean with neither protection, yet its PR is still open. So a
+# PR-based-mode ship candidate with NEITHER an armed check.sh NOR a recorded
+# pr= in its meta is LEFT too, whichever path made it a candidate; once pr= is
+# recorded, fm-teardown's landed-work check takes over as usual. local-only
+# ship tasks and scout tasks have no PR and are unaffected.
+#
 # PROPERTIES: lock-gated by its callers (session-start runs it only when it holds
 # the fleet lock; the watcher is a per-home singleton), best-effort and non-fatal
 # (one task's failure never aborts the sweep), idempotent, fast, and quiet when
@@ -144,7 +155,7 @@ LEFT=()
 ORPHANS=()
 
 sweep_metas() {
-  local meta id kind wt backend target agent state out reason
+  local meta id kind wt backend target agent state mode out reason
   [ -d "$STATE" ] || return 0
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
@@ -190,6 +201,22 @@ sweep_metas() {
     # candidate; the watcher's check pass owns the wake, and the normal
     # post-merge teardown flow removes the poll with the rest of its state.
     [ -f "$STATE/$id.check.sh" ] && continue
+
+    # Arming-window guard (see the header): in PR-based ship modes the crew
+    # reports done before firstmate's fm-pr-check has armed check.sh and
+    # recorded pr=, so a pushed+clean candidate with neither is a PR-ready task
+    # whose PR may still be open - leave it until pr= is recorded (then
+    # fm-teardown's landed-work check owns the decision). A missing mode= means
+    # the default delivery mode, no-mistakes.
+    if [ "$kind" = ship ]; then
+      mode=$(fm_meta_get "$meta" mode)
+      [ -n "$mode" ] || mode=no-mistakes
+      case "$mode" in
+        no-mistakes|direct-PR)
+          [ -n "$(fm_meta_get "$meta" pr)" ] || continue
+          ;;
+      esac
+    fi
 
     if out=$("$TEARDOWN" "$id" 2>&1); then
       REAPED+=("$id ($kind)")

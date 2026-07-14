@@ -17,10 +17,14 @@
 #   (d) unmerged fm/ branch, not landed        -> LEFT (teardown refuses)
 #   (e) live/working crew, work landed         -> LEFT (working never reaped)
 #   (f) alive+done PR-ready crew, armed check.sh -> LEFT (pending-check gate)
-#   (g) kind=secondmate                        -> NEVER swept (skipped)
-#   (h) orphan pass runs `treehouse prune --yes` per pool, never --all/--global
-#   (i) a fresh sweep lock is a silent no-op; a provably-abandoned one is reclaimed
-#   (j) idle treehouse-prune output stays quiet; a real prune is reported
+#   (g) done PR-mode crew, pushed+clean, no check.sh, no pr= -> LEFT on both
+#       candidate paths (arming-window guard)
+#   (h) pr= recorded, work on the remote, poll already removed -> REAPED
+#       (teardown as before)
+#   (i) kind=secondmate                        -> NEVER swept (skipped)
+#   (j) orphan pass runs `treehouse prune --yes` per pool, never --all/--global
+#   (k) a fresh sweep lock is a silent no-op; a provably-abandoned one is reclaimed
+#   (l) idle treehouse-prune output stays quiet; a real prune is reported
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -188,6 +192,8 @@ test_unlanded_uncommitted_is_left() {
   local case_dir out
   case_dir=$(make_case unlanded-dirty)
   write_meta "$case_dir" no-mistakes ship
+  # pr= recorded so the arming-window guard passes and teardown itself refuses.
+  printf 'pr=%s\n' "https://github.com/example/proj/pull/7" >> "$case_dir/home/state/task-x1.meta"
   wt_commit_file "$case_dir" feature.txt hello "committed"
   printf '%s\n' "uncommitted edit" > "$case_dir/wt/feature.txt"   # dirty
 
@@ -204,7 +210,10 @@ test_unmerged_branch_is_left() {
   local case_dir out
   case_dir=$(make_case unmerged-branch)
   write_meta "$case_dir" no-mistakes ship
-  # Real commit on the fm/ branch, never pushed, no PR, not on origin/main.
+  # pr= recorded so the arming-window guard passes and teardown itself refuses.
+  printf 'pr=%s\n' "https://github.com/example/proj/pull/7" >> "$case_dir/home/state/task-x1.meta"
+  # Real commit on the fm/ branch, never pushed, PR unresolvable, not on
+  # origin/main.
   wt_commit_file "$case_dir" feature.txt hello "unmerged work"
 
   out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
@@ -295,6 +304,51 @@ test_pr_ready_armed_check_is_left() {
   pass "an alive+done PR-ready crew with an armed check.sh is LEFT (pending-check gate)"
 }
 
+test_pr_mode_arming_window_is_left() {
+  local case_dir out stub
+  case_dir=$(make_case arming-window)
+  write_meta "$case_dir" no-mistakes ship
+  # Pushed + clean: teardown's pushed+clean path never consults the PR, so it
+  # WOULD reap if the arming-window guard were broken.
+  wt_commit_file "$case_dir" feature.txt hello "PR work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  # Checks green: the crew already reports done, but firstmate has not yet
+  # handled the wake - no check.sh armed, no pr= recorded in the meta.
+  stub=$(make_crew_state_stub "$case_dir" "state: done · source: run · checks green: PR ready for review")
+
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=claude FM_TEST_TMUX_DISPLAY_RC=0 FM_CREW_STATE_BIN="$stub") \
+    || fail "arming-window: sweep exited non-zero"
+  [ -z "$out" ] || fail "arming-window: an unarmed PR-ready crew must stay quiet (got: $out)"
+  assert_present "$case_dir/home/state/task-x1.meta" "arming-window: a done PR-mode crew with no check.sh and no pr= must not be reaped"
+
+  # The guard holds on the confident-dead path too (a crew that exited right
+  # after its checks went green, before firstmate armed the poll).
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "arming-window: dead-path sweep exited non-zero"
+  [ -z "$out" ] || fail "arming-window: the dead path must stay quiet too (got: $out)"
+  assert_present "$case_dir/home/state/task-x1.meta" "arming-window: a dead PR-mode crew with no check.sh and no pr= must not be reaped"
+  pass "a done PR-mode crew in the check-arming window (no check.sh, no pr=) is LEFT on both paths"
+}
+
+test_pr_recorded_landed_crew_is_reaped() {
+  local case_dir out
+  case_dir=$(make_case pr-recorded)
+  write_meta "$case_dir" no-mistakes ship
+  printf 'pr=%s\n' "https://github.com/example/proj/pull/7" >> "$case_dir/home/state/task-x1.meta"
+  # Work pushed (remote-reachable = landed) and the merge poll already removed
+  # by the normal post-merge flow: teardown owns the decision as before.
+  wt_commit_file "$case_dir" feature.txt hello "merged PR work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/origin.git" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+
+  out=$(run_sweep "$case_dir" FM_TEST_TMUX_COMM=bash FM_TEST_TMUX_DISPLAY_RC=0) \
+    || fail "pr-recorded: sweep exited non-zero"
+
+  assert_contains "$out" "reaped task-x1" "pr-recorded: a pr=-recorded landed crew must still reap via teardown"
+  assert_absent "$case_dir/home/state/task-x1.meta" "pr-recorded: meta should be removed (reaped)"
+  pass "a pr=-recorded crew whose work is on the remote still reaps via teardown"
+}
+
 test_fresh_sweep_lock_is_silent_noop() {
   local case_dir out
   case_dir=$(make_reap_ready_case fresh-lock)
@@ -379,6 +433,8 @@ test_unmerged_branch_is_left
 test_live_working_crew_is_left
 test_secondmate_is_never_swept
 test_pr_ready_armed_check_is_left
+test_pr_mode_arming_window_is_left
+test_pr_recorded_landed_crew_is_reaped
 test_fresh_sweep_lock_is_silent_noop
 test_stale_sweep_lock_is_reclaimed
 test_orphan_pass_scopes_prune_per_pool
