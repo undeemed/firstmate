@@ -151,7 +151,10 @@ test_brief_assertion_precedes_branch() {
 
 # A fake tmux that reports FM_FAKE_PANE_PATH as the post-`treehouse get` pane cwd
 # (so the spawn's worktree-resolution loop resolves to a path we control), names
-# the session on '#S', and swallows window ops. Echoes the fakebin dir.
+# the session on '#S', and swallows window ops. When FM_FAKE_PANE_PATH_FIRST is
+# set, the very first pane-path read returns it instead (a transient
+# mid-acquire cwd), using FM_FAKE_PANE_COUNT_FILE to count reads. Echoes the
+# fakebin dir.
 make_spawn_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
@@ -159,7 +162,15 @@ make_spawn_fakebin() {
 #!/usr/bin/env bash
 set -u
 case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+  *"#{pane_current_path}"*)
+    if [ -n "${FM_FAKE_PANE_PATH_FIRST:-}" ] && [ -n "${FM_FAKE_PANE_COUNT_FILE:-}" ]; then
+      n=0
+      [ -f "$FM_FAKE_PANE_COUNT_FILE" ] && n=$(cat "$FM_FAKE_PANE_COUNT_FILE")
+      n=$((n + 1))
+      printf '%s\n' "$n" > "$FM_FAKE_PANE_COUNT_FILE"
+      if [ "$n" -le 1 ]; then printf '%s\n' "$FM_FAKE_PANE_PATH_FIRST"; exit 0; fi
+    fi
+    printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
@@ -181,6 +192,7 @@ run_spawn() {
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" TMUX="fake,1,0" \
+    FM_SPAWN_WT_WAIT_SECS="${FM_SPAWN_WT_WAIT_SECS:-2}" \
     PATH="$fakebin:$PATH" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" codex 2>&1
 }
@@ -211,6 +223,18 @@ test_spawn_isolation_abort() {
   expect_code 0 "$status" "spawn into a genuine isolated worktree should succeed"
   assert_contains "$out" "spawned ok-isolated-ff6" "isolated spawn did not report success"
   assert_not_contains "$out" "did not yield an isolated worktree" "isolated spawn wrongly tripped the guard"
+
+  # Ride-through: mid-acquire, the pane's foreground process is treehouse (or
+  # one of its git children) whose cwd can transiently read as a non-worktree
+  # path such as the bare pool root; the poll must keep waiting for the real
+  # worktree instead of capturing the transient read and aborting.
+  mkdir -p "$TMP_ROOT/spawn-poolroot"
+  out=$(FM_FAKE_PANE_PATH_FIRST="$TMP_ROOT/spawn-poolroot" \
+    FM_FAKE_PANE_COUNT_FILE="$TMP_ROOT/spawn-pane-count" \
+    run_spawn "$home" ok-transient-gg7 "$proj" "$TMP_ROOT/spawn-wt" "$fakebin"); status=$?
+  expect_code 0 "$status" "a transient non-worktree pane read must not abort the spawn"
+  assert_contains "$out" "spawned ok-transient-gg7" "ride-through spawn did not report success"
+  assert_not_contains "$out" "did not yield an isolated worktree" "transient pool-root read was captured as the worktree"
   pass "fm-spawn: aborts unless the resolved worktree is a genuine, isolated worktree"
 }
 
