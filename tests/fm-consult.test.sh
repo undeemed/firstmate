@@ -60,10 +60,26 @@ test_tier_model_mapping() {
   run_consult "$log" --terra firstmate "advise" >/dev/null || fail "firstmate --terra consult failed"
   assert_contains "$(cat "$log")" "--model gpt-5.6-sol" "--terra must not change the firstmate model"
 
-  # A read-only, non-interactive exec, never a git-repo gate.
+  # A non-interactive exec, read-only sandbox by default, never a git-repo gate,
+  # with the read-only directive prepended to the question.
   assert_contains "$(cat "$log")" "exec" "consult must use codex exec (non-interactive)"
-  assert_contains "$(cat "$log")" "--sandbox read-only" "consult must run codex in a read-only sandbox"
+  assert_contains "$(cat "$log")" "--sandbox read-only" "consult must default to a read-only codex sandbox"
+  assert_contains "$(cat "$log")" "Read-only advisory consult" "consult must prepend the read-only directive to the question"
   pass "fm-consult maps each tier to its codex model at xhigh (secondmate --terra escalates)"
+}
+
+test_sandbox_override() {
+  local log
+  log="$TMP_ROOT/args-sandbox"
+
+  # FM_CONSULT_SANDBOX replaces the default read-only sandbox mode; the
+  # read-only directive still rides with the question.
+  CODEX_ARGS_LOG="$log" FM_CONSULT_CODEX="$STUB" FM_CONSULT_SANDBOX=danger-full-access \
+    "$CONSULT" firstmate "advise" >/dev/null || fail "sandbox-override consult failed"
+  assert_contains "$(cat "$log")" "--sandbox danger-full-access" "FM_CONSULT_SANDBOX must override the sandbox mode"
+  assert_not_contains "$(cat "$log")" "--sandbox read-only" "an overridden sandbox must replace read-only, not add to it"
+  assert_contains "$(cat "$log")" "Read-only advisory consult" "the read-only directive must survive a sandbox override"
+  pass "fm-consult honors FM_CONSULT_SANDBOX while keeping the read-only directive"
 }
 
 test_flaglike_words_in_question_are_preserved() {
@@ -133,6 +149,7 @@ test_graceful_when_codex_fails() {
 }
 
 test_tier_model_mapping
+test_sandbox_override
 test_flaglike_words_in_question_are_preserved
 test_unknown_tier_errors
 test_missing_question_errors

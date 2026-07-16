@@ -26,24 +26,31 @@
 # reason, this prints ONE clear line to stderr and exits non-zero WITHOUT ever
 # blocking or prompting the caller. The caller proceeds on its own judgment.
 #
-# It runs `codex exec` (non-interactive) in a read-only sandbox: a consult only
-# reads and answers, it never modifies the repo. It NEVER sends codex's `/usage`
-# slash command or otherwise triggers/redeems a usage reset - that is a paid
-# captain resource; a consult uses ordinary quota and degrades gracefully when
-# quota is gone.
+# It runs `codex exec` (non-interactive) in a read-only sandbox by default: a
+# consult only reads and answers, it never modifies the repo. Where the OS
+# sandbox cannot run (e.g. a container that blocks the unprivileged user
+# namespaces bwrap needs), set FM_CONSULT_SANDBOX=danger-full-access; every
+# consult also prepends a fixed read-only directive to the question, so the
+# read-and-answer-only intent still travels with the prompt when the OS sandbox
+# is off. It NEVER sends codex's `/usage` slash command or otherwise
+# triggers/redeems a usage reset - that is a paid captain resource; a consult
+# uses ordinary quota and degrades gracefully when quota is gone.
 #
 # codex answer -> stdout. Diagnostics -> stderr. Verified against codex-cli
 # 0.144.x (`codex exec --help`): `-m/--model`, `-c model_reasoning_effort=...`
-# for effort, `--sandbox danger-full-access` for the sandbox, `--skip-git-repo-check` so a
+# for effort, `--sandbox <mode>` for the sandbox, `--skip-git-repo-check` so a
 # consult works from any directory.
 #
 # Env:
-#   FM_CONSULT_CODEX   override the codex binary (tests stub it; default: codex)
-#   FM_CONSULT_EFFORT  override reasoning effort (default: xhigh)
+#   FM_CONSULT_CODEX    override the codex binary (tests stub it; default: codex)
+#   FM_CONSULT_EFFORT   override reasoning effort (default: xhigh)
+#   FM_CONSULT_SANDBOX  override the codex sandbox mode (default: read-only)
 set -u
 
 EFFORT=${FM_CONSULT_EFFORT:-xhigh}
+SANDBOX=${FM_CONSULT_SANDBOX:-read-only}
 CODEX_BIN=${FM_CONSULT_CODEX:-codex}
+READONLY_DIRECTIVE='Read-only advisory consult: read and answer only; do not modify files, run state-changing commands, or write anywhere.'
 
 usage() {
   echo "usage: fm-consult.sh [--terra] [--] <firstmate|secondmate|crewmate> <question...>" >&2
@@ -83,14 +90,15 @@ if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
   exit 3
 fi
 
-# codex exec (non-interactive), read-only sandbox, xhigh reasoning. Never
-# interactive, never a /usage reset. Answer streams to our stdout.
+# codex exec (non-interactive), read-only sandbox unless FM_CONSULT_SANDBOX
+# overrides it, xhigh reasoning, with the read-only directive ahead of the
+# question. Never interactive, never a /usage reset. Answer streams to stdout.
 if ! "$CODEX_BIN" exec \
     --model "$MODEL" \
     -c "model_reasoning_effort=\"$EFFORT\"" \
-    --sandbox danger-full-access \
+    --sandbox "$SANDBOX" \
     --skip-git-repo-check \
-    "$QUESTION"; then
+    "$READONLY_DIRECTIVE"$'\n\n'"$QUESTION"; then
   echo "fm-consult: codex ($MODEL) consult failed (unavailable, unauthenticated, or quota-exhausted); consult skipped (advisory - proceed on your own judgment)" >&2
   exit 1
 fi
