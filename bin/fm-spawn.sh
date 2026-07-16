@@ -840,17 +840,35 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # read differ from PROJ_ABS_REAL on the very first poll, before the pane has
   # actually moved, false-accepting the project clone as the worktree (see the
   # PROJ_ABS_REAL comment above).
-  for _ in $(seq 1 60); do
+  # Accept a moved cwd only once it is a genuine worktree ROOT (its own git
+  # toplevel): while treehouse is still acquiring, the pane's foreground
+  # process is treehouse or one of its git children, whose cwd can transiently
+  # read as a non-worktree path (e.g. the bare pool root ~/.treehouse), so
+  # capturing the first moved read would hard-fail the isolation validation
+  # below for a spawn that was about to succeed. A pane that leaves the
+  # project but never reaches a worktree root still fails loudly through
+  # validate_spawn_worktree after the budget, on the last path it rested on.
+  WT_WAIT=${FM_SPAWN_WT_WAIT_SECS:-60}
+  WT_MOVED=""
+  for _ in $(seq 1 "$WT_WAIT"); do
     p=$(spawn_current_path "$WT_TARGET" || true)
     if [ -n "$p" ] && ! [ "$p" -ef "$PROJ_ABS_REAL" ]; then
-      WT="$p"
-      break
+      WT_MOVED="$p"
+      wt_poll_top=$(git -C "$p" rev-parse --show-toplevel 2>/dev/null || true)
+      if [ -n "$wt_poll_top" ] && [ "$p" -ef "$wt_poll_top" ]; then
+        WT="$p"
+        break
+      fi
     fi
     sleep 1
   done
   if [ -z "$WT" ]; then
-    echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
-    exit 1
+    if [ -n "$WT_MOVED" ]; then
+      WT="$WT_MOVED"
+    else
+      echo "error: treehouse get did not enter a worktree within ${WT_WAIT}s; inspect window $T" >&2
+      exit 1
+    fi
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
