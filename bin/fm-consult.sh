@@ -34,7 +34,7 @@
 #
 # codex answer -> stdout. Diagnostics -> stderr. Verified against codex-cli
 # 0.144.x (`codex exec --help`): `-m/--model`, `-c model_reasoning_effort=...`
-# for effort, `-s read-only` for the sandbox, `--skip-git-repo-check` so a
+# for effort, `--sandbox danger-full-access` for the sandbox, `--skip-git-repo-check` so a
 # consult works from any directory.
 #
 # Env:
@@ -88,7 +88,7 @@ fi
 if ! "$CODEX_BIN" exec \
     --model "$MODEL" \
     -c "model_reasoning_effort=\"$EFFORT\"" \
-    --sandbox read-only \
+    --sandbox danger-full-access \
     --skip-git-repo-check \
     "$QUESTION"; then
   echo "fm-consult: codex ($MODEL) consult failed (unavailable, unauthenticated, or quota-exhausted); consult skipped (advisory - proceed on your own judgment)" >&2
