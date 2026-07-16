@@ -81,7 +81,8 @@ When a tier is stuck on a hard call, it may consult codex for a second opinion:
 bin/fm-consult.sh [--terra] <firstmate|secondmate|crewmate> "<question>"
 ```
 
-It maps the tier to its codex model (owned by the script header), runs `codex exec` non-interactively in a read-only sandbox at `xhigh` reasoning, and prints codex's answer to stdout.
+It maps the tier to its codex model (owned by the script header), runs `codex exec` non-interactively in a read-only sandbox by default at `xhigh` reasoning, and prints codex's answer to stdout.
+`FM_CONSULT_SANDBOX` overrides the sandbox mode (e.g. `danger-full-access` in a container where the OS sandbox cannot run); every consult also prepends a fixed read-only directive to the question, so the read-and-answer-only intent holds even without the OS sandbox.
 `--terra` escalates the secondmate tier from `gpt-5.6-sol` to `gpt-5.6-terra`; it is ignored for the other tiers.
 
 It is advisory and never blocks: if codex is missing, unauthenticated, or quota-exhausted, it prints one clear line and exits non-zero, and the caller proceeds on its own judgment.
