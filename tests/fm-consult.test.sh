@@ -62,6 +62,19 @@ test_tier_model_mapping() {
 
   # A non-interactive exec, read-only sandbox by default, never a git-repo gate,
   # with the read-only directive prepended to the question.
+  #
+  # Test-hermeticity fix (out-of-scope-but-required engineering-excellence):
+  # FM_CONSULT_SANDBOX may be exported ambiently (this container exports
+  # danger-full-access globally per PR #8, because bwrap cannot run here). The
+  # default-sandbox assertion must hold regardless of that ambient value, so run
+  # this one case with the variable saved and unset, then restore it. The other
+  # case that needs the override (test_sandbox_override) is left untouched.
+  local saved_sandbox had_sandbox=0
+  saved_sandbox="${FM_CONSULT_SANDBOX-}"
+  [ -n "${FM_CONSULT_SANDBOX+set}" ] && had_sandbox=1
+  unset FM_CONSULT_SANDBOX
+  run_consult "$log" firstmate "advise" >/dev/null || fail "default-sandbox consult failed"
+  [ "$had_sandbox" = 1 ] && export FM_CONSULT_SANDBOX="$saved_sandbox"
   assert_contains "$(cat "$log")" "exec" "consult must use codex exec (non-interactive)"
   assert_contains "$(cat "$log")" "--sandbox read-only" "consult must default to a read-only codex sandbox"
   assert_contains "$(cat "$log")" "Read-only advisory consult" "consult must prepend the read-only directive to the question"
