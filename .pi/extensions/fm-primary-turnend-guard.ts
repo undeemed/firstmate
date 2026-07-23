@@ -66,6 +66,10 @@ function runGuard(): Promise<{ code: number; stderr: string }> {
     });
     child.on("error", () => resolveResult({ code: 0, stderr: "" }));
     child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
+    // The guard subprocess may exit before it reads stdin; swallow the resulting
+    // EPIPE on the stdin pipe so it never surfaces as an unhandled 'error' event
+    // (which would crash the extension host).
+    child.stdin.on("error", () => {});
     child.stdin.end('{"stop_hook_active":false}');
   });
 }

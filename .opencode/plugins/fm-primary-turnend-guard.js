@@ -21,6 +21,10 @@ function runProcess(command, args, input = "") {
     });
     child.on("error", () => resolve({ code: 0, stdout: "", stderr: "" }));
     child.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    // The guard subprocess may exit before it reads stdin; swallow the resulting
+    // EPIPE on the stdin pipe so it never surfaces as an unhandled 'error' event
+    // (which would crash the plugin host).
+    child.stdin.on("error", () => {});
     child.stdin.end(input);
   });
 }
