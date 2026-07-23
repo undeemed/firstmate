@@ -108,6 +108,24 @@ else
   stat_sig()   { stat -c '%s:%Y' "$1" 2>/dev/null; }
 fi
 
+# Read a non-negative integer from a small state file (a counter or backoff
+# streak), degrading safely to <default> when the file is missing, empty, holds
+# non-digit content, or carries a stray NUL byte. Reading only the digit bytes -
+# via `tr -dc`, guarded by `[ -r ]` so a missing file cannot leak a redirect
+# error - keeps a corrupt or partially-written state file from making the caller
+# warn ("command substitution: ignored null byte in input") or fail ("integer
+# expression expected") when the value is fed to `[ ]` or `$(( ))`. The `10#`
+# prefix forces base-10 so a value with leading zeros is never parsed as octal.
+read_int() {  # <file> <default>
+  local digits=''
+  [ -r "$1" ] && digits=$(tr -dc '0-9' < "$1" 2>/dev/null)
+  if [ -n "$digits" ]; then
+    printf '%s' "$((10#$digits))"
+  else
+    printf '%s' "$2"
+  fi
+}
+
 POLL=${FM_POLL:-15}                   # seconds between cycles
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
@@ -246,7 +264,7 @@ recorded_windows() {
 # (base * 2^streak, capped at HEARTBEAT_MAX); any real wake resets the cadence.
 wake() {
   case "$1" in
-    heartbeat*) echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak" ;;
+    heartbeat*) echo $(( $(read_int "$STATE/.heartbeat-streak" 0) + 1 )) > "$STATE/.heartbeat-streak" ;;
     *) echo 0 > "$STATE/.heartbeat-streak" ;;
   esac
   echo "$1"
@@ -274,8 +292,11 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # and the stale_is_terminal-overridden path (a captain-relevant status-log
 # line that an active run/busy pane outranked).
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason
-  since=$(cat "$since_file" 2>/dev/null || true)
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 since='' age n reason
+  # Strip only NUL here (not other non-digits) so the case below still classifies
+  # any non-numeric leftover as corrupt and resets the timer; the [ -r ] guard
+  # keeps a missing timer file from leaking a redirect error.
+  [ -r "$since_file" ] && since=$(tr -d '\0' < "$since_file" 2>/dev/null)
   case "$since" in
     ''|*[!0-9]*)
       date +%s > "$since_file"
@@ -284,7 +305,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
-        n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
+        n=$(( $(read_int "$escalation_file" 0) + 1 ))
         echo "$n" > "$escalation_file"
         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
@@ -382,9 +403,13 @@ surface_nonterminal_stale() {  # <window> <hash>
 # Check and heartbeat cadence must survive actionable exits and restarts: the
 # watcher may be relaunched before in-memory counters reach their threshold on a
 # busy fleet. Persist the schedule as file mtimes instead.
-age_of() {  # seconds since file mtime; "due immediately" if missing
+age_of() {  # seconds since file mtime; "due immediately" if missing/unreadable
   local f=$1 m
   m=$(stat_mtime "$f") || { echo 999999; return; }
+  # stat_mtime yields a clean epoch on success, but a non-integer (e.g. an empty
+  # read on a transient stat failure) must degrade to "due immediately" rather
+  # than abort the arithmetic below under set -u.
+  case "$m" in ''|*[!0-9]*) echo 999999; return ;; esac
   echo $(( $(date +%s) - m ))
 }
 
@@ -613,7 +638,7 @@ EOF
     pf="$STATE/.paused-$key"   # flag: this key's current stale is a declared pause
     prev=$(cat "$hf" 2>/dev/null || true)
     if [ "$h" = "$prev" ]; then
-      n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
+      n=$(( $(read_int "$cf" 0) + 1 ))
       echo "$n" > "$cf"
       # Busy match: a backend's native semantic state when available (herdr),
       # else the last 6 non-blank lines only (the TUI footer area, where every
@@ -745,7 +770,7 @@ EOF
   # what. Time-based via .last-heartbeat mtime; interval doubles per consecutive
   # no-change heartbeat (idle fleet) up to HEARTBEAT_MAX, and resets on any
   # surfaced non-heartbeat wake.
-  streak=$(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0)
+  streak=$(read_int "$STATE/.heartbeat-streak" 0)
   [ "$streak" -gt 12 ] && streak=12
   hb=$(( HEARTBEAT * (1 << streak) ))
   [ "$hb" -gt "$HEARTBEAT_MAX" ] && hb=$HEARTBEAT_MAX
@@ -769,7 +794,7 @@ EOF
       wake "heartbeat"
     else
       touch "$STATE/.last-heartbeat"
-      echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak"
+      echo $(( $(read_int "$STATE/.heartbeat-streak" 0) + 1 )) > "$STATE/.heartbeat-streak"
       triage_log "absorbed heartbeat (no captain-relevant change)"
     fi
   fi
