@@ -1000,6 +1000,65 @@ test_heartbeat_backstop_surfaces_unsurfaced_status() {
   pass "heartbeat backstop fail-safe surfaces a captain-relevant status the per-wake path missed"
 }
 
+# --- heartbeat: corrupt/empty/missing/NUL streak state degrades safely -------
+
+# The backoff streak in .heartbeat-streak is read straight into an integer test
+# and a bit shift, then re-read to increment. A partially-written, empty, or
+# NUL-carrying file used to make the poll warn ("ignored null byte in input")
+# and fail ("integer expression expected"). read_int must degrade every such
+# read to a safe integer default with no diagnostic on stderr, while still
+# absorbing and advancing the streak for valid inputs.
+test_heartbeat_streak_survives_corrupt_state() {
+  local variant dir state fakebin out err pid i stray_count digit_count
+  for variant in empty missing nonint nul; do
+    dir=$(make_case "heartbeat-corrupt-$variant")
+    state="$dir/state"; fakebin="$dir/fakebin"
+    out="$dir/watch.out"; err="$dir/watch.err"
+    case "$variant" in
+      empty)   : > "$state/.heartbeat-streak" ;;
+      missing) rm -f "$state/.heartbeat-streak" ;;
+      nonint)  printf 'abc\n' > "$state/.heartbeat-streak" ;;
+      nul)     printf '3\0\0x' > "$state/.heartbeat-streak" ;;
+    esac
+    # An ancient .last-heartbeat so the very first poll is overdue and fires the
+    # heartbeat regardless of whatever backoff the corrupt streak parses to,
+    # keeping this test about the parse rather than the cadence.
+    touch -t 200001010000 "$state/.last-heartbeat"
+    # A quiet fleet (no windows, no statuses) with a fast heartbeat cadence, so the
+    # poll reaches the heartbeat block and absorbs the no-change case - the exact
+    # path that reads, uses, and rewrites the streak. Capture stderr separately so
+    # any numeric-parse warning or error is caught.
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" 2>"$err" &
+    pid=$!
+    # The absorb branch logs "absorbed heartbeat" only after it has read the streak,
+    # used it in the backoff math, and rewritten it, so this is a clean barrier
+    # proving every corrupt read completed without aborting the poll.
+    i=0
+    while [ "$i" -lt 40 ]; do
+      grep -q 'absorbed heartbeat' "$state/.watch-triage.log" 2>/dev/null && break
+      sleep 0.1; i=$((i + 1))
+    done
+    reap "$pid"
+    grep -q 'absorbed heartbeat' "$state/.watch-triage.log" 2>/dev/null \
+      || fail "watcher never absorbed a heartbeat for a $variant streak file: $(cat "$err")"
+    assert_not_contains "$(cat "$err")" 'null byte' \
+      "a $variant .heartbeat-streak made the watcher warn about a null byte"
+    assert_not_contains "$(cat "$err")" 'integer expression' \
+      "a $variant .heartbeat-streak made the watcher fail an integer test"
+    # The streak must end as a clean integer line: digits plus a trailing newline,
+    # no NUL or letters left over. Count the leftover and digit bytes via wc so a
+    # stray NUL is never captured into a variable (which would warn here instead).
+    stray_count=$(tr -d '0-9\n' < "$state/.heartbeat-streak" 2>/dev/null | wc -c | tr -d '[:space:]')
+    [ "$stray_count" = 0 ] \
+      || fail "a $variant .heartbeat-streak left non-integer bytes after absorb (stray=$stray_count)"
+    digit_count=$(tr -dc '0-9' < "$state/.heartbeat-streak" 2>/dev/null | wc -c | tr -d '[:space:]')
+    [ "$digit_count" -ge 1 ] \
+      || fail "a $variant .heartbeat-streak was not advanced to an integer after absorb"
+  done
+  pass "corrupt, empty, missing, and NUL .heartbeat-streak files parse to a safe integer with no warning or error"
+}
+
 # --- beacon stays fresh while absorbing -------------------------------------
 
 test_beacon_stays_fresh_while_absorbing() {
@@ -1119,6 +1178,7 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_heartbeat_no_change_absorbed
 test_heartbeat_backstop_surfaces_unsurfaced_status
+test_heartbeat_streak_survives_corrupt_state
 test_beacon_stays_fresh_while_absorbing
 test_afk_present_reverts_watcher_to_one_shot
 test_afk_paused_changed_pane_hands_off_plain_stale
