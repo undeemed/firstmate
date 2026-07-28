@@ -182,7 +182,7 @@ If configured harness data names an unverified adapter, report it and fall back 
 
 `docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/fm-dispatch-select.sh` owns selector mechanics, `bin/fm-harness.sh` owns static resolution, and `bin/fm-spawn.sh` owns launch flags and fail-closed validation.
 When dispatch profiles exist, consult them at every crewmate or scout intake and pass the resolved concrete profile required by `fm-spawn`.
-For a chosen rule with `select: "quota-balanced"`, pipe the full rule JSON to `bin/fm-dispatch-select.sh` and use the compact JSON profile it prints.
+For any profile array, whether it is a chosen rule's `use`, the top-level `default`, or a rule carrying the legacy `select: "quota-balanced"`, pipe that full rule or array JSON to `bin/fm-dispatch-select.sh` and use the compact JSON profile it prints.
 Routing precedence is an explicit per-task captain override, then the best-fit configured rule, then the configured default, then the static crewmate harness.
 The generic effort fallback and its precedence are owned by `harness-adapters`: explicit captain and standing configured effort win; otherwise use low for well-understood explicit work, xhigh for ambiguous investigation or design, intermediate levels proportionally, and never max without explicit captain preference.
 Do not add model-specific versions of that policy.

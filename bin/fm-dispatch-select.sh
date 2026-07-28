@@ -15,7 +15,8 @@
 #   - It runs the installed quota-axi --json (or the --quota-json fixture).
 #   - Candidates map to the quota provider and product their model consumes:
 #     direct Claude -> Claude, direct Codex -> Codex, direct Grok -> Grok Build,
-#     and Pi/pi-signed/OpenCode models prefixed anthropic/, openai-codex/, or
+#     direct Kimi -> Kimi with its kimi-code/ namespace stripped, and
+#     Pi/pi-signed/OpenCode models prefixed anthropic/, openai-codex/, or
 #     xai/ -> Claude, Codex, or the xAI API product respectively.
 #   - A candidate's score is the minimum percentRemaining among its relevant
 #     general and matching model windows, or its exact Grok product window.
@@ -238,6 +239,7 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
     | if $h == "claude" then {provider: "claude", model: $model}
       elif $h == "codex" then {provider: "codex", model: $model}
       elif $h == "grok" then {provider: "grok", product: "grok_build", model: $model}
+      elif $h == "kimi" then {provider: "kimi", model: (model_name($model))}
       elif ($prefixed and ($model | startswith("anthropic/"))) then
         {provider: "claude", model: (model_name($model))}
       elif ($prefixed and ($model | startswith("openai-codex/"))) then
@@ -264,6 +266,7 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
   def general_window_matches($window; $provider):
     if $provider == "claude" then ["five_hour", "seven_day"] | index($window.id? // "") != null
     elif $provider == "codex" then ["five_hour", "weekly"] | index($window.id? // "") != null
+    elif $provider == "kimi" then ["five_hour", "weekly"] | index($window.id? // "") != null
     else false
     end;
   def relevant_windows($provider; $route):
