@@ -173,13 +173,20 @@ STATE=${FM_STATE_OVERRIDE:-$FM_HOME/state}
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
 fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 
-# Name the dedicated scout entry point only when this home carries it; degrade
-# to the two-step brief-then-spawn path when it does not, rather than naming a
-# script that is not there.
+# Name the tier before naming the script. AGENTS.md section 1 forbids the main
+# home from spawning a project crewmate directly - project work routes to that
+# project's secondmate - so a message that named brief-then-spawn alone would
+# redirect a just-blocked primary into the one path the contract prohibits.
+# Brief-then-spawn is correct for firstmate-repo work in the main home and for a
+# secondmate dispatching inside its own scope, which is what "the home that owns
+# the work" covers in both scopes this guard runs in.
+# The dedicated scout entry point is named only when this home carries it, rather
+# than pointing at a script that is not there.
+ROUTE_TIER='project work routes to the secondmate for that project (data/secondmates.md; the secondmate-provisioning skill) instead of a crewmate spawned from the main home'
 if [ -f "$FM_ROOT/bin/fm-scout.sh" ]; then
-  ROUTE='first classify the work under the AGENTS.md intake contract: work already classified as a scout goes to bin/fm-scout.sh "<question>" [project], while authorized ship work and its bounded research go to bin/fm-brief.sh then bin/fm-spawn.sh'
+  ROUTE="first classify the work under the AGENTS.md intake contract: $ROUTE_TIER; then, inside the home that owns the work, work already classified as a scout goes to bin/fm-scout.sh \"<question>\" [project], while authorized ship work and its bounded research go to bin/fm-brief.sh then bin/fm-spawn.sh"
 else
-  ROUTE='first classify the work under the AGENTS.md intake contract, then use bin/fm-brief.sh followed by bin/fm-spawn.sh for dispatched work'
+  ROUTE="first classify the work under the AGENTS.md intake contract: $ROUTE_TIER; then, inside the home that owns the work, use bin/fm-brief.sh followed by bin/fm-spawn.sh for dispatched work"
 fi
 
 REASON="[subagent-dispatch] the firstmate primary dispatches through the fleet, not the harness's own delegation tools: work started that way has no durable fleet record, leaves every firstmate guard inert, and dies with this session. Instead, $ROUTE (blocked tool: $TOOL, delegation-shaped on \"$MATCHED\"). Launch the session with FM_ALLOW_SUBAGENT=1 for a deliberate exception."

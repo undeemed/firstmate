@@ -28,13 +28,28 @@ document:
 # `.github/workflows/ci.yml` invokes it directly, with parity asserted by
 # `tests/fm-lint.test.sh`.
 #
-# Do not set commands.test to a complete tests/*.test.sh walk. Local no-mistakes
-# Test is intent-targeted validation of whether the change meets its brief;
-# .github/workflows/ci.yml owns broad regression (behavior suite, platform,
-# security, Herdr, tmux, and lifecycle coverage). A full-suite override here
-# would duplicate CI and defeat the targeted Test contract.
+# Pin test to a bounded, deterministic, non-agent command. Two contracts meet
+# here and both are kept:
+#   - WHO runs the step: never an agent. An agent-driven Test step has crashed
+#     the daemon, so this repository pins a concrete command instead of leaving
+#     Test to default agent-driven handling.
+#   - HOW MUCH it runs: only what the change maps to. Local no-mistakes Test is
+#     intent-targeted validation of whether the change meets its brief;
+#     .github/workflows/ci.yml owns broad regression (behavior suite, platform,
+#     security, Herdr, tmux, and lifecycle coverage), and duplicating it here
+#     would defeat the targeted Test contract.
+# `bin/fm-test-run.sh --changed` is the deliberate reconciliation of the two: it
+# is fully deterministic with no agent in the loop, derives its set from the
+# repository's own changed-file map (one owner, so it cannot rot the way a
+# hand-picked subset does), never expands to the complete suite, exits non-zero
+# when any selected script fails, and reports nothing to run with exit 0 when a
+# change maps to no test. Do not drop either half: replacing this with an absent
+# commands.test restores the agent-driven crash risk, and replacing it with a
+# complete tests/*.test.sh walk or --all duplicates CI. Use `--all` locally for
+# deliberate full regression instead.
 commands:
   lint: 'bin/fm-lint.sh'
+  test: 'bin/fm-test-run.sh --changed --base origin/main'
 
 # Keep test evidence out of this repo; it stays in a temp dir instead.
 test:

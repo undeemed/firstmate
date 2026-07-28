@@ -160,9 +160,10 @@ A tool removed from the schema stays removed, so a genuinely intended use of a l
   This is the same verified quirk recorded in [`arm-pretool-check.md`](arm-pretool-check.md), and the tracked Claude hook therefore passes `--claude`.
 - Malformed or empty stdin, invalid JSON, a payload with no tool name, and missing `jq` for stdin transport all fail open with exit 0 and no output.
 
-The deny message names the real dispatch path.
-When `bin/fm-scout.sh` exists in the home the message first defers to the `AGENTS.md` intake classification, then routes work already classified as a scout there and authorized ship work with its bounded research to `bin/fm-brief.sh` then `bin/fm-spawn.sh`.
-When that script is absent the message still defers to intake classification and degrades to naming `bin/fm-brief.sh` then `bin/fm-spawn.sh` for dispatched work, rather than pointing at a script that is not there.
+The deny message names the real dispatch path, tier first.
+`AGENTS.md` section 1 forbids the main home from spawning a project crewmate directly, so the message routes project work to the secondmate for that project before naming any script; brief-then-spawn is correct for firstmate-repo work in the main home and for a secondmate dispatching inside its own scope, which is why the script half is scoped to the home that owns the work.
+When `bin/fm-scout.sh` exists in the home the message then routes work already classified as a scout there and authorized ship work with its bounded research to `bin/fm-brief.sh` then `bin/fm-spawn.sh`.
+When that script is absent the message degrades to naming `bin/fm-brief.sh` then `bin/fm-spawn.sh` for dispatched work, rather than pointing at a script that is not there.
 
 ## Harness wiring
 

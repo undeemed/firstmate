@@ -470,6 +470,43 @@ SH
   pass "single objects remain backward compatible and one-element arrays remain quota-aware"
 }
 
+# A determined outcome needs no randomness, so an unreadable random source must
+# not turn it into a dispatch failure (docs/configuration.md: quota-data trouble
+# never blocks dispatch). The loud refusal stays only for a genuine tie.
+test_determined_outcome_never_needs_a_random_source() {
+  local fakebin quota out err status unreadable
+  unreadable="$TMP_ROOT/no-such-random-source"
+  rm -f "$unreadable"
+
+  fakebin=$(fm_fakebin "$TMP_ROOT/determined")
+  out=$(PATH="$fakebin:$BASE_PATH" FM_DISPATCH_RANDOM_SOURCE="$unreadable" \
+    "$ROOT/bin/fm-dispatch-select.sh" '[{"harness":"grok","model":"grok-4.5","effort":"high"}]' \
+    2>"$TMP_ROOT/determined-one.err") \
+    || fail "one-element array failed when the random source was unreadable"
+  assert_profile "$out" '{"harness":"grok","model":"grok-4.5","effort":"high"}' \
+    "one-element array should resolve without consulting a random source"
+
+  quota="$TMP_ROOT/determined.json"
+  write_quota "$quota" fresh 80 70 fresh 20 15
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$unreadable" "$ROOT/bin/fm-dispatch-select.sh" \
+    --quota-json "$quota" "$profiles" 2>"$TMP_ROOT/determined-win.err") \
+    || fail "unique quota winner failed when the random source was unreadable"
+  assert_profile "$out" '{"harness":"claude","model":"claude-sonnet-5","effort":"high"}' \
+    "a single top scorer should resolve without consulting a random source"
+
+  quota="$TMP_ROOT/determined-tie.json"
+  write_quota "$quota" fresh 90 50 fresh 60 50
+  status=0
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$unreadable" "$ROOT/bin/fm-dispatch-select.sh" \
+    --quota-json "$quota" "$profiles" 2>"$TMP_ROOT/determined-tie.err") || status=$?
+  err=$(cat "$TMP_ROOT/determined-tie.err")
+  expect_code 1 "$status" "a genuine tie must still refuse loudly without a random source"
+  assert_contains "$err" "OS-backed random source is unavailable" \
+    "tied candidates lost the loud random-source refusal"
+  [ -z "$out" ] || fail "tied candidates emitted a profile without a usable random source: $out"
+  pass "a determined selection needs no random source while a genuine tie still refuses loudly"
+}
+
 test_malformed_profile_arrays_are_validation_errors() {
   local body expect out status n
   n=0
@@ -512,6 +549,7 @@ test_stale_cache_needs_clear_margin_to_beat_fresh
 test_partial_quota_data_prefers_scorable_candidate
 test_operational_quota_failures_use_uniform_random_fallback
 test_single_profile_and_one_element_array
+test_determined_outcome_never_needs_a_random_source
 test_malformed_profile_arrays_are_validation_errors
 
 echo "# all fm-dispatch-select tests passed"

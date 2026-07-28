@@ -4,6 +4,18 @@
 # primary and secondmate homes.
 # The test drives the real spawn and teardown scripts, a real Treehouse pool,
 # and the guarded named-session lab helper.
+#
+# One assertion here is DELIBERATELY RELAXED: the concurrent post-create-abort
+# case accepts a single create/close pair, not only the two serialized pairs it
+# once required. This fork keeps the worktree-poll ride-through, which holds the
+# presentation lock for the whole acquisition budget, so a concurrent sibling
+# starves and falls back to the ordinary flat layout without projecting. The
+# relaxed branch is guarded: it demands that worker's flat-fallback warning and
+# its retained inspection pane. It tightens back to the two serialized shapes
+# alone once a positive acquisition-done signal lets a doomed spawn abort
+# immediately instead of riding out the budget under the lock; that follow-up is
+# tracked as herdr-abort-acq-signal-a7. The inline comments at that assertion own
+# the detailed reasoning.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
