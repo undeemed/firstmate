@@ -354,6 +354,36 @@ test_exclude_family() {
   pass "exclude-family drops the named primary family after selection"
 }
 
+# An exclusion that empties a real selection must fail loudly, while a selection
+# that was already empty before exclusion still passes.
+test_exclude_family_refuses_to_empty_a_real_selection() {
+  local tmp repo out rc
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-exclude-empty.XXXXXX")
+  repo="$tmp/repo"
+  init_changed_fixture_repo "$repo"
+
+  # A lone real-Herdr-gated change is the shape that used to report green with
+  # nothing run at all.
+  printf '\n' >>"$repo/tests/fm-backend-herdr-smoke.test.sh"
+  rc=0
+  out=$(cd "$repo" && bin/fm-test-run.sh --changed --base HEAD --exclude-family real-herdr-gated 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] \
+    || { rm -rf "$tmp"; fail "exclusion that empties a non-empty selection must fail, got: $out"; }
+  case "$out" in
+    *'--exclude-family real-herdr-gated'*) ;;
+    *) rm -rf "$tmp"; fail "exclusion refusal must name the excluded family, got: $out" ;;
+  esac
+  git -C "$repo" checkout -q -- tests/fm-backend-herdr-smoke.test.sh
+
+  printf 'documentation only\n' >"$repo/README.md"
+  out=$(cd "$repo" && bin/fm-test-run.sh --changed --base HEAD --exclude-family real-herdr-gated 2>"$tmp/err") \
+    || { rm -rf "$tmp"; fail "selection empty before exclusion must still pass"; }
+  [ "$out" = "FM_TEST_SUMMARY total=0 failed=0 skipped_gate=0 duration_ms=0" ] \
+    || { rm -rf "$tmp"; fail "empty-before-exclusion summary changed: $out"; }
+  rm -rf "$tmp"
+  pass "exclude-family refuses to empty a real selection and leaves the empty case passing"
+}
+
 test_ci_and_docs_call_the_owner() {
   assert_present "$CI" "ci.yml missing"
   assert_present "$CONTRIB" "CONTRIBUTING.md missing"
@@ -689,6 +719,7 @@ test_aggregate_exit_behavior
 test_gate_skip_accounting
 test_fail_on_gate_skip_token
 test_exclude_family
+test_exclude_family_refuses_to_empty_a_real_selection
 test_ci_and_docs_call_the_owner
 test_portable_shard_union_and_coverage_guard
 test_portable_shard_docs_match_lanes

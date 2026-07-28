@@ -30,7 +30,10 @@
 #   --exclude-family <name>
 #                   drop scripts whose primary family matches <name> after selection
 #                   (repeatable; portable CI lanes exclude real-herdr-gated so the
-#                   dedicated required Herdr lane owns that coverage)
+#                   dedicated required Herdr lane owns that coverage).
+#                   Emptying a non-empty selection is fatal, so an exclusion can
+#                   never turn a real selection into a green run of nothing; a
+#                   selection that was already empty still exits 0.
 #   --fail-on-gate-skip <token>
 #                   after each script, fail the run if any output line contains
 #                   "skip: <token>" (e.g. --fail-on-gate-skip 'herdr not found').
@@ -811,9 +814,10 @@ detect_gate_skip_token() {
 }
 
 apply_exclude_families() {
-  local s fam keep ex
+  local s fam keep ex before names
   local -a kept=()
   [ "${#EXCLUDE_FAMILIES[@]}" -gt 0 ] || return 0
+  before=${#SCRIPTS[@]}
   for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     fam=$(family_for_basename "$(basename "$s")")
     keep=1
@@ -826,6 +830,13 @@ apply_exclude_families() {
     [ "$keep" -eq 1 ] && kept+=("$s")
   done
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
+  # An exclusion that empties a real selection is a gate that ran nothing, not a
+  # change with no tests. Name the applied families so the operator can tell the
+  # two apart; the same convention as the empty-lane refusal above.
+  if [ "$before" -gt 0 ] && [ "${#SCRIPTS[@]}" -eq 0 ]; then
+    names=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")
+    die "--exclude-family $names removed all $before selected tests; selection was non-empty before exclusion"
+  fi
 }
 
 write_json_artifact() {

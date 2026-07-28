@@ -47,8 +47,13 @@
 #
 # Overrides: FM_COMPOSER_IDLE_RE matches an empty composer after ghost and
 # structural border stripping. FM_BUSY_REGEX globally overrides harness-scoped
-# busy-footer matching, and this file is its single owner: every caller reaches
-# the override through fm_busy_lines_match rather than re-spelling it.
+# busy-footer matching, and this file is its single owner: no other file re-spells
+# it. One in-file caller does, deliberately - fm_tmux_composer_row_state greps
+# `${FM_BUSY_REGEX:-$FM_TMUX_BUSY_REGEX_DEFAULT}` itself instead of going through
+# fm_busy_lines_match. That is a known limit of the compatibility composer-row
+# fallback, not an oversight: it always uses the generic combined default and so
+# can never see a harness-scoped signature (kimi's moon-plus-middot row, claude's
+# ellipsis-plus-elapsed row).
 #
 # All functions are `set -u` and `set -e` safe (guarded tmux calls, explicit
 # returns) so they can be sourced into either context.
