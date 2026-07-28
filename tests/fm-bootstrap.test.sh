@@ -348,10 +348,11 @@ SH
   pass "bootstrap requires git with an install instruction"
 }
 
-# fm-dispatch-select.sh refuses to run without od at every crewmate and scout
-# intake, so od belongs to the universal toolchain: bootstrap has to surface it
-# under the detect-then-consent contract instead of letting an operator meet it
-# as a dispatch failure.
+# fm-dispatch-select.sh needs od to break a tie between equally-available
+# dispatch candidates, which any crewmate or scout intake can reach, so od
+# belongs to the universal toolchain: bootstrap has to surface it under the
+# detect-then-consent contract instead of letting an operator meet it as a
+# dispatch failure.
 test_od_is_a_required_common_tool() {
   local case_dir fakebin bash_env out expected
   case_dir="$TMP_ROOT/od-required"

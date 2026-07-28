@@ -54,8 +54,10 @@
 #     can be scored, selection falls back uniformly across every valid candidate
 #     using rejection sampling over a 32-bit value from /dev/urandom. A single
 #     candidate, whether the only profile in the array or the only top scorer, is
-#     already the outcome and consults no random source at all, so an unreadable
-#     one cannot turn a determined selection into a dispatch failure. The loud
+#     already the outcome and consults no random source at all, so neither an
+#     unreadable source nor an absent od reader can turn a determined selection
+#     into a dispatch failure. Both are probed where randomness is actually
+#     consumed, so the tool gate and the source gate cannot disagree. The loud
 #     refusal is reserved for a genuine choice among two or more tied candidates.
 #   - Runtime quota trouble never turns malformed profile JSON into a fallback;
 #     invalid input exits 2 with an actionable validation error. Profile fields
@@ -128,7 +130,6 @@ done
 
 [ "${#ARGS[@]}" -le 1 ] || { echo "error: expected at most one JSON argument" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
-command -v od >/dev/null 2>&1 || { echo "error: od is required for OS-backed random selection" >&2; exit 2; }
 
 if [ "${#ARGS[@]}" -eq 1 ]; then
   SPEC_JSON=${ARGS[0]}
@@ -181,9 +182,13 @@ random_index() {
   local count=$1 source raw ceiling attempts
   source=${FM_DISPATCH_RANDOM_SOURCE:-/dev/urandom}
   [ "$count" -gt 0 ] || return 1
-  # One candidate is already the outcome, so no random source is consulted and an
-  # unreadable one cannot block a determined selection.
+  # One candidate is already the outcome, so neither the random source nor its
+  # reader is consulted and an absent one cannot block a determined selection.
   [ "$count" -gt 1 ] || { printf '%s\n' 0; return 0; }
+  command -v od >/dev/null 2>&1 || {
+    echo "error: od is required to choose among tied dispatch candidates" >&2
+    return 1
+  }
   [ -r "$source" ] || return 1
   ceiling=$((4294967296 - (4294967296 % count)))
   attempts=0
