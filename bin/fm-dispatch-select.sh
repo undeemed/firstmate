@@ -38,6 +38,15 @@
 #     which would throw away every other candidate's good numbers and silently
 #     degrade the entire array to a random pick, so scoring narrows to the
 #     affected candidate instead.
+#   - Ignoring a field must make its predicate false, never vacuously true. A
+#     guard that maps bad input to "" is inert only on the haystack side of a
+#     match, because jq's contains("") and startswith("") are always true, so a
+#     window whose id and label are wrongly typed or absent would stop being
+#     ignored and become a wildcard matching every candidate. Every substring
+#     test whose needle can clean to empty goes through nonempty_contains, which
+#     refuses an empty needle or haystack. Emptiness is judged after cleaning,
+#     not on the raw field, so a model like "-" that cleans away is unmatchable
+#     rather than universal.
 #   - Stale-but-cached numbers remain usable, but a fresh candidate wins unless
 #     the best stale score is at least the stale-clear margin higher (default
 #     20 points). Equal winning scores use a random tie-break.
@@ -270,14 +279,19 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
       else null
       end;
   def provider_for($id): [.providers[]? | objects | select(.provider == $id)][0];
+  def nonempty_contains($haystack; $needle):
+    ($haystack | length) > 0
+    and ($needle | length) > 0
+    and ($haystack | contains($needle));
   def model_window_matches($window; $model):
-    if (text($window.kind?) != "model") or ($model | length) == 0 then false
+    if (text($window.kind?) != "model") then false
     else
       (text($window.id?) + " " + text($window.label?) | clean_text) as $scope
       | ($model | clean_text) as $wanted
-      | (($scope | contains($wanted)) or ($wanted | contains($scope))
+      | (nonempty_contains($scope; $wanted) or nonempty_contains($wanted; $scope)
         or (["fable", "opus", "haiku", "sonnet", "spark"]
-          | map(. as $family | ($scope | contains($family)) and ($wanted | contains($family)))
+          | map(. as $family
+            | nonempty_contains($scope; $family) and nonempty_contains($wanted; $family))
           | any))
     end;
   def usable_percent($window):

@@ -266,6 +266,7 @@ JSON
 # healthy candidate that must still win through the quota path.
 HEALTHY_CLAUDE='{"provider":"claude","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":10},{"id":"seven_day","kind":"weekly","percentRemaining":10}]}'
 HEALTHY_KIMI='{"provider":"kimi","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":90},{"id":"weekly","kind":"weekly","percentRemaining":95}]}'
+MIDDLING_KIMI='{"provider":"kimi","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":50},{"id":"weekly","kind":"weekly","percentRemaining":50}]}'
 
 test_wrongly_typed_quota_fields_never_abort_scoring() {
   local name candidates providers quota out err n
@@ -282,13 +283,42 @@ test_wrongly_typed_quota_fields_never_abort_scoring() {
     assert_not_contains "$err" "could not be evaluated" "$name aborted quota evaluation"
   done <<ROWS
 non-string Kimi window ids^[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]^$HEALTHY_CLAUDE,{"provider":"kimi","state":{"status":"fresh"},"windows":[{"id":88,"kind":"session","percentRemaining":1},{"id":["limit:1"],"kind":"unknown","percentRemaining":1},{"id":"five_hour","kind":"session","percentRemaining":90},{"id":"weekly","kind":"weekly","percentRemaining":95}]}
-non-string model window id and label^[{"harness":"claude","model":"claude-sonnet-5"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":10},{"id":"seven_day","kind":"weekly","percentRemaining":10},{"id":7,"kind":"model","label":42,"percentRemaining":99}]},$HEALTHY_KIMI
+non-string model window id and label^[{"harness":"claude","model":"claude-sonnet-5"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":10},{"id":"seven_day","kind":"weekly","percentRemaining":10},{"id":7,"kind":"model","label":42,"percentRemaining":5}]},$HEALTHY_KIMI
 non-object provider entry^[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]^"not-a-provider",$HEALTHY_CLAUDE,$HEALTHY_KIMI
 non-array provider windows^[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":{"status":"fresh"},"windows":"none"},$HEALTHY_KIMI
 non-string provider state^[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":7,"windows":[{"id":"five_hour","kind":"session","percentRemaining":100}]},$HEALTHY_KIMI
 non-string and non-object Grok product windows^[{"harness":"grok"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"grok","state":{"status":"fresh"},"windows":[{"id":9,"kind":"credits","percentRemaining":50},"junk",{"id":"credits","kind":"credits","percentRemaining":50}]},$HEALTHY_KIMI
 ROWS
   pass "wrongly-typed quota fields are ignored per field instead of aborting the whole array"
+}
+
+# Ignoring an untrusted field must make its predicate false, not vacuously
+# true. jq's contains("") is always true, so a guard that maps a wrongly-typed
+# or absent window id and label to "" turns that window into a wildcard
+# relevant to EVERY candidate on the provider, and because a score is the
+# minimum across relevant windows a single degenerate window silently drags a
+# genuinely available harness to the bottom. The abort-safety rows above cannot
+# see this: they keep the degenerate provider as the loser either way. Each row
+# here needs the healthy candidate to be the one carrying the degenerate
+# window, so only the wildcard can invert the winner.
+test_ignored_model_window_fields_never_match_every_candidate() {
+  local name candidates providers quota out err n
+  n=0
+  while IFS='^' read -r name candidates providers; do
+    n=$((n + 1))
+    quota="$TMP_ROOT/wildcard-$n.json"
+    printf '{"schemaVersion":2,"providers":[%s]}\n' "$providers" > "$quota"
+    out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" \
+      --quota-json "$quota" "$candidates" 2>"$TMP_ROOT/wildcard-$n.err")
+    err=$(cat "$TMP_ROOT/wildcard-$n.err")
+    assert_contains "$out" '"harness":"claude"' "$name made an unidentified model window score the available candidate"
+    assert_contains "$err" "selection basis: quota-selected" "$name degraded the whole array to a non-quota basis"
+  done <<ROWS
+a wrongly-typed model window id and label^[{"harness":"claude","model":"claude-sonnet-5"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":90},{"id":"seven_day","kind":"weekly","percentRemaining":90},{"id":7,"kind":"model","label":42,"percentRemaining":5}]},$MIDDLING_KIMI
+an absent model window id and label^[{"harness":"claude","model":"claude-sonnet-5"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":90},{"id":"seven_day","kind":"weekly","percentRemaining":90},{"kind":"model","percentRemaining":5}]},$MIDDLING_KIMI
+a profile model that cleans to empty^[{"harness":"claude","model":"-"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":90},{"id":"seven_day","kind":"weekly","percentRemaining":90},{"id":"model:fable","label":"Fable week","kind":"model","percentRemaining":5}]},$MIDDLING_KIMI
+ROWS
+  pass "an unidentified model window or an empty-cleaning model matches nothing instead of every candidate"
 }
 
 test_newly_verified_harnesses_clear_validation() {
@@ -474,6 +504,7 @@ test_provider_and_product_mapping_through_wrappers
 test_kimi_scores_through_general_windows_without_a_model
 test_kimi_limit_buckets_constrain_the_candidate
 test_wrongly_typed_quota_fields_never_abort_scoring
+test_ignored_model_window_fields_never_match_every_candidate
 test_newly_verified_harnesses_clear_validation
 test_most_constrained_relevant_window_scores_candidate
 test_grok_aggregate_fallback_requires_no_product_windows
