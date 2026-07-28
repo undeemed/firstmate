@@ -63,9 +63,14 @@
 #     invalid input exits 2 with an actionable validation error. Profile fields
 #     are typed by that validation pass, never by the scoring program's guards,
 #     so a wrongly-typed harness, model, or effort stays a loud refusal.
+#   - The stale-clear margin is operator config, not quota data, so a
+#     non-numeric override exits 2 naming the bad value instead of reaching the
+#     scoring program, whose failure would otherwise be reported as unusable
+#     quota data and silently drop the whole fleet to random selection.
 #
 # FM_DISPATCH_QUOTA_AXI overrides the quota command.
-# FM_DISPATCH_STALE_CLEAR_MARGIN overrides the default 20 point stale margin.
+# FM_DISPATCH_STALE_CLEAR_MARGIN overrides the default 20 point stale margin and
+# must be a number.
 # FM_DISPATCH_RANDOM_SOURCE overrides /dev/urandom for deterministic tests only.
 set -u
 
@@ -130,6 +135,10 @@ done
 
 [ "${#ARGS[@]}" -le 1 ] || { echo "error: expected at most one JSON argument" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
+[[ $STALE_CLEAR_MARGIN =~ ^-?[0-9]+([.][0-9]+)?$ ]] || {
+  echo "error: FM_DISPATCH_STALE_CLEAR_MARGIN must be a number, got: $STALE_CLEAR_MARGIN" >&2
+  exit 2
+}
 
 if [ "${#ARGS[@]}" -eq 1 ]; then
   SPEC_JSON=${ARGS[0]}
