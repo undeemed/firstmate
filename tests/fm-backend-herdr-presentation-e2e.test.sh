@@ -760,8 +760,37 @@ ABORT_SEQUENCE=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | aw
   $1 == "pane-close" && $4 == a { print "close-a" }
   $1 == "pane-close" && $4 == b { print "close-b" }
 ')
+# Two projecting workers must serialize into whole create/close pairs. A worker
+# that cannot take the bounded session lock within its wait budget is entitled
+# to warn and use the ordinary flat layout instead, so it never projects and
+# contributes no pair at all. This fork reaches that shape deterministically:
+# its worktree-poll ride-through (the false-abort fix in #8, which the fork
+# keeps) holds the presentation lock for the whole acquisition budget, which a
+# never-a-worktree abort fixture always exhausts, so the sibling spawn times out
+# waiting and falls back flat. The single-pair shape is therefore accepted ONLY
+# when the non-projecting worker actually logged that flat-fallback warning; a
+# genuinely interleaved sequence, or a projection dropped without the warning,
+# still fails here.
+# Tighten this back to the two serialized shapes alone once
+# herdr-abort-acq-signal-a7 lands the positive acquisition-done signal that lets
+# a doomed spawn abort immediately instead of riding out the budget under the
+# lock.
+FLAT_FALLBACK_WARNING="herdr presentation focus lock unavailable; using the ordinary flat layout without projection"
 case "$ABORT_SEQUENCE" in
-  $'create-a\nclose-a\ncreate-b\nclose-b'|$'create-b\nclose-b\ncreate-a\nclose-a') ;;
+  $'create-a\nclose-a\ncreate-b\nclose-b'|$'create-b\nclose-b\ncreate-a\nclose-a')
+    ABORT_PROJECTED_PANES="$ABORT_A_PANE $ABORT_B_PANE" ;;
+  $'create-a\nclose-a')
+    grep -F "$FLAT_FALLBACK_WARNING" "$TMP_ROOT/abort-b.err" >/dev/null 2>&1 \
+      || fail "post-create abort fixture B neither projected a serialized pair nor reported the flat fallback: $ABORT_SEQUENCE"
+    ABORT_PROJECTED_PANES="$ABORT_A_PANE"
+    ABORT_FLAT_PANE=$ABORT_B_PANE
+    ABORT_FLAT_ERR="$TMP_ROOT/abort-b.err" ;;
+  $'create-b\nclose-b')
+    grep -F "$FLAT_FALLBACK_WARNING" "$TMP_ROOT/abort-a.err" >/dev/null 2>&1 \
+      || fail "post-create abort fixture A neither projected a serialized pair nor reported the flat fallback: $ABORT_SEQUENCE"
+    ABORT_PROJECTED_PANES="$ABORT_B_PANE"
+    ABORT_FLAT_PANE=$ABORT_A_PANE
+    ABORT_FLAT_ERR="$TMP_ROOT/abort-a.err" ;;
   *) fail "concurrent post-create abort cleanup interleaved outside the presentation lock: $ABORT_SEQUENCE" ;;
 esac
 ABORT_UNRESTORED=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | awk -F '\t' -v a="$ABORT_A_PANE" -v b="$ABORT_B_PANE" '
@@ -770,14 +799,31 @@ ABORT_UNRESTORED=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | 
 [ -z "$ABORT_UNRESTORED" ] \
   || fail "post-create abort create, prune, or move changed exact focus: $ABORT_UNRESTORED"
 assert_focus_is "$CAPTAIN_FOCUS" "concurrent post-create abort cleanup"
-assert_cleanup_focus_preserved "$ABORT_FOCUS_START" "$ABORT_A_PANE" "$CAPTAIN_FOCUS"
-assert_cleanup_focus_preserved "$ABORT_FOCUS_START" "$ABORT_B_PANE" "$CAPTAIN_FOCUS"
+# Only a worker that actually projected performs the focus-audited projected
+# pane close; the flat-fallback worker accepted above never enters that path, so
+# it has no such record to audit. Both panes must still be gone by the exact-pane
+# check below, whichever path cleaned them up.
+for ABORT_PANE in $ABORT_PROJECTED_PANES; do
+  assert_cleanup_focus_preserved "$ABORT_FOCUS_START" "$ABORT_PANE" "$CAPTAIN_FOCUS"
+done
 assert_no_ordering_lifecycle_calls_since "$ABORT_START" "concurrent post-create abort cleanup"
-for ABORT_PANE in "$ABORT_A_PANE" "$ABORT_B_PANE"; do
+for ABORT_PANE in $ABORT_PROJECTED_PANES; do
   if lab pane get "$ABORT_PANE" >/dev/null 2>&1; then
     fail "serialized post-create abort cleanup left exact task pane $ABORT_PANE alive"
   fi
 done
+# A flat-fallback abort deliberately does NOT close its pane: the refusal names
+# that exact endpoint as the inspection target, so removing it would destroy the
+# evidence an operator is being sent to read. Assert that intent positively
+# instead of exempting the pane, so a silent future change to either half - the
+# retained pane or the named target - still fails here.
+if [ -n "${ABORT_FLAT_PANE:-}" ]; then
+  lab pane get "$ABORT_FLAT_PANE" >/dev/null 2>&1 \
+    || fail "flat-fallback abort discarded pane $ABORT_FLAT_PANE that its refusal names for inspection"
+  grep -F "Inspect target" "$ABORT_FLAT_ERR" | grep -F "$ABORT_FLAT_PANE" >/dev/null 2>&1 \
+    || fail "flat-fallback abort retained pane $ABORT_FLAT_PANE without naming it as the inspection target"
+  lab pane close "$ABORT_FLAT_PANE" >/dev/null 2>&1 || true
+fi
 [ ! -e "$HOME_DIR/state/abort-a.meta" ] && [ ! -e "$HOME_DIR/state/abort-b.meta" ] \
   || fail "post-create abort fixtures published task metadata before launch"
 rm -rf "$POST_CREATE_ABORT_CONTROL"
