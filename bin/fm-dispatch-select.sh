@@ -231,7 +231,10 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
   def clean_text:
     ascii_downcase | gsub("[^a-z0-9]"; "");
   def model_name($model):
-    ($model | split("/") | last | split(":") | first);
+    ($model | split("/") | last) as $tail
+    | if ($tail | type) != "string" then ""
+      else (($tail | split(":") | first) // "")
+      end;
   def route($profile):
     ($profile.harness // "") as $h
     | ($profile.model // "") as $model
