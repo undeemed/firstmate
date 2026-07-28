@@ -221,6 +221,28 @@ test_window_is_busy_declares_its_classifier_source() {
   pass "window_is_busy resolves fm_busy_lines_match through a source fm-watch.sh declares"
 }
 
+# read_int is the same dependency shape: the watcher's counter reads (wedge
+# escalations and the heartbeat backoff streak) reached it only transitively via
+# bin/fm-push-transition-lib.sh, whose source list is deliberately narrow. An
+# unset read_int would not error - every read would evaluate as the default, so
+# counters silently reset instead of accumulating and no threshold is ever hit.
+# Assert the declaration AND that reads still accumulate rather than reset.
+test_read_int_declares_its_provider_source() {
+  local dir state out
+  # shellcheck disable=SC2016  # single quotes are deliberate: the literal source line in fm-watch.sh is the search text, not an expansion.
+  grep -Fq '. "$SCRIPT_DIR/fm-wake-lib.sh"' "$WATCH" \
+    || fail "fm-watch.sh must source bin/fm-wake-lib.sh directly for read_int"
+  dir=$(make_case read-int-source); state="$dir/state"
+  printf '7' > "$state/counter"
+  out=$(FM_STATE_OVERRIDE="$state" bash -u -c '
+    . "$1" || exit 3
+    [ "$(type -t read_int)" = function ] || { printf undeclared; exit 0; }
+    printf "%s" "$(( $(read_int "$2/counter" 0) + 1 ))"
+  ' _ "$WATCH" "$state" 2>/dev/null) || fail "sourcing fm-watch.sh for read_int failed"
+  [ "$out" = 8 ] || fail "read_int did not accumulate from its state file: $out"
+  pass "read_int resolves through a source fm-watch.sh declares"
+}
+
 # crew_is_provably_working: the absorb-only-when-provably-working predicate. It is
 # benign (absorb) ONLY when fm-crew-state.sh reports the crew as working from an
 # actively-running pipeline step (source run-step) or a busy pane (source pane);
@@ -1366,6 +1388,7 @@ test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
 test_classifier_primitives
 test_window_is_busy_declares_its_classifier_source
+test_read_int_declares_its_provider_source
 test_crew_is_provably_working_classifier
 test_status_is_paused_classifier
 test_crew_absorb_class_classifier

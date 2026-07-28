@@ -503,6 +503,8 @@ test_determined_outcome_never_needs_a_random_source() {
   expect_code 1 "$status" "a genuine tie must still refuse loudly without a random source"
   assert_contains "$err" "OS-backed random source is unavailable" \
     "tied candidates lost the loud random-source refusal"
+  [ "$err" = "error: OS-backed random source is unavailable: $unreadable" ] \
+    || fail "the random-source refusal must be the only stderr line and name the source; got: $err"
   [ -z "$out" ] || fail "tied candidates emitted a profile without a usable random source: $out"
   pass "a determined selection needs no random source while a genuine tie still refuses loudly"
 }
@@ -553,6 +555,12 @@ SH
   expect_code 1 "$status" "a genuine tie must still refuse loudly when od is absent"
   assert_contains "$err" "od is required to choose among tied dispatch candidates" \
     "the tie refusal did not name the missing od"
+  # Exact match, not a substring: the missing reader is the only cause, so a
+  # second line blaming the random source would name a remedy that fixes nothing.
+  [ "$err" = "error: od is required to choose among tied dispatch candidates" ] \
+    || fail "the missing-od refusal must be the only stderr line; got: $err"
+  assert_not_contains "$err" "OS-backed random source is unavailable" \
+    "a readable random source was wrongly blamed for the missing od reader"
   [ -z "$out" ] || fail "tied candidates emitted a profile without od: $out"
   pass "a determined selection needs no od while a genuine tie names the missing od"
 }

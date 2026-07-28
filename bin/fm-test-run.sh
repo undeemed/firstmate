@@ -61,7 +61,9 @@
 # owned by bin/fm-test-isolation-proof.sh; portable parallel shards are a
 # duration-balanced partition of that exact set (see docs/fm-test-portable-shards.md).
 # --changed is conservative: it over-selects related families rather than
-# under-selecting, and never expands to the complete suite unless --all.
+# under-selecting, and its size follows what the change touches, so a narrow
+# change selects a narrow set while a repository-wide change can legitimately
+# select every script.
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -598,7 +600,10 @@ families_for_test_reference() {
 }
 
 # Conservative path → family map. Over-selects rather than under-selects.
-# Never expands to the complete suite.
+# Each path maps to the families that cover it, so the selection is bounded by
+# what changed rather than by a fixed size: a small change selects a small set,
+# and a repository-wide change can legitimately select every script. That union
+# is the correct outcome, not an exception.
 families_for_changed_path() {
   local path=$1
   case "$path" in

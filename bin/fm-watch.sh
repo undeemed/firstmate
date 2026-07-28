@@ -61,6 +61,15 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-check-lib.sh
 . "$SCRIPT_DIR/fm-check-lib.sh"
+# Hardened numeric state-file reads (read_int) and watcher process identity.
+# Declared here rather than relied on transitively through fm-push-transition-lib.sh,
+# whose source list is deliberately narrow: an unset read_int would make every
+# counter read evaluate as the default, so wedge escalation counts and the
+# heartbeat backoff streak would silently reset instead of accumulating.
+# Re-sourcing is idempotent - its top-level assignments are all ${VAR:-...}
+# guarded and its state directory creation duplicates the mkdir above.
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 # Pane busy classification (fm_busy_lines_match, used by window_is_busy below).
 # Declared here rather than relied on transitively through another library, so
 # pane classification cannot silently degrade to an unset function if an
@@ -98,9 +107,6 @@ else
   stat_mtime() { stat -c %Y "$1" 2>/dev/null; }
   stat_sig()   { stat -c '%s:%Y' "$1" 2>/dev/null; }
 fi
-
-# read_int (hardened numeric state-file read) comes from fm-wake-lib.sh via
-# the fm-push-transition-lib.sh source above.
 
 POLL=${FM_POLL:-15}                   # seconds between cycles
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
