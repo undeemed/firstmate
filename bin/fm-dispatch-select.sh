@@ -178,10 +178,16 @@ clean_profile_at() {
   '
 }
 
+# Sole owner of every diagnostic for a failed draw, so no caller can add a
+# second cause line that contradicts the real one (a missing od is not an
+# unreadable source, and the remedies differ).
 random_index() {
   local count=$1 source raw ceiling attempts
   source=${FM_DISPATCH_RANDOM_SOURCE:-/dev/urandom}
-  [ "$count" -gt 0 ] || return 1
+  [ "$count" -gt 0 ] || {
+    echo "error: no dispatch candidate to choose from" >&2
+    return 1
+  }
   # One candidate is already the outcome, so neither the random source nor its
   # reader is consulted and an absent one cannot block a determined selection.
   [ "$count" -gt 1 ] || { printf '%s\n' 0; return 0; }
@@ -189,7 +195,10 @@ random_index() {
     echo "error: od is required to choose among tied dispatch candidates" >&2
     return 1
   }
-  [ -r "$source" ] || return 1
+  [ -r "$source" ] || {
+    echo "error: OS-backed random source is unavailable: $source" >&2
+    return 1
+  }
   ceiling=$((4294967296 - (4294967296 % count)))
   attempts=0
   while [ "$attempts" -lt 32 ]; do
@@ -203,6 +212,7 @@ random_index() {
     fi
     attempts=$((attempts + 1))
   done
+  echo "error: OS-backed random source is unavailable: $source yielded no usable value" >&2
   return 1
 }
 
@@ -210,10 +220,7 @@ random_profile() {
   local reason count index
   reason=$1
   count=$(printf '%s\n' "$profiles_json" | jq 'length')
-  if ! index=$(random_index "$count"); then
-    echo "error: OS-backed random source is unavailable" >&2
-    exit 1
-  fi
+  index=$(random_index "$count") || exit 1
   log "$reason"
   log "selection basis: random fallback"
   clean_profile_at "$index"
@@ -383,10 +390,7 @@ fi
 
 winner_indices=$(printf '%s\n' "$selection" | jq -c '.indices')
 winner_count=$(printf '%s\n' "$winner_indices" | jq 'length')
-if ! winner_offset=$(random_index "$winner_count"); then
-  echo "error: OS-backed random source is unavailable" >&2
-  exit 1
-fi
+winner_offset=$(random_index "$winner_count") || exit 1
 winner_index=$(printf '%s\n' "$winner_indices" | jq -r --argjson offset "$winner_offset" '.[$offset]')
 log "selection basis: quota-selected"
 clean_profile_at "$winner_index"

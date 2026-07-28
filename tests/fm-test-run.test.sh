@@ -76,8 +76,9 @@ test_changed_file_selection_is_conservative() {
   all_count=$("$RUNNER" --list --all | wc -l | tr -d ' ')
   fam_count=$(printf '%s\n' "$listed" | wc -l | tr -d ' ')
   [ "$fam_count" -lt "$all_count" ] || fail "changed-informed pure family still full suite"
-  # Directly exercise --changed: empty or partial selection is ok; must not
-  # exceed the suite and must never silently become --all by accident.
+  # Directly exercise --changed: empty or partial selection is ok, and a
+  # repository-wide change legitimately reaches every script, so the only bound
+  # asserted here is that the selection never exceeds the suite.
   listed=$("$RUNNER" --list --changed --base HEAD 2>/dev/null || true)
   if [ -n "$listed" ]; then
     listed_count=$(printf '%s\n' "$listed" | wc -l | tr -d ' ')
@@ -88,7 +89,7 @@ test_changed_file_selection_is_conservative() {
   listed=$("$RUNNER" --list tests/fm-brief.test.sh)
   [ "$listed" = "tests/fm-brief.test.sh" ] \
     || fail "test-file-only change contract should select one script"
-  pass "changed-file selection stays conservative (never silent full suite)"
+  pass "changed-file selection stays conservative (scoped by what changed, never larger than the suite)"
 }
 
 init_changed_fixture_repo() {

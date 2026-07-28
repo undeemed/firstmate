@@ -516,11 +516,17 @@ missing_tool_diagnostic() {
 # fm_backend_required_tools (bin/fm-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-# od is listed because fm-dispatch-select.sh needs it to break a tie between
-# equally-available dispatch candidates, which any crewmate or scout intake can
-# reach, so its absence must surface here for consent rather than as a dispatch
-# failure. A determined selection never consults it, so the detect-then-consent
-# line is the only place a missing od is meant to be met.
+# od is listed because more than one production path hard-requires it. The more
+# consequential consumer is process identity: fm_pid_identity's Linux /proc branch
+# (bin/fm-wake-lib.sh) reads the NUL-separated cmdline through od and returns
+# rather than falling through to the ps form, because a /proc identity and a ps
+# identity are not comparable. Without od that branch always fails, the watcher
+# writes an empty identity, and every guard then reports a lapsed watcher chain
+# for a watcher that is alive - a silent degradation, not a loud refusal.
+# fm-dispatch-select.sh also needs od to break a tie between equally-available
+# dispatch candidates, which any crewmate or scout intake can reach; a determined
+# selection never consults it, so only a genuine tie refuses there. Detecting od
+# here for consent is what keeps both paths from meeting its absence at runtime.
 COMMON_TOOLS="node git gh od no-mistakes gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1

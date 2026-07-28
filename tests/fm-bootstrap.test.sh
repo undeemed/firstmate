@@ -348,11 +348,14 @@ SH
   pass "bootstrap requires git with an install instruction"
 }
 
-# fm-dispatch-select.sh needs od to break a tie between equally-available
-# dispatch candidates, which any crewmate or scout intake can reach, so od
-# belongs to the universal toolchain: bootstrap has to surface it under the
-# detect-then-consent contract instead of letting an operator meet it as a
-# dispatch failure.
+# Two production paths need od, so it belongs to the universal toolchain.
+# fm_pid_identity's Linux /proc branch (bin/fm-wake-lib.sh) reads the cmdline
+# through od and does not fall through to the ps form, so without od the watcher
+# writes an empty identity and every guard reports a lapsed chain for a live
+# watcher. fm-dispatch-select.sh also needs it to break a tie between
+# equally-available dispatch candidates, which any crewmate or scout intake can
+# reach. Bootstrap has to surface it under the detect-then-consent contract
+# instead of letting an operator meet it as either runtime failure.
 test_od_is_a_required_common_tool() {
   local case_dir fakebin bash_env out expected
   case_dir="$TMP_ROOT/od-required"
@@ -373,7 +376,7 @@ SH
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   expected="MISSING: od (install: brew install coreutils  # or the platform's package manager)"
   [ "$out" = "$expected" ] || fail "missing od should report the coreutils install instruction, got: $out"
-  pass "bootstrap requires the dispatch selector's od with an install instruction"
+  pass "bootstrap requires od for watcher identity and dispatch with an install instruction"
 }
 
 test_orca_backend_gates_orca_tool_only_when_selected() {
