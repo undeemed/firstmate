@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # Shared durable wake queue and portable lock helpers.
 
+# Load guard. This file assigns FM_WATCHER_HEALTHY_PID, FM_WAKE_STATUS_KEY,
+# FM_WAKE_STATUS_HISTORICAL, FM_WAKE_EVENT_LINE, and FM_WAKE_EVENT_TRUNCATED at
+# top level, so a second source in the same shell would clear whatever a wake
+# already resolved into them. Several consumers source it both directly and
+# transitively (bin/fm-watch.sh through bin/fm-push-transition-lib.sh), and that
+# safety must not depend on where the sources happen to sit in the file.
+if [ -n "${FM_WAKE_LIB_LOADED:-}" ]; then
+  return 0
+fi
+FM_WAKE_LIB_LOADED=1
+
 FM_WAKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_WAKE_DEFAULT_ROOT="$(cd "$FM_WAKE_LIB_DIR/.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_WAKE_DEFAULT_ROOT}}"

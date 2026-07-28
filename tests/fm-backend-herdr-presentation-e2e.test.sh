@@ -14,8 +14,8 @@
 # its retained inspection pane. It tightens back to the two serialized shapes
 # alone once a positive acquisition-done signal lets a doomed spawn abort
 # immediately instead of riding out the budget under the lock; that follow-up is
-# tracked as herdr-abort-acq-signal-a7. The inline comments at that assertion own
-# the detailed reasoning.
+# tracked privately as herdr-abort-acq-signal-a7. The inline comments at that
+# assertion own the detailed reasoning.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -783,10 +783,10 @@ ABORT_SEQUENCE=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | aw
 # when the non-projecting worker actually logged that flat-fallback warning; a
 # genuinely interleaved sequence, or a projection dropped without the warning,
 # still fails here.
-# Tighten this back to the two serialized shapes alone once
-# herdr-abort-acq-signal-a7 lands the positive acquisition-done signal that lets
-# a doomed spawn abort immediately instead of riding out the budget under the
-# lock.
+# Tighten this back to the two serialized shapes alone once a positive
+# acquisition-done signal lets a doomed spawn abort immediately instead of riding
+# out the budget under the lock (that follow-up is tracked privately as
+# herdr-abort-acq-signal-a7).
 FLAT_FALLBACK_WARNING="herdr presentation focus lock unavailable; using the ordinary flat layout without projection"
 case "$ABORT_SEQUENCE" in
   $'create-a\nclose-a\ncreate-b\nclose-b'|$'create-b\nclose-b\ncreate-a\nclose-a')

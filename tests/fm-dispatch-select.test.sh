@@ -600,7 +600,7 @@ test_invalid_stale_margin_is_an_operator_config_error() {
     out=$(FM_DISPATCH_STALE_CLEAR_MARGIN="$value" FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ONE" \
       "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" "$profiles" 2>&1) || status=$?
     expect_code 2 "$status" "invalid stale margin should exit 2: $value"
-    assert_contains "$out" "FM_DISPATCH_STALE_CLEAR_MARGIN must be a number" \
+    assert_contains "$out" "FM_DISPATCH_STALE_CLEAR_MARGIN must be a non-negative number" \
       "invalid stale margin did not name the operator-config cause: $value"
     assert_not_contains "$out" "quota-axi data could not be evaluated" \
       "quota data was blamed for a bad stale margin: $value"
@@ -627,7 +627,7 @@ test_bad_stale_margin_only_blocks_the_selection_that_reads_it() {
   out=$(FM_DISPATCH_STALE_CLEAR_MARGIN='20%' \
     "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" "$profiles" 2>&1) || status=$?
   expect_code 2 "$status" "a scored multi-profile dispatch must still refuse a bad stale margin"
-  assert_contains "$out" "FM_DISPATCH_STALE_CLEAR_MARGIN must be a number" \
+  assert_contains "$out" "FM_DISPATCH_STALE_CLEAR_MARGIN must be a non-negative number" \
     "the scored dispatch did not name the operator-config cause"
 
   out=$(FM_DISPATCH_STALE_CLEAR_MARGIN='20%' \

@@ -27,15 +27,25 @@
 #   --json <path>   write a deterministic timing artifact after the run
 #   --list          print selected script paths (one per line) and exit 0.
 #                   Exclusions apply before listing, so an --exclude-family that
-#                   empties a non-empty selection still refuses with exit 2.
+#                   empties a non-empty selection still refuses with exit 2 unless
+#                   --allow-empty-after-exclude is set.
 #   --base <ref>    with --changed, compare against this ref (default: origin/main)
 #   --exclude-family <name>
 #                   drop scripts whose primary family matches <name> after selection
-#                   (repeatable; portable CI lanes exclude real-herdr-gated so the
-#                   dedicated required Herdr lane owns that coverage).
+#                   (repeatable). The portable CI lanes reach the same partition by
+#                   construction and never pass this flag; the local no-mistakes
+#                   Test pin in .no-mistakes.yaml is its only caller.
 #                   Emptying a non-empty selection is fatal, so an exclusion can
 #                   never turn a real selection into a green run of nothing; a
 #                   selection that was already empty still exits 0.
+#   --allow-empty-after-exclude
+#                   opt out of that refusal: when an exclusion removes every
+#                   selected script, print to stdout which family emptied a
+#                   non-empty selection and which CI job really gates it, then
+#                   exit 0 instead of failing. For the .no-mistakes.yaml Test pin
+#                   only, where a branch whose sole mapped change is an excluded
+#                   script would otherwise turn a legitimate change red with no
+#                   escape but editing the pin.
 #   --fail-on-gate-skip <token>
 #                   after each script, fail the run if any output line contains
 #                   "skip: <token>" (e.g. --fail-on-gate-skip 'herdr not found').
@@ -86,6 +96,7 @@ BASE_REF=origin/main
 JSON_PATH=
 SCRIPTS=()
 EXCLUDE_FAMILIES=()
+ALLOW_EMPTY_AFTER_EXCLUDE=0
 FAIL_ON_GATE_SKIP=
 JOBS=1
 JOBS_MAX=8
@@ -834,9 +845,20 @@ apply_exclude_families() {
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
   # An exclusion that empties a real selection is a gate that ran nothing, not a
   # change with no tests. Name the applied families so the operator can tell the
-  # two apart; the same convention as the empty-lane refusal above.
+  # two apart; the same convention as the empty-lane refusal above. This refusal
+  # protects a hand-run selection, NOT the .no-mistakes.yaml pin: that pin opts
+  # out with --allow-empty-after-exclude, because for it the same shape is a
+  # legitimate branch whose only mapped change is an excluded script.
   if [ "$before" -gt 0 ] && [ "${#SCRIPTS[@]}" -eq 0 ]; then
     names=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")
+    if [ "$ALLOW_EMPTY_AFTER_EXCLUDE" -eq 1 ]; then
+      # stdout, and before the empty-run summary, so the operator reading the
+      # step's output cannot mistake this for a change with no tests.
+      printf 'exclusion emptied a non-empty selection: --exclude-family %s removed all %s selected tests\n' \
+        "$names" "$before"
+      printf 'nothing runs locally for that change; the CI job "Behavior tests (Herdr)" is the real gate for the excluded family\n'
+      return 0
+    fi
     die "--exclude-family $names removed all $before selected tests; selection was non-empty before exclusion"
   fi
 }
@@ -1014,6 +1036,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --exclude-family=*)
       EXCLUDE_FAMILIES+=("${1#--exclude-family=}")
+      shift
+      ;;
+    --allow-empty-after-exclude)
+      ALLOW_EMPTY_AFTER_EXCLUDE=1
       shift
       ;;
     --fail-on-gate-skip)
