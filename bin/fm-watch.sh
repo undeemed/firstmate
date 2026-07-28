@@ -67,11 +67,11 @@ mkdir -p "$STATE"
 # counter read evaluate as the default, so wedge escalation counts and the
 # heartbeat backoff streak would silently reset instead of accumulating.
 # This is a second source of that file - bin/fm-push-transition-lib.sh sources it
-# too - and it is NOT idempotent: fm-wake-lib.sh resets FM_WATCHER_HEALTHY_PID,
-# FM_WAKE_STATUS_KEY, FM_WAKE_STATUS_HISTORICAL, FM_WAKE_EVENT_LINE, and
-# FM_WAKE_EVENT_TRUNCATED unguarded at top level. Re-sourcing is safe only here,
-# at startup, before any of those five ever holds a value; doing it again once a
-# wake's status key or event line is populated would silently clear it. Its state
+# too - and it is a no-op: fm-wake-lib.sh carries its own load guard, so it can
+# never re-clear FM_WATCHER_HEALTHY_PID, FM_WAKE_STATUS_KEY,
+# FM_WAKE_STATUS_HISTORICAL, FM_WAKE_EVENT_LINE, or FM_WAKE_EVENT_TRUNCATED once
+# a wake has populated them. That safety is structural, not positional: this
+# declaration can move without silently discarding a resolved wake. Its state
 # directory creation duplicates the mkdir above.
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"

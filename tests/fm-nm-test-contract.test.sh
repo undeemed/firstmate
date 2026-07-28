@@ -87,10 +87,13 @@ test_nm_pins_bounded_deterministic_test_command() {
   [ -n "$val" ] \
     || fail "commands.test must pin a deterministic non-agent command; an absent value hands Test back to an agent"
   # This refusal matches by spelling, not by measured scope: a bounded selection
-  # mode can still resolve to every script. A selection ceiling is tracked
-  # separately as backlog nm-test-selection-ceiling-c3.
-  case "$val" in
-    *'tests/*.test.sh'*|*'--all'*)
+  # mode can still resolve to every script, so tighten this to a measured ceiling
+  # only once the runner can cap or report selection size (tracked privately as
+  # nm-test-selection-ceiling-c3).
+  # Match --all as a whole flag, not as a substring: a longer flag that merely
+  # starts with it, such as --allow-empty-after-exclude, is not a full-suite walk.
+  case "$val " in
+    *'tests/*.test.sh'*|*' --all '*)
       fail "commands.test must not hardcode a full-suite walk; got: $val"
       ;;
   esac
@@ -139,6 +142,12 @@ test_pinned_test_command_is_a_supported_selection() {
       [ -n "$family" ] || fail "commands.test names --exclude-family without a family: $val"
       "$ROOT/$runner" --list-families 2>/dev/null | grep -Fqx "$family" \
         || fail "$runner --list-families does not offer the excluded family: $family"
+      ;;
+  esac
+  case "$val " in
+    *' --allow-empty-after-exclude '*)
+      grep -Fq -- '--allow-empty-after-exclude' "$ROOT/$runner" \
+        || fail "$runner no longer implements --allow-empty-after-exclude, which commands.test depends on"
       ;;
   esac
   pass "the pinned Test command matches a supported bin/fm-test-run.sh selection"

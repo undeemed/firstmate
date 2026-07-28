@@ -285,7 +285,7 @@ if ! printf '%s\n' "$quota_json" | jq -e 'type == "object" and (.providers | typ
 fi
 
 [[ $STALE_CLEAR_MARGIN =~ ^[0-9]+([.][0-9]+)?$ ]] || {
-  echo "error: FM_DISPATCH_STALE_CLEAR_MARGIN must be a number, got: $STALE_CLEAR_MARGIN" >&2
+  echo "error: FM_DISPATCH_STALE_CLEAR_MARGIN must be a non-negative number, got: $STALE_CLEAR_MARGIN" >&2
   exit 2
 }
 

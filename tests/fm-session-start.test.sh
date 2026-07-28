@@ -466,7 +466,7 @@ run_session_start_secondmate() {
 }
 
 prepare_session_start_herdr_secondmate() {
-  local name=$1 rec root home fakebin w mate log state id=$SESSION_START_HERDR_SECOND_MATE_ID
+  local name=$1 rec root home fakebin w mate log state jq_bin id=$SESSION_START_HERDR_SECOND_MATE_ID
   rec=$(new_world "$name")
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -498,6 +498,12 @@ EOF
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   make_fake_herdr_secondmate_recovery "$fakebin"
+  # The Herdr endpoint probe parses the fake CLI's JSON, so the fixture pins the
+  # host's real jq instead of assuming it sits in BASE_PATH: on a host that keeps
+  # jq outside /usr/bin the probe would otherwise read as unreadable and this
+  # recovery case would fail for the environment rather than for the code.
+  jq_bin=$(command -v jq) || fail "the Herdr secondmate recovery fixture requires jq"
+  ln -sf "$jq_bin" "$fakebin/jq"
   : > "$log"
   printf '%s|%s|%s|%s|%s|%s\n' "$root" "$home" "$fakebin" "$mate" "$log" "$state"
 }

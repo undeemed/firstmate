@@ -384,6 +384,41 @@ test_exclude_family_refuses_to_empty_a_real_selection() {
   pass "exclude-family refuses to empty a real selection and leaves the empty case passing"
 }
 
+# --allow-empty-after-exclude opts the .no-mistakes.yaml pin out of that refusal,
+# so a branch whose only mapped change is an excluded script is not a red step.
+# It must still say what happened and which CI job really gates the family.
+test_allow_empty_after_exclude_reports_and_exits_zero() {
+  local tmp repo out rc
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-allow-empty.XXXXXX")
+  repo="$tmp/repo"
+  init_changed_fixture_repo "$repo"
+
+  printf '\n' >>"$repo/tests/fm-backend-herdr-smoke.test.sh"
+  rc=0
+  out=$(cd "$repo" && bin/fm-test-run.sh --changed --base HEAD \
+    --exclude-family real-herdr-gated --allow-empty-after-exclude 2>"$tmp/err") || rc=$?
+  [ "$rc" -eq 0 ] \
+    || { rm -rf "$tmp"; fail "--allow-empty-after-exclude must exit 0, got $rc: $out" ; }
+  case "$out" in
+    *'exclusion emptied a non-empty selection'*) ;;
+    *) rm -rf "$tmp"; fail "notice must name the emptied selection on stdout, got: $out" ;;
+  esac
+  case "$out" in
+    *'--exclude-family real-herdr-gated'*) ;;
+    *) rm -rf "$tmp"; fail "notice must name the excluded family, got: $out" ;;
+  esac
+  case "$out" in
+    *'Behavior tests (Herdr)'*) ;;
+    *) rm -rf "$tmp"; fail "notice must name the CI job that really gates it, got: $out" ;;
+  esac
+  case "$out" in
+    *'FM_TEST_SUMMARY total=0 failed=0 skipped_gate=0 duration_ms=0'*) ;;
+    *) rm -rf "$tmp"; fail "empty-run summary changed under the flag: $out" ;;
+  esac
+  rm -rf "$tmp"
+  pass "allow-empty-after-exclude reports the emptied selection and its CI gate, then exits 0"
+}
+
 test_ci_and_docs_call_the_owner() {
   assert_present "$CI" "ci.yml missing"
   assert_present "$CONTRIB" "CONTRIBUTING.md missing"
@@ -720,6 +755,7 @@ test_gate_skip_accounting
 test_fail_on_gate_skip_token
 test_exclude_family
 test_exclude_family_refuses_to_empty_a_real_selection
+test_allow_empty_after_exclude_reports_and_exits_zero
 test_ci_and_docs_call_the_owner
 test_portable_shard_union_and_coverage_guard
 test_portable_shard_docs_match_lanes

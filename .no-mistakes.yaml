@@ -51,19 +51,34 @@ document:
 # The real-herdr-gated exclusion is a SAFETY boundary first, not a speed choice,
 # and that is why it must not be deleted: herdr is installed in this container, so
 # those tests do NOT gate-skip here - they would drive the live herdr server. That
-# is live-home bleed, which has already killed supervision on this box once, when a
-# full-suite run took the live watcher lock and killed nine in-flight tasks. CI's
-# dedicated required Herdr lane owns that family's coverage, so excluding it here
-# leaves nothing ungated; the runner applies the same convention to its portable CI
-# lanes (`bin/fm-test-run.sh` header, --exclude-family).
-# What the runner does refuse is a total wipe: `--exclude-family` fails when it
-# removes EVERY selected script, so an exclusion can never turn a real selection
-# into a green run of nothing. A partial drop, the case described above, is not
-# refused and is not reported.
+# is live-home bleed, which already killed supervision on this box during this
+# branch's own validation, when a full-suite run took this home's live watcher lock
+# and dropped supervision for nine in-flight tasks. CI's dedicated required Herdr
+# lane owns that family's coverage, so excluding it here leaves nothing ungated;
+# the portable CI lanes reach the same partition by construction and never pass
+# --exclude-family, so this pin is that flag's only caller (`bin/fm-test-run.sh`
+# header).
+# By default the runner refuses a total wipe: `--exclude-family` fails when it
+# removes EVERY selected script. That refusal is right for a hand-run selection
+# and wrong for this pin, because a branch whose only mapped change IS a
+# real-Herdr-gated test is a legitimate change, not a gate that ran nothing, and
+# its only escape from a red step would be editing this tracked pin. So the pin
+# adds --allow-empty-after-exclude: that exact case prints to stdout which family
+# emptied a non-empty selection and that CI's `Behavior tests (Herdr)` job is the
+# real gate, then exits 0. A partial drop, the case described above, is still
+# neither refused nor reported.
 # `--changed` is not narrow by nature: its set is whatever the change maps to, so
 # a repository-wide branch legitimately expands broadly. Measured on this branch,
 # `--list --changed --base origin/main` selects 102 scripts and 92 remain after
-# the exclusion. That expansion is honest selection, not a bug.
+# the exclusion. That expansion is honest selection, not a bug - but it is not a
+# bound either, and this pin does NOT prevent the live-home bleed described above.
+# The Herdr exclusion is its only limit, so the watcher, wake-queue, watcher-lock,
+# daemon, AFK, tmux, and session-bootstrap suites all still run against this live
+# home on every gate run, which is exactly the class that took the live watcher
+# lock here. The fix is not a narrower selection, which would only hide the
+# exposure: it is forcing every watcher, lock, and arm test into a scratch
+# `FM_HOME` so no test run can reach a live home at all. Bound this pin further
+# only once that isolation lands.
 # `--jobs` does not apply to this pin, and not because the flags are structurally
 # incompatible: `--jobs` is not a selection mode and `--changed --jobs N` parses
 # fine. The runner refuses N>1 as soon as any selected script falls outside the
@@ -81,7 +96,7 @@ document:
 # deliberate full local regression instead.
 commands:
   lint: 'bin/fm-lint.sh'
-  test: 'bin/fm-test-run.sh --changed --base origin/main --exclude-family real-herdr-gated'
+  test: 'bin/fm-test-run.sh --changed --base origin/main --exclude-family real-herdr-gated --allow-empty-after-exclude'
 
 # Keep test evidence out of this repo; it stays in a temp dir instead.
 test:
