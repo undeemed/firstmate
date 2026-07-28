@@ -39,18 +39,26 @@ document:
 #     change. Bounding by lane instead bounds membership rather than relevance,
 #     which is how an earlier `--lane portable-serial` pin excluded exactly the
 #     suites its own branch edited; `--changed` cannot repeat that on any branch.
-# The one excluded family is the one CI already gates separately in its dedicated
-# required Herdr lane, so dropping it here loses nothing: that mirrors the
-# runner's own documented convention, where the portable CI lanes exclude
-# real-herdr-gated for the same reason (`bin/fm-test-run.sh` header,
-# --exclude-family).
+# The real-herdr-gated exclusion is a SAFETY boundary first, not a speed choice,
+# and that is why it must not be deleted: herdr is installed in this container, so
+# those tests do NOT gate-skip here - they would drive the live herdr server. That
+# is live-home bleed, which has already killed supervision on this box once, when a
+# full-suite run took the live watcher lock and killed nine in-flight tasks. CI's
+# dedicated required Herdr lane owns that family's coverage, so excluding it here
+# leaves nothing ungated; the runner applies the same convention to its portable CI
+# lanes (`bin/fm-test-run.sh` header, --exclude-family).
+# The exclusion also cannot silently empty a real selection: `--exclude-family`
+# refuses when it removes every selected script, so this pin either runs the
+# change's tests or fails loudly.
 # `--changed` is not narrow by nature: its set is whatever the change maps to, so
 # a repository-wide branch legitimately expands broadly. Measured on this branch,
 # `--list --changed --base origin/main` selects 102 scripts and 92 remain after
 # the exclusion. That expansion is honest selection, not a bug.
-# `--jobs` does not apply to this pin: the runner header scopes it to the
-# proven-isolated set, and selection modes are mutually exclusive, so `--changed`
-# cannot carry it.
+# `--jobs` does not apply to this pin, and not because the flags are structurally
+# incompatible: `--jobs` is not a selection mode and `--changed --jobs N` parses
+# fine. The runner refuses N>1 as soon as any selected script falls outside the
+# proven-isolated set, and a changed-file selection this wide always includes
+# stateful scripts.
 # CI owns complete regression through the portable-parallel-1,
 # portable-parallel-2, and portable-serial lanes plus the required Herdr lane,
 # with `bin/fm-test-run.sh --check-coverage` proving that partition is complete.

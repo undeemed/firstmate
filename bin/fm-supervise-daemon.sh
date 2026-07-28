@@ -563,6 +563,14 @@ mark_escalated_seen() {  # <kind> <arg> <state>
 # captured output. The supervisor pane has no recorded task harness and uses
 # the historical combined fallback; stale task panes select the recorded
 # harness's verified signature.
+#
+# Known limit of that harness-less fallback, recorded here because this is where
+# it bites: kimi's busy signature is deliberately kept out of
+# FM_TMUX_BUSY_REGEX_DEFAULT (bin/fm-tmux-lib.sh) so stray moon glyphs cannot mark
+# another harness busy, and kimi is the only verified adapter absent from that
+# combined default. On a kimi primary in away mode, a mid-turn pane therefore
+# reads not-busy here, and pane_input_pending is the ONLY remaining guard against
+# a mid-turn escalation injection.
 pane_is_busy() {  # <target> [backend]
   local target=$1 backend=${2:-tmux} bs tail40
   bs=$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)
