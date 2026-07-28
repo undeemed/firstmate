@@ -5,12 +5,12 @@
 # commands.test must pin a concrete command, because an agent-driven Test step
 # has crashed the daemon. It must also stay bounded, so the pinned string may not
 # hardcode a complete tests/*.test.sh walk or --all: a fixed full-suite spelling
-# duplicates CI and burns local pipeline time no matter what changed. Either
-# bounded selection mode of the one-owner runner satisfies both at once, and this
-# contract requires one of those two shapes: `bin/fm-test-run.sh --changed`, whose
-# set follows the changed-file map, or `bin/fm-test-run.sh --lane <name>`, whose
-# set is one named lane. What either selection resolves to is deliberately not
-# asserted here (see .no-mistakes.yaml). Lint stays pinned to bin/fm-lint.sh.
+# duplicates CI and burns local pipeline time no matter what changed. This
+# contract requires the changed-file selection of the one-owner runner,
+# `bin/fm-test-run.sh --changed`, optionally narrowed by --base and
+# --exclude-family, because that keeps the suites a branch edits in scope by
+# construction. What the selection resolves to is deliberately not asserted here
+# (see .no-mistakes.yaml). Lint stays pinned to bin/fm-lint.sh.
 # Remote CI owns broad regression through separate portable and required
 # real-Herdr Behavior lanes composed around bin/fm-test-run.sh.
 set -u
@@ -94,13 +94,12 @@ test_nm_pins_bounded_deterministic_test_command() {
       fail "commands.test must not hardcode a full-suite walk; got: $val"
       ;;
   esac
-  # Either bounded selection mode of the one-owner runner is accepted: the
-  # changed-file map, or one named lane. Both are deterministic and both keep
-  # lane/map composition in a single owner instead of a hand-picked script list.
+  # The changed-file selection of the one-owner runner is the required shape: it
+  # is deterministic, it keeps map composition in a single owner instead of a
+  # hand-picked script list, and it cannot drop the suites the branch edits.
   case "$val" in
     'bin/fm-test-run.sh --changed'*) ;;
-    'bin/fm-test-run.sh --lane '*) ;;
-    *) fail "commands.test must select through bin/fm-test-run.sh --changed or --lane <name>; got: $val" ;;
+    *) fail "commands.test must select through bin/fm-test-run.sh --changed; got: $val" ;;
   esac
   # Also refuse a commented-out full-suite remnant that could be re-enabled by habit.
   if grep -E '^[[:space:]]*#?[[:space:]]*test:[[:space:]].*tests/\*\.test\.sh' "$NM" >/dev/null 2>&1; then
@@ -112,33 +111,35 @@ test_nm_pins_bounded_deterministic_test_command() {
 # The pinned command must be a real selection mode of the one-owner runner, so a
 # rename or flag removal there cannot leave the gate pointing at a dead command.
 test_pinned_test_command_is_a_supported_selection() {
-  local val runner lane
+  local val runner family
   val=$(nm_commands_test_value) || fail "failed to read commands.test from .no-mistakes.yaml"
   runner=${val%% *}
   [ -x "$ROOT/$runner" ] || fail "commands.test names a runner that is not executable: $runner"
   # Assert only the flags the current pin actually uses, so this check tracks the
   # pin instead of demanding a mode it no longer names.
   case "$val" in
-    *' --lane '*)
-      grep -Fq -- '--lane' "$ROOT/$runner" \
-        || fail "$runner no longer implements --lane, which commands.test depends on"
-      lane=${val#*--lane }
-      lane=${lane%% *}
-      [ -n "$lane" ] || fail "commands.test names --lane without a lane name: $val"
-      "$ROOT/$runner" --list-lanes 2>/dev/null | grep -Fqx "$lane" \
-        || fail "$runner --list-lanes does not offer the pinned lane: $lane"
-      ;;
     *' --changed'*)
       grep -Fq -- '--changed' "$ROOT/$runner" \
         || fail "$runner no longer implements --changed, which commands.test depends on"
-      case "$val" in
-        *' --base '*)
-          grep -Fq -- '--base' "$ROOT/$runner" \
-            || fail "$runner no longer implements --base, which commands.test depends on"
-          ;;
-      esac
       ;;
     *) fail "commands.test names no bounded selection flag: $val" ;;
+  esac
+  case "$val" in
+    *' --base '*)
+      grep -Fq -- '--base' "$ROOT/$runner" \
+        || fail "$runner no longer implements --base, which commands.test depends on"
+      ;;
+  esac
+  case "$val" in
+    *' --exclude-family '*)
+      grep -Fq -- '--exclude-family' "$ROOT/$runner" \
+        || fail "$runner no longer implements --exclude-family, which commands.test depends on"
+      family=${val#*--exclude-family }
+      family=${family%% *}
+      [ -n "$family" ] || fail "commands.test names --exclude-family without a family: $val"
+      "$ROOT/$runner" --list-families 2>/dev/null | grep -Fqx "$family" \
+        || fail "$runner --list-families does not offer the excluded family: $family"
+      ;;
   esac
   pass "the pinned Test command matches a supported bin/fm-test-run.sh selection"
 }

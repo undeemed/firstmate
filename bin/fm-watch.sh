@@ -66,8 +66,13 @@ mkdir -p "$STATE"
 # whose source list is deliberately narrow: an unset read_int would make every
 # counter read evaluate as the default, so wedge escalation counts and the
 # heartbeat backoff streak would silently reset instead of accumulating.
-# Re-sourcing is idempotent - its top-level assignments are all ${VAR:-...}
-# guarded and its state directory creation duplicates the mkdir above.
+# This is a second source of that file - bin/fm-push-transition-lib.sh sources it
+# too - and it is NOT idempotent: fm-wake-lib.sh resets FM_WATCHER_HEALTHY_PID,
+# FM_WAKE_STATUS_KEY, FM_WAKE_STATUS_HISTORICAL, FM_WAKE_EVENT_LINE, and
+# FM_WAKE_EVENT_TRUNCATED unguarded at top level. Re-sourcing is safe only here,
+# at startup, before any of those five ever holds a value; doing it again once a
+# wake's status key or event line is populated would silently clear it. Its state
+# directory creation duplicates the mkdir above.
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # Pane busy classification (fm_busy_lines_match, used by window_is_busy below).
