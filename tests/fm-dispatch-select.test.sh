@@ -507,6 +507,56 @@ test_determined_outcome_never_needs_a_random_source() {
   pass "a determined selection needs no random source while a genuine tie still refuses loudly"
 }
 
+# The od reader is probed where randomness is consumed, exactly like the random
+# source itself, so the tool gate and the source gate cannot disagree: a
+# determined outcome must resolve with od absent, and only a genuine tie refuses.
+test_determined_outcome_never_needs_od() {
+  local fakebin bash_env quota out err status
+  bash_env="$TMP_ROOT/no-od.bash"
+  cat > "$bash_env" <<'SH'
+command() {
+  if [ "${1:-}" = -v ] && [ "${2:-}" = od ]; then
+    return 1
+  fi
+  builtin command "$@"
+}
+SH
+
+  fakebin=$(fm_fakebin "$TMP_ROOT/no-od")
+  out=$(PATH="$fakebin:$BASE_PATH" BASH_ENV="$bash_env" \
+    "$ROOT/bin/fm-dispatch-select.sh" '{"harness":"grok","model":"grok-4.5","effort":"high"}' 2>/dev/null) \
+    || fail "single profile object failed when od was absent"
+  assert_profile "$out" '{"harness":"grok","model":"grok-4.5","effort":"high"}' \
+    "single profile object should resolve without od"
+
+  out=$(PATH="$fakebin:$BASE_PATH" BASH_ENV="$bash_env" \
+    "$ROOT/bin/fm-dispatch-select.sh" '[{"harness":"grok","model":"grok-4.5","effort":"high"}]' 2>/dev/null) \
+    || fail "one-element array failed when od was absent"
+  assert_profile "$out" '{"harness":"grok","model":"grok-4.5","effort":"high"}' \
+    "one-element array should resolve without od"
+
+  quota="$TMP_ROOT/no-od-winner.json"
+  write_quota "$quota" fresh 80 70 fresh 20 15
+  out=$(BASH_ENV="$bash_env" "$ROOT/bin/fm-dispatch-select.sh" \
+    --quota-json "$quota" "$profiles" 2>/dev/null) \
+    || fail "unique quota winner failed when od was absent"
+  assert_profile "$out" '{"harness":"claude","model":"claude-sonnet-5","effort":"high"}' \
+    "a single top scorer should resolve without od"
+
+  quota="$TMP_ROOT/no-od-tie.json"
+  write_quota "$quota" fresh 90 50 fresh 60 50
+  status=0
+  out=$(BASH_ENV="$bash_env" FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ONE" \
+    "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" "$profiles" \
+    2>"$TMP_ROOT/no-od-tie.err") || status=$?
+  err=$(cat "$TMP_ROOT/no-od-tie.err")
+  expect_code 1 "$status" "a genuine tie must still refuse loudly when od is absent"
+  assert_contains "$err" "od is required to choose among tied dispatch candidates" \
+    "the tie refusal did not name the missing od"
+  [ -z "$out" ] || fail "tied candidates emitted a profile without od: $out"
+  pass "a determined selection needs no od while a genuine tie names the missing od"
+}
+
 test_malformed_profile_arrays_are_validation_errors() {
   local body expect out status n
   n=0
@@ -550,6 +600,7 @@ test_partial_quota_data_prefers_scorable_candidate
 test_operational_quota_failures_use_uniform_random_fallback
 test_single_profile_and_one_element_array
 test_determined_outcome_never_needs_a_random_source
+test_determined_outcome_never_needs_od
 test_malformed_profile_arrays_are_validation_errors
 
 echo "# all fm-dispatch-select tests passed"

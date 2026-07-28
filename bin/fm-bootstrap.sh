@@ -516,9 +516,11 @@ missing_tool_diagnostic() {
 # fm_backend_required_tools (bin/fm-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-# od is listed because fm-dispatch-select.sh refuses to run without it at every
-# crewmate and scout intake, so its absence must surface here for consent rather
-# than as a dispatch failure.
+# od is listed because fm-dispatch-select.sh needs it to break a tie between
+# equally-available dispatch candidates, which any crewmate or scout intake can
+# reach, so its absence must surface here for consent rather than as a dispatch
+# failure. A determined selection never consults it, so the detect-then-consent
+# line is the only place a missing od is meant to be met.
 COMMON_TOOLS="node git gh od no-mistakes gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1

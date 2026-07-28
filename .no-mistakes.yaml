@@ -48,13 +48,17 @@ document:
 # intent and there the intent is the whole repository. A fixed lane would always
 # be smaller yet would test the same slice no matter what changed, abandoning the
 # targeting this pin exists for.
-# Two preconditions fail closed by design. A changed path with no map entry stops
-# the step with "no changed-test mapping for source path: <path>" rather than
-# silently testing nothing, so adding a new bin/ script also means adding its
-# entry to the changed-file map in bin/fm-test-run.sh - that error names its own
-# remedy and is not a broken gate. `--base origin/main` must resolve wherever the
-# gate runs, or the step stops with "changed-file base ref not found", so keep
-# that ref fetched there.
+# Two preconditions fail closed by design. A changed path the map cannot resolve
+# stops the step with "no changed-test mapping for source path: <path>" rather
+# than silently testing nothing, which is a real gate result and not a broken
+# gate. A `bin/` path resolves through a test-reference lookup, not a per-script
+# table entry: bin/fm-test-run.sh scans tests/*.test.sh for the changed file's
+# basename and selects the families of whichever scripts name it. So a new bin/
+# script that ships with the covering test this repository already requires maps
+# on its own, and that error means NO test mentions the changed file at all -
+# whose remedy is to add or name the covering test, not to edit a map.
+# `--base origin/main` must resolve wherever the gate runs, or the step stops
+# with "changed-file base ref not found", so keep that ref fetched there.
 # Do not drop either half: replacing this with an absent commands.test restores
 # the agent-driven crash risk, and hardcoding a complete-suite walk or --all
 # duplicates CI. Use `--all` locally for deliberate full regression instead.

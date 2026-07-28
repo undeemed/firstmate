@@ -47,7 +47,8 @@
 #
 # Overrides: FM_COMPOSER_IDLE_RE matches an empty composer after ghost and
 # structural border stripping. FM_BUSY_REGEX globally overrides harness-scoped
-# busy-footer matching (mirrors fm-watch.sh / the daemon).
+# busy-footer matching, and this file is its single owner: every caller reaches
+# the override through fm_busy_lines_match rather than re-spelling it.
 #
 # All functions are `set -u` and `set -e` safe (guarded tmux calls, explicit
 # returns) so they can be sourced into either context.
@@ -60,8 +61,9 @@
 # shellcheck source=bin/fm-composer-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
 
-# Busy footers per harness (mirror fm-watch.sh). claude/codex: "esc to
-# interrupt"; opencode: "esc interrupt"; pi: "Working..."; grok: "Ctrl+c:cancel".
+# Busy footers per harness, owned here and nowhere else: no other script keeps a
+# copy of this table, so do not add one to satisfy a reader elsewhere. claude/codex:
+# "esc to interrupt"; opencode: "esc interrupt"; pi: "Working..."; grok: "Ctrl+c:cancel".
 # Claude's current spinner has a rotating glyph and word, but every active-turn
 # line has an ellipsis followed by a parenthesized elapsed duration. Keep this
 # signature separate from the shared default because that shape is not generic
