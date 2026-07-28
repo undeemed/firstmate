@@ -67,7 +67,7 @@ When supervising live crewmates, keep firstmate's own long validation or build c
 Crewmate validation follows the installed no-mistakes version's SKILL.md and live `axi` help instead of duplicating gate mechanics in firstmate docs.
 Firstmate's wrapper still matters: crewmates route every `ask-user` finding to firstmate, which applies the authority contract in `AGENTS.md`, and crewmates avoid `--yes` because it would bypass that check and any required captain escalation.
 Local `.no-mistakes/` state and test evidence stay out of this repo; `.no-mistakes.yaml` keeps evidence in a temp directory and pins the gate's lint command to `bin/fm-lint.sh`, matching the Linux CI lint job.
-Local no-mistakes Test is intent-targeted and must not re-run every `tests/*.test.sh`; `.github/workflows/ci.yml` owns the broad behavior suite plus platform-specific compatibility lanes.
+Local no-mistakes Test is intent-targeted: it runs what the change maps to rather than a fixed walk, so a small change selects a small set while a repository-wide change legitimately selects every script; `.github/workflows/ci.yml` owns the broad behavior suite plus platform-specific compatibility lanes.
 It is also pinned rather than agent-driven, because an agent-driven Test step has crashed the daemon; `.no-mistakes.yaml` maps `commands.test` to `bin/fm-test-run.sh --changed --base origin/main` and its comment records why both halves of that shape are required.
 That is firstmate-specific; do not commit `.no-mistakes/evidence/` here even when another no-mistakes-managed target project keeps committed PR evidence.
 
