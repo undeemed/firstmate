@@ -63,18 +63,23 @@
 #     invalid input exits 2 with an actionable validation error. Profile fields
 #     are typed by that validation pass, never by the scoring program's guards,
 #     so a wrongly-typed harness, model, or effort stays a loud refusal.
-#   - The stale-clear margin is operator config, not quota data, so a
-#     non-numeric override exits 2 naming the bad value instead of reaching the
-#     scoring program, whose failure would otherwise be reported as unusable
-#     quota data and silently drop the whole fleet to random selection. Like the
-#     od and random-source gates, it is checked at the site that reads it, right
-#     before the scoring program: a determined single-profile selection and a
+#   - The stale-clear margin is operator config, not quota data, so an override
+#     that is not a non-negative number exits 2 naming the bad value instead of
+#     reaching the scoring program, whose failure would otherwise be reported as
+#     unusable quota data and silently drop the whole fleet to random selection.
+#     The accepted range is zero upward: a margin of 0 already lets a stale
+#     candidate win on a tie, so a negative value adds no capability and only
+#     lets stale data win while scoring below the freshest candidate, inverting
+#     the stale-clear rule above. A sign typo is exactly what this gate exists
+#     to catch, so it refuses like any other malformed value. Like the od and
+#     random-source gates, it is checked at the site that reads it, right before
+#     the scoring program: a determined single-profile selection and a
 #     quota-unavailable uniform-random fallback never consult the margin, so a
 #     typo'd override cannot turn either into a dispatch failure.
 #
 # FM_DISPATCH_QUOTA_AXI overrides the quota command.
 # FM_DISPATCH_STALE_CLEAR_MARGIN overrides the default 20 point stale margin and
-# must be a number.
+# must be a non-negative number.
 # FM_DISPATCH_RANDOM_SOURCE overrides /dev/urandom for deterministic tests only.
 set -u
 
@@ -279,7 +284,7 @@ if ! printf '%s\n' "$quota_json" | jq -e 'type == "object" and (.providers | typ
   exit 0
 fi
 
-[[ $STALE_CLEAR_MARGIN =~ ^-?[0-9]+([.][0-9]+)?$ ]] || {
+[[ $STALE_CLEAR_MARGIN =~ ^[0-9]+([.][0-9]+)?$ ]] || {
   echo "error: FM_DISPATCH_STALE_CLEAR_MARGIN must be a number, got: $STALE_CLEAR_MARGIN" >&2
   exit 2
 }

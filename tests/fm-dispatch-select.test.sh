@@ -591,17 +591,17 @@ ROWS
   pass "malformed arrays stay actionable validation errors and never enter random fallback"
 }
 
-test_non_numeric_stale_margin_is_an_operator_config_error() {
+test_invalid_stale_margin_is_an_operator_config_error() {
   local quota out status value
   quota="$TMP_ROOT/margin-invalid.json"
   write_quota "$quota" stale 90 85 fresh 65 60
-  for value in '20%' 'high' '-' '20.' '[]' 'null'; do
+  for value in '20%' 'high' '-' '20.' '[]' 'null' '-20'; do
     status=0
     out=$(FM_DISPATCH_STALE_CLEAR_MARGIN="$value" FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ONE" \
       "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" "$profiles" 2>&1) || status=$?
-    expect_code 2 "$status" "non-numeric stale margin should exit 2: $value"
+    expect_code 2 "$status" "invalid stale margin should exit 2: $value"
     assert_contains "$out" "FM_DISPATCH_STALE_CLEAR_MARGIN must be a number" \
-      "non-numeric stale margin did not name the operator-config cause: $value"
+      "invalid stale margin did not name the operator-config cause: $value"
     assert_not_contains "$out" "quota-axi data could not be evaluated" \
       "quota data was blamed for a bad stale margin: $value"
     assert_not_contains "$out" "random fallback" \
@@ -667,7 +667,7 @@ test_single_profile_and_one_element_array
 test_determined_outcome_never_needs_a_random_source
 test_determined_outcome_never_needs_od
 test_malformed_profile_arrays_are_validation_errors
-test_non_numeric_stale_margin_is_an_operator_config_error
+test_invalid_stale_margin_is_an_operator_config_error
 test_bad_stale_margin_only_blocks_the_selection_that_reads_it
 
 echo "# all fm-dispatch-select tests passed"

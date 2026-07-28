@@ -34,11 +34,20 @@ document:
 #     the daemon, so this repository pins a concrete command instead of leaving
 #     Test to default agent-driven handling.
 #   - HOW MUCH it runs: the changed-file map minus the real-Herdr-gated family.
-#     `--changed` keeps every suite the branch edits in scope BY CONSTRUCTION, so
-#     a local step cannot report green without running the tests written for the
+#     `--changed` puts every suite the branch edits into the selection BY
+#     CONSTRUCTION, so selection itself never misses the tests written for the
 #     change. Bounding by lane instead bounds membership rather than relevance,
 #     which is how an earlier `--lane portable-serial` pin excluded exactly the
 #     suites its own branch edited; `--changed` cannot repeat that on any branch.
+#     The exclusion below then removes part of that selection, and that is a real
+#     limit on what a green local step proves. A branch touching a
+#     real-Herdr-gated test alongside any other mapped file selects both, the
+#     exclusion drops only the Herdr script, and the step reports green without
+#     ever running the test written for that part of the change. This branch is
+#     exactly that shape: commit 68277c4 edited
+#     tests/fm-backend-herdr-presentation-e2e.test.sh and the local step for this
+#     run skips it. CI's required Herdr lane is the only thing that covers that
+#     family, so a green local step is no evidence about it either way.
 # The real-herdr-gated exclusion is a SAFETY boundary first, not a speed choice,
 # and that is why it must not be deleted: herdr is installed in this container, so
 # those tests do NOT gate-skip here - they would drive the live herdr server. That
@@ -47,9 +56,10 @@ document:
 # dedicated required Herdr lane owns that family's coverage, so excluding it here
 # leaves nothing ungated; the runner applies the same convention to its portable CI
 # lanes (`bin/fm-test-run.sh` header, --exclude-family).
-# The exclusion also cannot silently empty a real selection: `--exclude-family`
-# refuses when it removes every selected script, so this pin either runs the
-# change's tests or fails loudly.
+# What the runner does refuse is a total wipe: `--exclude-family` fails when it
+# removes EVERY selected script, so an exclusion can never turn a real selection
+# into a green run of nothing. A partial drop, the case described above, is not
+# refused and is not reported.
 # `--changed` is not narrow by nature: its set is whatever the change maps to, so
 # a repository-wide branch legitimately expands broadly. Measured on this branch,
 # `--list --changed --base origin/main` selects 102 scripts and 92 remain after
