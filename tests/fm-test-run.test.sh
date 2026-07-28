@@ -423,8 +423,8 @@ test_ci_and_docs_call_the_owner() {
     || fail "CONTRIBUTING must document changed-file selection"
   grep -Fq 'bin/fm-test-run.sh --proven-isolated --jobs' "$CONTRIB" \
     || fail "CONTRIBUTING must document proven-isolated --jobs"
-  grep -Fq 'Local no-mistakes Test is bounded' "$CONTRIB" \
-    || fail "CONTRIBUTING must document that local no-mistakes Test is bounded, not a full local walk"
+  grep -Fq 'bin/fm-test-run.sh --changed --base origin/main --exclude-family real-herdr-gated' "$CONTRIB" \
+    || fail "CONTRIBUTING must document the pinned bounded no-mistakes Test selection"
   # Do not restore a complete-suite commands.test.
   if grep -E '^[[:space:]]*test:[[:space:]].*tests/\*\.test\.sh' "$ROOT/.no-mistakes.yaml" >/dev/null 2>&1; then
     fail ".no-mistakes.yaml must not set a full-suite commands.test"
