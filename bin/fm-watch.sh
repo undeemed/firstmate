@@ -61,6 +61,13 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-check-lib.sh
 . "$SCRIPT_DIR/fm-check-lib.sh"
+# Pane busy classification (fm_busy_lines_match, used by window_is_busy below).
+# Declared here rather than relied on transitively through another library, so
+# pane classification cannot silently degrade to an unset function if an
+# unrelated source is ever dropped. Re-sourcing is idempotent - the file defines
+# only variables and functions.
+# shellcheck source=bin/fm-tmux-lib.sh
+. "$SCRIPT_DIR/fm-tmux-lib.sh"
 # Parent-owned secondmate missed-report guards: durable pending-reply
 # expectations created by fm-send on marked secondmate requests. The tick is
 # cheap when no records exist and never scrapes secondmate conversation.

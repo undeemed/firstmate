@@ -28,8 +28,8 @@ document:
 # `.github/workflows/ci.yml` invokes it directly, with parity asserted by
 # `tests/fm-lint.test.sh`.
 #
-# Pin test to a bounded, deterministic, non-agent command. Two contracts meet
-# here and both are kept:
+# Pin test to a deterministic, non-agent command whose scope follows the change.
+# Two contracts meet here and both are kept:
 #   - WHO runs the step: never an agent. An agent-driven Test step has crashed
 #     the daemon, so this repository pins a concrete command instead of leaving
 #     Test to default agent-driven handling.
@@ -41,12 +41,23 @@ document:
 # `bin/fm-test-run.sh --changed` is the deliberate reconciliation of the two: it
 # is fully deterministic with no agent in the loop, derives its set from the
 # repository's own changed-file map (one owner, so it cannot rot the way a
-# hand-picked subset does), never expands to the complete suite, exits non-zero
-# when any selected script fails, and reports nothing to run with exit 0 when a
-# change maps to no test. Do not drop either half: replacing this with an absent
-# commands.test restores the agent-driven crash risk, and replacing it with a
-# complete tests/*.test.sh walk or --all duplicates CI. Use `--all` locally for
-# deliberate full regression instead.
+# hand-picked subset does), and exits non-zero when any selected script fails.
+# Its bound is what the change touches, not a fixed size. A small change selects
+# a small set; a repository-wide reconciliation selects every script, and that is
+# the correct outcome rather than an exception, because the selection tracks
+# intent and there the intent is the whole repository. A fixed lane would always
+# be smaller yet would test the same slice no matter what changed, abandoning the
+# targeting this pin exists for.
+# Two preconditions fail closed by design. A changed path with no map entry stops
+# the step with "no changed-test mapping for source path: <path>" rather than
+# silently testing nothing, so adding a new bin/ script also means adding its
+# entry to the changed-file map in bin/fm-test-run.sh - that error names its own
+# remedy and is not a broken gate. `--base origin/main` must resolve wherever the
+# gate runs, or the step stops with "changed-file base ref not found", so keep
+# that ref fetched there.
+# Do not drop either half: replacing this with an absent commands.test restores
+# the agent-driven crash risk, and hardcoding a complete-suite walk or --all
+# duplicates CI. Use `--all` locally for deliberate full regression instead.
 commands:
   lint: 'bin/fm-lint.sh'
   test: 'bin/fm-test-run.sh --changed --base origin/main'

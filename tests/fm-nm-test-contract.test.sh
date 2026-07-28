@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Contract: local no-mistakes Test is bounded, deterministic, and non-agent;
-# CI owns broad regression.
+# Contract: local no-mistakes Test is deterministic, non-agent, and scoped by the
+# change; CI owns broad regression.
 #
 # commands.test must pin a concrete command, because an agent-driven Test step
-# has crashed the daemon. It must also stay intent-targeted: never a complete
-# tests/*.test.sh walk and never --all, because that duplicated CI and burned
-# local pipeline time. bin/fm-test-run.sh --changed satisfies both at once and is
-# the shape this contract requires. Lint stays pinned to bin/fm-lint.sh. Remote
-# CI owns broad regression through separate portable and required real-Herdr
-# Behavior lanes composed around bin/fm-test-run.sh.
+# has crashed the daemon. It must also stay intent-targeted, so the pinned string
+# may not hardcode a complete tests/*.test.sh walk or --all: a fixed full-suite
+# spelling duplicates CI and burns local pipeline time no matter what changed.
+# bin/fm-test-run.sh --changed satisfies both at once and is the shape this
+# contract requires. What that selection resolves to is deliberately not asserted
+# here - it is bounded by the changed-file map, so a repository-wide change may
+# legitimately select every script (see .no-mistakes.yaml). Lint stays pinned to
+# bin/fm-lint.sh. Remote CI owns broad regression through separate portable and
+# required real-Herdr Behavior lanes composed around bin/fm-test-run.sh.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -84,11 +87,11 @@ test_nm_pins_bounded_deterministic_test_command() {
     || fail "commands.test must pin a deterministic non-agent command; an absent value hands Test back to an agent"
   case "$val" in
     *'tests/*.test.sh'*|*'--all'*)
-      fail "commands.test must not walk the complete suite; got: $val"
+      fail "commands.test must not hardcode a full-suite walk; got: $val"
       ;;
   esac
   # The repository's own changed-file selection is the required shape: one owner
-  # for the map, deterministic, and never the complete suite.
+  # for the map, deterministic, and scoped by what the change touches.
   case "$val" in
     'bin/fm-test-run.sh --changed'*) ;;
     *) fail "commands.test must select through bin/fm-test-run.sh --changed; got: $val" ;;

@@ -191,6 +191,36 @@ EOF
   pass "classifier primitives: keyed decisions and activity phases, captain relevance, window-to-task, and overrides"
 }
 
+# window_is_busy's regex fallback is the watcher's only busy classifier once a
+# backend reports unknown, and it must reach fm_busy_lines_match through a source
+# bin/fm-watch.sh DECLARES. The classifier used to arrive only transitively, via
+# bin/fm-pending-reply-lib.sh (sourced for unrelated secondmate report guards), so
+# dropping that unrelated source would have left the fallback calling an undefined
+# function: a silent 127 that classifies every unknown-backend pane as idle rather
+# than failing visibly. Assert the declaration AND that the fallback still
+# separates a busy tail from an idle one, so neither can regress unnoticed.
+test_window_is_busy_declares_its_classifier_source() {
+  local dir state out
+  # shellcheck disable=SC2016  # single quotes are deliberate: the literal source line in fm-watch.sh is the search text, not an expansion.
+  grep -Fq '. "$SCRIPT_DIR/fm-tmux-lib.sh"' "$WATCH" \
+    || fail "fm-watch.sh must source bin/fm-tmux-lib.sh directly for fm_busy_lines_match"
+  dir=$(make_case busy-classifier-source); state="$dir/state"
+  # No meta for the window: window_backend defaults to tmux (whose busy state is
+  # unknown without any tmux call) and window_harness is empty, so window_is_busy
+  # takes the fallback with the generic busy signature.
+  out=$(FM_STATE_OVERRIDE="$state" bash -u -c '
+    . "$1" || exit 3
+    [ "$(type -t fm_busy_lines_match)" = function ] || { printf undeclared; exit 0; }
+    if window_is_busy fm-a "esc to interrupt" && ! window_is_busy fm-a "a plain idle prompt"; then
+      printf ok
+    else
+      printf misclassified
+    fi
+  ' _ "$WATCH" 2>/dev/null) || fail "sourcing fm-watch.sh for the busy fallback failed"
+  [ "$out" = ok ] || fail "window_is_busy busy fallback is broken: $out"
+  pass "window_is_busy resolves fm_busy_lines_match through a source fm-watch.sh declares"
+}
+
 # crew_is_provably_working: the absorb-only-when-provably-working predicate. It is
 # benign (absorb) ONLY when fm-crew-state.sh reports the crew as working from an
 # actively-running pipeline step (source run-step) or a busy pane (source pane);
@@ -1335,6 +1365,7 @@ test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
 test_classifier_primitives
+test_window_is_busy_declares_its_classifier_source
 test_crew_is_provably_working_classifier
 test_status_is_paused_classifier
 test_crew_absorb_class_classifier
