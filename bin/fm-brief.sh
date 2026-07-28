@@ -211,6 +211,12 @@ fi
 
 REPO=${POS[1]}
 
+# A literal apostrophe anywhere in a command-substitution heredoc body breaks
+# bash -n on the whole script under bash < 5.2 (issue #166; the
+# tests/fm-brief.test.sh guard), so generated text spells apostrophes via this
+# expansion instead.
+APOS="'"
+
 # Shared by the ship and scout scaffolds. Self-gates on the crewmate's own
 # session context (the herdr backend injects a `herdr:` line naming the shared
 # workspace), so no backend detection is plumbed into this script and a
@@ -358,7 +364,7 @@ Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
   Firstmate applies the authority contract in its \`AGENTS.md\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
-- Avoid \`--yes\`: it would silently bypass the firstmate authority check and any required captain escalation.
+- Avoid \`--yes\`: it would silently bypass firstmate${APOS}s authority check and any required captain escalation.
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF
