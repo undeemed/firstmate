@@ -591,6 +591,31 @@ ROWS
   pass "malformed arrays stay actionable validation errors and never enter random fallback"
 }
 
+test_non_numeric_stale_margin_is_an_operator_config_error() {
+  local quota out status value
+  quota="$TMP_ROOT/margin-invalid.json"
+  write_quota "$quota" stale 90 85 fresh 65 60
+  for value in '20%' 'high' '-' '20.' '[]' 'null'; do
+    status=0
+    out=$(FM_DISPATCH_STALE_CLEAR_MARGIN="$value" FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ONE" \
+      "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" "$profiles" 2>&1) || status=$?
+    expect_code 2 "$status" "non-numeric stale margin should exit 2: $value"
+    assert_contains "$out" "FM_DISPATCH_STALE_CLEAR_MARGIN must be a number" \
+      "non-numeric stale margin did not name the operator-config cause: $value"
+    assert_not_contains "$out" "quota-axi data could not be evaluated" \
+      "quota data was blamed for a bad stale margin: $value"
+    assert_not_contains "$out" "random fallback" \
+      "bad stale margin degraded selection to random fallback: $value"
+  done
+
+  write_quota "$quota" stale 85 70 fresh 65 60
+  out=$(FM_DISPATCH_STALE_CLEAR_MARGIN=0 FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" \
+    "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" "$profiles" 2>/dev/null)
+  assert_profile "$out" '{"harness":"claude","model":"claude-sonnet-5","effort":"high"}' \
+    "a numeric stale margin override stopped being honored"
+  pass "a bad stale margin refuses as operator config while numeric margins still score"
+}
+
 test_implicit_array_picks_higher_min_provider
 test_rule_array_without_select_invokes_quota_axi
 test_legacy_explicit_selector_stays_compatible
@@ -610,5 +635,6 @@ test_single_profile_and_one_element_array
 test_determined_outcome_never_needs_a_random_source
 test_determined_outcome_never_needs_od
 test_malformed_profile_arrays_are_validation_errors
+test_non_numeric_stale_margin_is_an_operator_config_error
 
 echo "# all fm-dispatch-select tests passed"
