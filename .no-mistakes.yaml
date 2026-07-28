@@ -28,45 +28,36 @@ document:
 # `.github/workflows/ci.yml` invokes it directly, with parity asserted by
 # `tests/fm-lint.test.sh`.
 #
-# Pin test to a deterministic, non-agent command whose scope follows the change.
-# Two contracts meet here and both are kept:
+# Pin test to a deterministic, non-agent command, and bound how much of the suite
+# the local step runs. Two contracts meet here and both are kept:
 #   - WHO runs the step: never an agent. An agent-driven Test step has crashed
 #     the daemon, so this repository pins a concrete command instead of leaving
 #     Test to default agent-driven handling.
-#   - HOW MUCH it runs: only what the change maps to. Local no-mistakes Test is
-#     intent-targeted validation of whether the change meets its brief;
-#     .github/workflows/ci.yml owns broad regression (behavior suite, platform,
-#     security, Herdr, tmux, and lifecycle coverage), and duplicating it here
-#     would defeat the targeted Test contract.
-# `bin/fm-test-run.sh --changed` is the deliberate reconciliation of the two: it
-# is fully deterministic with no agent in the loop, derives its set from the
-# repository's own changed-file map (one owner, so it cannot rot the way a
-# hand-picked subset does), and exits non-zero when any selected script fails.
-# Its bound is what the change touches, not a fixed size. A small change selects
-# a small set; a repository-wide reconciliation selects every script, and that is
-# the correct outcome rather than an exception, because the selection tracks
-# intent and there the intent is the whole repository. A fixed lane would always
-# be smaller yet would test the same slice no matter what changed, abandoning the
-# targeting this pin exists for.
-# Two preconditions fail closed by design. A changed path the map cannot resolve
-# stops the step with "no changed-test mapping for source path: <path>" rather
-# than silently testing nothing, which is a real gate result and not a broken
-# gate. Most `bin/` paths are claimed by an explicit family pattern; a `bin/` path
-# no family pattern claims resolves through a test-reference lookup rather than a
-# per-script table entry, because bin/fm-test-run.sh scans tests/*.test.sh for the
-# changed file's basename and selects the families of whichever scripts name it. So
-# an unclaimed new bin/ script that ships with the covering test this repository
-# already requires maps on its own, and that error means NO test mentions the
-# changed file at all - whose remedy is to add or name the covering test, not to
-# edit a map.
-# `--base origin/main` must resolve wherever the gate runs, or the step stops
-# with "changed-file base ref not found", so keep that ref fetched there.
+#   - HOW MUCH it runs: a deliberately bounded lane. The previous
+#     `bin/fm-test-run.sh --changed --base origin/main` pin is not narrow by
+#     nature. Its set is whatever the change maps to, so a repository-wide branch
+#     legitimately resolves to the entire suite: measured on this branch,
+#     `--list --changed --base origin/main` selects 102 scripts, identical to
+#     `--list --all`. A full local walk duplicates CI and a local full-suite run
+#     has already been interrupted for memory on this fleet container, so the
+#     local step is pinned to the portable-serial lane, which runs its scripts
+#     one at a time.
+# portable-serial is a bounded SUBSET, 62 of 102 scripts on this branch: it
+# excludes the proven-isolated parallel scripts and the real-Herdr-gated lane, so
+# it is not complete local coverage and must not be read as such. CI owns
+# complete regression through the portable-parallel-1, portable-parallel-2, and
+# portable-serial lanes plus the required Herdr lane, with
+# `bin/fm-test-run.sh --check-coverage` proving that partition is complete.
+# `bin/fm-test-run.sh` remains the one owner of lane composition, so the pinned
+# lane cannot rot the way a hand-picked script list would, and the step exits
+# non-zero when any selected script fails.
 # Do not drop either half: replacing this with an absent commands.test restores
-# the agent-driven crash risk, and hardcoding a complete-suite walk or --all
-# duplicates CI. Use `--all` locally for deliberate full regression instead.
+# the agent-driven crash risk, and hardcoding a complete-suite walk or --all puts
+# the local step back on the full run CI already owns. Use `--all` by hand for
+# deliberate full local regression instead.
 commands:
   lint: 'bin/fm-lint.sh'
-  test: 'bin/fm-test-run.sh --changed --base origin/main'
+  test: 'bin/fm-test-run.sh --lane portable-serial'
 
 # Keep test evidence out of this repo; it stays in a temp dir instead.
 test:

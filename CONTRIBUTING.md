@@ -67,8 +67,9 @@ When supervising live crewmates, keep firstmate's own long validation or build c
 Crewmate validation follows the installed no-mistakes version's SKILL.md and live `axi` help instead of duplicating gate mechanics in firstmate docs.
 Firstmate's wrapper still matters: crewmates route every `ask-user` finding to firstmate, which applies the authority contract in `AGENTS.md`, and crewmates avoid `--yes` because it would bypass that check and any required captain escalation.
 Local `.no-mistakes/` state and test evidence stay out of this repo; `.no-mistakes.yaml` keeps evidence in a temp directory and pins the gate's lint command to `bin/fm-lint.sh`, matching the Linux CI lint job.
-Local no-mistakes Test is intent-targeted: it runs what the change maps to rather than a fixed walk, so a small change selects a small set while a repository-wide change legitimately selects every script; `.github/workflows/ci.yml` owns the broad behavior suite plus platform-specific compatibility lanes.
-It is also pinned rather than agent-driven, because an agent-driven Test step has crashed the daemon; `.no-mistakes.yaml` maps `commands.test` to `bin/fm-test-run.sh --changed --base origin/main` and its comment records why both halves of that shape are required.
+Local no-mistakes Test is bounded rather than a full local walk: `.github/workflows/ci.yml` owns the broad behavior suite plus platform-specific compatibility lanes, so the local step deliberately runs one bounded lane instead of duplicating that run.
+It is also pinned rather than agent-driven, because an agent-driven Test step has crashed the daemon; `.no-mistakes.yaml` maps `commands.test` to `bin/fm-test-run.sh --lane portable-serial` and its comment records why both halves of that shape are required, including that the lane is a subset and not complete local coverage.
+An intent-targeted `bin/fm-test-run.sh --changed` run remains available by hand, but it is not narrow by nature: on a repository-wide branch it legitimately selects every script.
 That is firstmate-specific; do not commit `.no-mistakes/evidence/` here even when another no-mistakes-managed target project keeps committed PR evidence.
 
 Check and test the toolbelt before pushing:
@@ -94,7 +95,7 @@ tmp=$(mktemp -d) && printf 'done: smoke\n' > "$tmp/smoke.status" && FM_STATE_OVE
 Its header and `--help` own the flags, family labels, lanes, and changed-file map; this section only documents the entry points.
 `bin/fm-test-isolation-proof.sh` remains the single owner of the Phase 2 concurrent isolation proof and the exact proven candidate set; see `docs/fm-test-isolation-proof.md`.
 Portable shard balance evidence lives in `docs/fm-test-portable-shards.md`.
-Local no-mistakes Test stays intent-targeted and must not wire `commands.test` to `--all` or a `tests/*.test.sh` walk; `--changed` is the pinned selection, asserted by `tests/fm-nm-test-contract.test.sh`.
+Local no-mistakes Test stays bounded and must not wire `commands.test` to `--all` or a `tests/*.test.sh` walk; either bounded selection mode of the one-owner runner is accepted (`--changed` or `--lane <name>`, currently `--lane portable-serial`), asserted by `tests/fm-nm-test-contract.test.sh`.
 Family selection is the ordinary local path; `--all` is deliberate full regression only.
 CI owns broad regression across required portable parallel shards, the portable serial lane, the Herdr lane, lint, invariants, the coverage guard, and macOS snapshot compatibility in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 Use `bin/fm-test-run.sh --help` for lane names, `--jobs` rules, and required gate-skip flags when reproducing a lane locally.
