@@ -429,7 +429,52 @@ test_interruption_before_and_after_raw_commit() {
   pass "interruptions restore before commitment and never replay after raw commitment"
 }
 
+# The lib's guard is keyed on the resolved state dir, so the two ways a shell
+# ends up sourcing it twice get opposite answers: a redundant same-home source
+# (bin/fm-watch.sh, directly and through fm-push-transition-lib.sh) must not
+# re-clear a wake already resolved into the top-level wake variables, while a
+# deliberate re-bind to another home (bin/fm-supervise-daemon.sh's
+# FM_STATE_OVERRIDE source) must move the queue paths with it.
+test_load_guard_is_idempotent_per_home_and_rebinds_across_homes() {
+  local dir home_a home_b out
+  dir=$(make_case load-guard)
+  home_a="$dir/state"
+  home_b="$dir/state-b"
+  mkdir -p "$home_b"
+
+  out=$(FM_STATE_OVERRIDE="$home_a" bash -c '
+    # shellcheck disable=SC1090
+    . "$1"
+    FM_WAKE_STATUS_KEY=resolved-key
+    FM_WAKE_EVENT_LINE="signal: resolved event"
+    FM_WATCHER_HEALTHY_PID=4242
+    FM_WAKE_STATUS_HISTORICAL=1
+    FM_WAKE_EVENT_TRUNCATED=1
+    # Redundant source of the same home: must be inert.
+    # shellcheck disable=SC1090
+    . "$1"
+    printf "same %s|%s|%s|%s|%s|%s\n" "$FM_WAKE_STATUS_KEY" "$FM_WAKE_EVENT_LINE" \
+      "$FM_WATCHER_HEALTHY_PID" "$FM_WAKE_STATUS_HISTORICAL" \
+      "$FM_WAKE_EVENT_TRUNCATED" "$FM_WAKE_QUEUE"
+    # Deliberate re-bind to another home: queue paths must follow.
+    # shellcheck disable=SC1090
+    FM_STATE_OVERRIDE="$2" . "$1"
+    printf "rebound %s|%s\n" "$FM_WAKE_QUEUE" "$FM_WAKE_QUEUE_LOCK"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$home_b") || fail "load-guard probe failed"
+
+  case "$out" in
+    *"same resolved-key|signal: resolved event|4242|1|1|$home_a/.wake-queue"*) ;;
+    *) fail "redundant same-home source cleared resolved wake state: $out" ;;
+  esac
+  case "$out" in
+    *"rebound $home_b/.wake-queue|$home_b/.wake-queue.lock"*) ;;
+    *) fail "FM_STATE_OVERRIDE re-source did not rebind the queue paths: $out" ;;
+  esac
+  pass "wake lib is inert on a redundant same-home source and rebinds on a new state dir"
+}
+
 test_concurrent_append_and_drain
+test_load_guard_is_idempotent_per_home_and_rebinds_across_homes
 test_signal_catchup_without_running_watcher
 test_stale_enqueue_before_suppressor
 test_not_working_stale_enqueue_before_suppressor

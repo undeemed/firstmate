@@ -571,9 +571,9 @@ mark_escalated_seen() {  # <kind> <arg> <state>
 # combined default. On a kimi primary in away mode, a mid-turn pane therefore
 # reads not-busy here, and pane_input_pending is the ONLY remaining guard against
 # a mid-turn escalation injection.
-# This is an accepted limitation, not a placeholder: no kimi primary has run in
-# this fleet, so there is no observed pane sample to derive a signature from, and
-# this repository adds a backend signature only from empirical evidence. It closes
+# This is an accepted limitation, not a placeholder: this repository adds a
+# backend signature only from empirical evidence, and no observed kimi pane
+# sample has been recorded here to derive one from. It closes
 # when an observed kimi pane yields a verified busy signature that is added to
 # FM_TMUX_BUSY_REGEX_DEFAULT with a colocated test in tests/fm-kimi-harness.test.sh;
 # until then, do not guess one.

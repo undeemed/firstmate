@@ -1,24 +1,37 @@
 #!/usr/bin/env bash
 # Shared durable wake queue and portable lock helpers.
 
-# Load guard. This file assigns FM_WATCHER_HEALTHY_PID, FM_WAKE_STATUS_KEY,
-# FM_WAKE_STATUS_HISTORICAL, FM_WAKE_EVENT_LINE, and FM_WAKE_EVENT_TRUNCATED at
-# top level, so a second source in the same shell would clear whatever a wake
-# already resolved into them. Several consumers source it both directly and
-# transitively (bin/fm-watch.sh through bin/fm-push-transition-lib.sh), and that
-# safety must not depend on where the sources happen to sit in the file.
-if [ -n "${FM_WAKE_LIB_LOADED:-}" ]; then
-  return 0
-fi
-FM_WAKE_LIB_LOADED=1
-
+# Resolve the state directory before deciding whether this source is redundant.
+# The guard below is keyed on that resolved path, not on a loaded flag, because
+# the two reasons a shell sources this file twice need opposite answers:
+#
+#   - A redundant source of the same home (bin/fm-watch.sh sources it directly
+#     and transitively through bin/fm-push-transition-lib.sh) must be inert.
+#     This file assigns FM_WATCHER_HEALTHY_PID, FM_WAKE_STATUS_KEY,
+#     FM_WAKE_STATUS_HISTORICAL, FM_WAKE_EVENT_LINE, and FM_WAKE_EVENT_TRUNCATED
+#     at top level, so re-running it would clear whatever a wake already
+#     resolved into them, and that safety must not depend on where the sources
+#     happen to sit in the file.
+#   - A deliberate re-bind to a different home (bin/fm-supervise-daemon.sh
+#     re-sources with FM_STATE_OVERRIDE set to the daemon's own state dir) must
+#     take effect. A flag-keyed guard would silently leave the queue pointing at
+#     the previously bound home while the caller believed it had switched.
+#
+# Because a re-bind must move the queue paths with STATE, FM_WAKE_QUEUE and
+# FM_WAKE_QUEUE_LOCK are assigned unconditionally rather than ${VAR:-...}:
+# a sticky value from the earlier binding would outlive the home it belonged to.
 FM_WAKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_WAKE_DEFAULT_ROOT="$(cd "$FM_WAKE_LIB_DIR/.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_WAKE_DEFAULT_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-${STATE:-$FM_HOME/state}}"
-FM_WAKE_QUEUE="${FM_WAKE_QUEUE:-$STATE/.wake-queue}"
-FM_WAKE_QUEUE_LOCK="${FM_WAKE_QUEUE_LOCK:-$STATE/.wake-queue.lock}"
+if [ -n "${FM_WAKE_LIB_BOUND_STATE-}" ] && [ "$FM_WAKE_LIB_BOUND_STATE" = "$STATE" ]; then
+  return 0
+fi
+FM_WAKE_LIB_BOUND_STATE="$STATE"
+
+FM_WAKE_QUEUE="$STATE/.wake-queue"
+FM_WAKE_QUEUE_LOCK="$STATE/.wake-queue.lock"
 FM_LOCK_STALE_AFTER="${FM_LOCK_STALE_AFTER:-2}"
 mkdir -p "$STATE"
 
