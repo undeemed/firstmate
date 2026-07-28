@@ -15,8 +15,8 @@
 #   - It runs the installed quota-axi --json (or the --quota-json fixture).
 #   - Candidates map to the quota provider and product their model consumes:
 #     direct Claude -> Claude, direct Codex -> Codex, direct Grok -> Grok Build,
-#     and Pi/OpenCode models prefixed anthropic/, openai-codex/, or xai/ ->
-#     Claude, Codex, or the xAI API product respectively.
+#     and Pi/pi-signed/OpenCode models prefixed anthropic/, openai-codex/, or
+#     xai/ -> Claude, Codex, or the xAI API product respectively.
 #   - A candidate's score is the minimum percentRemaining among its relevant
 #     general and matching model windows, or its exact Grok product window.
 #     Grok's aggregate credits window is used only when product windows are not
@@ -114,13 +114,13 @@ profiles_json=$(printf '%s\n' "$SPEC_JSON" | jq -ec '
 ' 2>/dev/null) || { echo "error: dispatch input must be a rule, profile, or profile array" >&2; exit 2; }
 
 validation_error=$(printf '%s\n' "$profiles_json" | jq -r '
-  def verified($h): ["claude", "codex", "opencode", "pi", "grok"] | index($h);
+  def verified($h): ["claude", "codex", "opencode", "pi", "pi-signed", "grok", "kimi"] | index($h);
   def effort_ok($h; $e):
     if $h == "claude" then ["low", "medium", "high", "xhigh", "max"] | index($e)
     elif $h == "codex" then ["low", "medium", "high", "xhigh"] | index($e)
     elif $h == "grok" then ["low", "medium", "high"] | index($e)
-    elif $h == "pi" then ["low", "medium", "high", "xhigh", "max"] | index($e)
-    elif $h == "opencode" then false
+    elif $h == "pi" or $h == "pi-signed" then ["low", "medium", "high", "xhigh", "max"] | index($e)
+    elif $h == "opencode" or $h == "kimi" then false
     else false
     end;
   if length == 0 then "dispatch profile array must not be empty"
@@ -234,14 +234,15 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
   def route($profile):
     ($profile.harness // "") as $h
     | ($profile.model // "") as $model
+    | (["pi", "pi-signed", "opencode"] | index($h) != null) as $prefixed
     | if $h == "claude" then {provider: "claude", model: $model}
       elif $h == "codex" then {provider: "codex", model: $model}
       elif $h == "grok" then {provider: "grok", product: "grok_build", model: $model}
-      elif (($h == "pi" or $h == "opencode") and ($model | startswith("anthropic/"))) then
+      elif ($prefixed and ($model | startswith("anthropic/"))) then
         {provider: "claude", model: (model_name($model))}
-      elif (($h == "pi" or $h == "opencode") and ($model | startswith("openai-codex/"))) then
+      elif ($prefixed and ($model | startswith("openai-codex/"))) then
         {provider: "codex", model: (model_name($model))}
-      elif (($h == "pi" or $h == "opencode") and ($model | startswith("xai/"))) then
+      elif ($prefixed and ($model | startswith("xai/"))) then
         {provider: "grok", product: "api", model: (model_name($model))}
       else null
       end;
