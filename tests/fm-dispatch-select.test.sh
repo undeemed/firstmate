@@ -149,7 +149,7 @@ test_provider_and_product_mapping_through_wrappers() {
     {"provider":"kimi","state":{"status":"fresh"},"windows":[
       {"id":"five_hour","kind":"session","percentRemaining":65},
       {"id":"weekly","kind":"weekly","percentRemaining":60},
-      {"id":"limit:0","kind":"unknown","percentRemaining":2}
+      {"id":"limit:1","label":"limit 1","kind":"unknown","percentRemaining":2}
     ]}
   ]
 }
@@ -171,8 +171,12 @@ JSON
   assert_profile "$out" '{"harness":"claude"}' "direct Grok should use product:grok_build"
 
   out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
+    '[{"harness":"opencode","model":"unmapped/model"},{"harness":"kimi","model":"kimi-code/k3"}]' 2>/dev/null)
+  assert_profile "$out" '{"harness":"kimi","model":"kimi-code/k3"}' "direct Kimi was not scored against the Kimi provider at all"
+
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
     '[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]' 2>/dev/null)
-  assert_profile "$out" '{"harness":"kimi","model":"kimi-code/k3"}' "direct Kimi was not scored against its five_hour and weekly windows"
+  assert_profile "$out" '{"harness":"claude"}' "direct Kimi must be constrained by its limit:N bucket, not scored on five_hour and weekly alone"
 
   out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
     '[{"harness":"pi-signed","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]' 2>/dev/null)
@@ -210,6 +214,49 @@ JSON
     '[{"harness":"kimi"},{"harness":"kimi","model":"kimi-code/k3"},{"harness":"claude"}]' 2>/dev/null)
   assert_profile "$out" '{"harness":"kimi"}' "model-less and model-carrying Kimi candidates should tie on provider windows"
   pass "a Kimi profile without a model stays quota-aware instead of aborting the whole array"
+}
+
+test_kimi_limit_buckets_constrain_the_candidate() {
+  local quota out err
+  quota="$TMP_ROOT/kimi-limit-exhausted.json"
+  cat > "$quota" <<'JSON'
+{"schemaVersion":2,"providers":[
+  {"provider":"claude","state":{"status":"fresh"},"windows":[
+    {"id":"five_hour","kind":"session","percentRemaining":40},
+    {"id":"seven_day","kind":"weekly","percentRemaining":40}
+  ]},
+  {"provider":"kimi","state":{"status":"fresh"},"windows":[
+    {"id":"five_hour","kind":"session","percentRemaining":90},
+    {"id":"weekly","kind":"weekly","percentRemaining":95},
+    {"id":"limit:1","label":"limit 1","kind":"unknown","percentRemaining":0}
+  ]}
+]}
+JSON
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
+    '[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]' 2>"$TMP_ROOT/kimi-limit.err")
+  err=$(cat "$TMP_ROOT/kimi-limit.err")
+  assert_profile "$out" '{"harness":"claude"}' "an exhausted Kimi limit bucket must lose to a middling candidate instead of winning on weekly"
+  assert_contains "$err" "selection basis: quota-selected" "Kimi limit-bucket scoring degraded the array to a non-quota basis"
+
+  quota="$TMP_ROOT/kimi-limit-available.json"
+  cat > "$quota" <<'JSON'
+{"schemaVersion":2,"providers":[
+  {"provider":"claude","state":{"status":"fresh"},"windows":[
+    {"id":"five_hour","kind":"session","percentRemaining":40},
+    {"id":"seven_day","kind":"weekly","percentRemaining":40}
+  ]},
+  {"provider":"kimi","state":{"status":"fresh"},"windows":[
+    {"id":"five_hour","kind":"session","percentRemaining":90},
+    {"id":"weekly","kind":"weekly","percentRemaining":95},
+    {"id":"limit:1","label":"limit 1","kind":"unknown","percentRemaining":97},
+    {"id":"limit:2","label":"limit 2","kind":"unknown"}
+  ]}
+]}
+JSON
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
+    '[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]' 2>/dev/null)
+  assert_profile "$out" '{"harness":"kimi","model":"kimi-code/k3"}' "an available Kimi limit bucket, and one without a usable percent, must not sink the candidate"
+  pass "Kimi limit buckets count toward its score without making an otherwise available candidate unscorable"
 }
 
 test_newly_verified_harnesses_clear_validation() {
@@ -390,6 +437,7 @@ test_legacy_explicit_selector_stays_compatible
 test_equal_winners_use_os_random_tie_break
 test_provider_and_product_mapping_through_wrappers
 test_kimi_scores_through_general_windows_without_a_model
+test_kimi_limit_buckets_constrain_the_candidate
 test_newly_verified_harnesses_clear_validation
 test_most_constrained_relevant_window_scores_candidate
 test_grok_aggregate_fallback_requires_no_product_windows

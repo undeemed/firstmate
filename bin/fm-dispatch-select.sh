@@ -22,6 +22,14 @@
 #     general and matching model windows, or its exact Grok product window.
 #     Grok's aggregate credits window is used only when product windows are not
 #     exposed, so Grok Build and xAI API remain distinct.
+#   - Kimi is scored on its five_hour and weekly windows plus every limit:N
+#     bucket quota-axi emits, even though those buckets carry kind "unknown".
+#     Inclusion is the safe direction because a score is the minimum across
+#     relevant windows, so a real-but-unidentified bucket can only make a
+#     candidate look more constrained, never more available. Excluding them
+#     would let a Kimi whose binding constraint sits in a limit bucket score on
+#     weekly alone and win against a more available harness. Narrow this to the
+#     coding-capacity buckets if quota-axi later gives them a real kind.
 #   - Unscorable candidates never beat candidates with usable quota data.
 #   - Stale-but-cached numbers remain usable, but a fresh candidate wins unless
 #     the best stale score is at least the stale-clear margin higher (default
@@ -269,7 +277,9 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
   def general_window_matches($window; $provider):
     if $provider == "claude" then ["five_hour", "seven_day"] | index($window.id? // "") != null
     elif $provider == "codex" then ["five_hour", "weekly"] | index($window.id? // "") != null
-    elif $provider == "kimi" then ["five_hour", "weekly"] | index($window.id? // "") != null
+    elif $provider == "kimi" then
+      (["five_hour", "weekly"] | index($window.id? // "") != null)
+      or (($window.id? // "") | startswith("limit:"))
     else false
     end;
   def relevant_windows($provider; $route):
