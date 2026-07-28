@@ -25,7 +25,9 @@
 #
 # Options:
 #   --json <path>   write a deterministic timing artifact after the run
-#   --list          print selected script paths (one per line) and exit 0
+#   --list          print selected script paths (one per line) and exit 0.
+#                   Exclusions apply before listing, so an --exclude-family that
+#                   empties a non-empty selection still refuses with exit 2.
 #   --base <ref>    with --changed, compare against this ref (default: origin/main)
 #   --exclude-family <name>
 #                   drop scripts whose primary family matches <name> after selection
