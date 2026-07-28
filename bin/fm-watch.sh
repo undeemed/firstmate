@@ -67,7 +67,8 @@ mkdir -p "$STATE"
 # counter read evaluate as the default, so wedge escalation counts and the
 # heartbeat backoff streak would silently reset instead of accumulating.
 # This is a second source of that file - bin/fm-push-transition-lib.sh sources it
-# too - and it is a no-op: fm-wake-lib.sh carries its own load guard, so it can
+# too - and it is a no-op: fm-wake-lib.sh guards on the state dir it is already
+# bound to, and the watcher binds one home, so this source can
 # never re-clear FM_WATCHER_HEALTHY_PID, FM_WAKE_STATUS_KEY,
 # FM_WAKE_STATUS_HISTORICAL, FM_WAKE_EVENT_LINE, or FM_WAKE_EVENT_TRUNCATED once
 # a wake has populated them. That safety is structural, not positional: this

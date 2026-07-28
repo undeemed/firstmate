@@ -386,7 +386,8 @@ test_exclude_family_refuses_to_empty_a_real_selection() {
 
 # --allow-empty-after-exclude opts the .no-mistakes.yaml pin out of that refusal,
 # so a branch whose only mapped change is an excluded script is not a red step.
-# It must still say what happened and which CI job really gates the family.
+# It must still say what happened and name the excluded families, which are the
+# only thing this family-agnostic path can point at without guessing a CI job.
 test_allow_empty_after_exclude_reports_and_exits_zero() {
   local tmp repo out rc
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-allow-empty.XXXXXX")
@@ -408,15 +409,31 @@ test_allow_empty_after_exclude_reports_and_exits_zero() {
     *) rm -rf "$tmp"; fail "notice must name the excluded family, got: $out" ;;
   esac
   case "$out" in
-    *'Behavior tests (Herdr)'*) ;;
-    *) rm -rf "$tmp"; fail "notice must name the CI job that really gates it, got: $out" ;;
+    *'the CI lane covering real-herdr-gated is the real gate'*) ;;
+    *) rm -rf "$tmp"; fail "notice must point at the excluded family's CI lane, got: $out" ;;
+  esac
+  case "$out" in
+    *'Behavior tests (Herdr)'*)
+      rm -rf "$tmp"
+      fail "notice must not hardcode one CI job name in a family-agnostic path: $out" ;;
   esac
   case "$out" in
     *'FM_TEST_SUMMARY total=0 failed=0 skipped_gate=0 duration_ms=0'*) ;;
     *) rm -rf "$tmp"; fail "empty-run summary changed under the flag: $out" ;;
   esac
+
+  # --list documents its stdout as script paths, one per line, so the notice
+  # must not turn into two prose entries for anything parsing that output.
+  rc=0
+  out=$(cd "$repo" && bin/fm-test-run.sh --changed --base HEAD --list \
+    --exclude-family real-herdr-gated --allow-empty-after-exclude 2>"$tmp/err") || rc=$?
+  [ "$rc" -eq 0 ] \
+    || { rm -rf "$tmp"; fail "--list with the flag must exit 0, got $rc: $out" ; }
+  [ -z "$out" ] \
+    || { rm -rf "$tmp"; fail "--list must print no notice on stdout, got: $out" ; }
+
   rm -rf "$tmp"
-  pass "allow-empty-after-exclude reports the emptied selection and its CI gate, then exits 0"
+  pass "allow-empty-after-exclude reports the emptied selection and its CI lane, then exits 0"
 }
 
 test_ci_and_docs_call_the_owner() {

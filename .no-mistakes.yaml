@@ -64,7 +64,7 @@ document:
 # real-Herdr-gated test is a legitimate change, not a gate that ran nothing, and
 # its only escape from a red step would be editing this tracked pin. So the pin
 # adds --allow-empty-after-exclude: that exact case prints to stdout which family
-# emptied a non-empty selection and that CI's `Behavior tests (Herdr)` job is the
+# emptied a non-empty selection and that the CI lane covering that family is the
 # real gate, then exits 0. A partial drop, the case described above, is still
 # neither refused nor reported.
 # `--changed` is not narrow by nature: its set is whatever the change maps to, so

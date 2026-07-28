@@ -853,10 +853,16 @@ apply_exclude_families() {
     names=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")
     if [ "$ALLOW_EMPTY_AFTER_EXCLUDE" -eq 1 ]; then
       # stdout, and before the empty-run summary, so the operator reading the
-      # step's output cannot mistake this for a change with no tests.
-      printf 'exclusion emptied a non-empty selection: --exclude-family %s removed all %s selected tests\n' \
-        "$names" "$before"
-      printf 'nothing runs locally for that change; the CI job "Behavior tests (Herdr)" is the real gate for the excluded family\n'
+      # step's output cannot mistake this for a change with no tests. Suppressed
+      # under --list, whose stdout contract is script paths only. The families
+      # are interpolated rather than naming one CI job: --exclude-family takes
+      # any name from --list-families, so a hardcoded job would be wrong for
+      # every other family and would rot silently when that job is renamed.
+      if [ "$LIST_ONLY" -ne 1 ]; then
+        printf 'exclusion emptied a non-empty selection: --exclude-family %s removed all %s selected tests\n' \
+          "$names" "$before"
+        printf 'nothing runs locally for that change; the CI lane covering %s is the real gate\n' "$names"
+      fi
       return 0
     fi
     die "--exclude-family $names removed all $before selected tests; selection was non-empty before exclusion"
