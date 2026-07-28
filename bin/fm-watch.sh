@@ -104,14 +104,11 @@ SWEEP_INTERVAL=${FM_SWEEP_INTERVAL:-300}  # seconds between fm-sweep.sh 3rd-mate
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
-# Busy signatures are selected by recorded harness unless FM_BUSY_REGEX globally
-# overrides them.
-# claude/codex: "esc to interrupt"; opencode: "esc interrupt"; pi: "Working...";
-# grok: "Ctrl+c:cancel". Claude's current spinner signature is matched only for
-# a recorded Claude task because an ellipsis followed by elapsed time is not a
-# safe shared signature for arbitrary harness output. Kimi's moon-plus-middot
-# spinner signature is likewise matched only for a recorded Kimi task.
-BUSY_REGEX=${FM_BUSY_REGEX:-'esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel'}
+# Busy signatures live in bin/fm-tmux-lib.sh (fm_busy_lines_match), the single
+# owner of the per-harness table and of the FM_BUSY_REGEX global override. This
+# watcher never re-spells either, so the two cannot drift: claude's spinner and
+# kimi's moon-plus-middot signature stay scoped to a recorded task of that
+# harness, which is only safe while one place decides it.
 # Always-on wake triage: most wakes during a long crew validation are benign (a
 # working: note or turn-end while a pipeline runs, a no-change heartbeat). Rather
 # than wake firstmate's LLM for each, this watcher classifies every wake in bash
@@ -177,11 +174,7 @@ window_is_busy() {  # <window> <tail40>
     *)
       lines=$(printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -12)
       harness=$(window_harness "$w")
-      if [ -n "${FM_BUSY_REGEX:-}" ]; then
-        printf '%s' "$lines" | grep -qiE "$BUSY_REGEX"
-      else
-        printf '%s' "$lines" | fm_busy_lines_match "$harness"
-      fi
+      printf '%s' "$lines" | fm_busy_lines_match "$harness"
       ;;
   esac
 }

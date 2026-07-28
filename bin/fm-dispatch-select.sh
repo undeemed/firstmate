@@ -52,7 +52,11 @@
 #     20 points). Equal winning scores use a random tie-break.
 #   - If quota-axi is unavailable, fails, returns unusable data, or no candidate
 #     can be scored, selection falls back uniformly across every valid candidate
-#     using rejection sampling over a 32-bit value from /dev/urandom.
+#     using rejection sampling over a 32-bit value from /dev/urandom. A single
+#     candidate, whether the only profile in the array or the only top scorer, is
+#     already the outcome and consults no random source at all, so an unreadable
+#     one cannot turn a determined selection into a dispatch failure. The loud
+#     refusal is reserved for a genuine choice among two or more tied candidates.
 #   - Runtime quota trouble never turns malformed profile JSON into a fallback;
 #     invalid input exits 2 with an actionable validation error. Profile fields
 #     are typed by that validation pass, never by the scoring program's guards,
@@ -177,6 +181,9 @@ random_index() {
   local count=$1 source raw ceiling attempts
   source=${FM_DISPATCH_RANDOM_SOURCE:-/dev/urandom}
   [ "$count" -gt 0 ] || return 1
+  # One candidate is already the outcome, so no random source is consulted and an
+  # unreadable one cannot block a determined selection.
+  [ "$count" -gt 1 ] || { printf '%s\n' 0; return 0; }
   [ -r "$source" ] || return 1
   ceiling=$((4294967296 - (4294967296 % count)))
   attempts=0

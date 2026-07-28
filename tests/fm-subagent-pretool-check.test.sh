@@ -18,8 +18,9 @@ mkdir -p "$PRIMARY/bin" "$STATE"
 printf '# fixture\n' > "$PRIMARY/AGENTS.md"
 git -C "$PRIMARY" init -q
 
-BRIEF_ONLY_ROUTE='first classify the work under the AGENTS.md intake contract, then use bin/fm-brief.sh followed by bin/fm-spawn.sh for dispatched work'
-SCOUT_ROUTE='first classify the work under the AGENTS.md intake contract: work already classified as a scout goes to bin/fm-scout.sh "<question>" [project], while authorized ship work and its bounded research go to bin/fm-brief.sh then bin/fm-spawn.sh'
+ROUTE_TIER='project work routes to the secondmate for that project (data/secondmates.md; the secondmate-provisioning skill) instead of a crewmate spawned from the main home'
+BRIEF_ONLY_ROUTE="first classify the work under the AGENTS.md intake contract: $ROUTE_TIER; then, inside the home that owns the work, use bin/fm-brief.sh followed by bin/fm-spawn.sh for dispatched work"
+SCOUT_ROUTE="first classify the work under the AGENTS.md intake contract: $ROUTE_TIER; then, inside the home that owns the work, work already classified as a scout goes to bin/fm-scout.sh \"<question>\" [project], while authorized ship work and its bounded research go to bin/fm-brief.sh then bin/fm-spawn.sh"
 
 # Every delegation, scheduling, worktree, and task-tracking tool Claude Code
 # 2.1.217 offered a primary session in the observed baseline.
@@ -130,6 +131,13 @@ test_deny_message_defers_to_intake_classification() {
   case "$actual" in
     *'investigation or diagnosis goes to bin/fm-scout.sh'*) fail "deny must not classify all investigation or diagnosis as scout work: $actual" ;;
   esac
+  # AGENTS.md section 1 forbids the main home from spawning a project crewmate,
+  # so a redirect that named brief-then-spawn alone would point at the one path
+  # the contract prohibits. Both variants must name the secondmate tier first.
+  case "$actual" in
+    *"$ROUTE_TIER"*) ;;
+    *) fail "deny must route project work to its secondmate, not a directly spawned crewmate: $actual" ;;
+  esac
   rm -f "$PRIMARY/bin/fm-scout.sh"
   run_tool Agent && fail "scout-absent case must still deny"
   actual=$(jq -r '.systemMessage' "$ERR")
@@ -137,7 +145,11 @@ test_deny_message_defers_to_intake_classification() {
     *"$BRIEF_ONLY_ROUTE"*) ;;
     *) fail "deny must degrade to brief-then-spawn when fm-scout.sh is absent: $actual" ;;
   esac
-  pass "deny defers to intake classification and degrades gracefully without fm-scout.sh"
+  case "$actual" in
+    *"$ROUTE_TIER"*) ;;
+    *) fail "the scout-absent redirect dropped the secondmate route for project work: $actual" ;;
+  esac
+  pass "deny names the secondmate tier, defers to intake classification, and degrades gracefully without fm-scout.sh"
 }
 
 test_escape_hatch_allows_deliberate_use() {

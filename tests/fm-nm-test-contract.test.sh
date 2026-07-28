@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Contract: local no-mistakes Test is intent-targeted; CI owns broad regression.
+# Contract: local no-mistakes Test is bounded, deterministic, and non-agent;
+# CI owns broad regression.
 #
-# Firstmate must not configure commands.test as a complete tests/*.test.sh walk
-# (that duplicated CI and burned local pipeline time). Lint stays pinned to
-# bin/fm-lint.sh. Remote CI owns broad regression through separate portable and
-# required real-Herdr Behavior lanes composed around bin/fm-test-run.sh.
+# commands.test must pin a concrete command, because an agent-driven Test step
+# has crashed the daemon. It must also stay intent-targeted: never a complete
+# tests/*.test.sh walk and never --all, because that duplicated CI and burned
+# local pipeline time. bin/fm-test-run.sh --changed satisfies both at once and is
+# the shape this contract requires. Lint stays pinned to bin/fm-lint.sh. Remote
+# CI owns broad regression through separate portable and required real-Herdr
+# Behavior lanes composed around bin/fm-test-run.sh.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -26,8 +30,9 @@ test_nm_keeps_lint_pin() {
   pass "commands.lint stays pinned to bin/fm-lint.sh"
 }
 
-# True when the YAML maps a non-empty commands.test (string or mapping value).
-# Empty / null / absent is the intended targeted-Test posture.
+# Prints the mapped commands.test (string or mapping value), or empty when the
+# key is absent or null. An empty value means Test fell back to agent-driven
+# handling, which this contract refuses.
 nm_commands_test_value() {
   if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
     python3 -c '
@@ -72,25 +77,41 @@ end
   ' "$NM"
 }
 
-test_nm_has_no_complete_local_test_command() {
+test_nm_pins_bounded_deterministic_test_command() {
   local val
   val=$(nm_commands_test_value) || fail "failed to read commands.test from .no-mistakes.yaml"
-  if [ -n "$val" ]; then
-    case "$val" in
-      *'tests/*.test.sh'*|*'tests/'*'.test.sh'*)
-        fail "commands.test must not walk the complete tests/*.test.sh suite; got: $val"
-        ;;
-      *)
-        # Any non-empty override still steers Test away from intent-targeted default.
-        fail "commands.test must be absent or empty so Test stays intent-targeted; got: $val"
-        ;;
-    esac
-  fi
+  [ -n "$val" ] \
+    || fail "commands.test must pin a deterministic non-agent command; an absent value hands Test back to an agent"
+  case "$val" in
+    *'tests/*.test.sh'*|*'--all'*)
+      fail "commands.test must not walk the complete suite; got: $val"
+      ;;
+  esac
+  # The repository's own changed-file selection is the required shape: one owner
+  # for the map, deterministic, and never the complete suite.
+  case "$val" in
+    'bin/fm-test-run.sh --changed'*) ;;
+    *) fail "commands.test must select through bin/fm-test-run.sh --changed; got: $val" ;;
+  esac
   # Also refuse a commented-out full-suite remnant that could be re-enabled by habit.
   if grep -E '^[[:space:]]*#?[[:space:]]*test:[[:space:]].*tests/\*\.test\.sh' "$NM" >/dev/null 2>&1; then
     fail ".no-mistakes.yaml still documents a full-suite commands.test line (active or comment)"
   fi
-  pass "no-mistakes does not configure a complete local Test command"
+  pass "commands.test pins the bounded deterministic changed-file selection"
+}
+
+# The pinned command must be a real selection mode of the one-owner runner, so a
+# rename or flag removal there cannot leave the gate pointing at a dead command.
+test_pinned_test_command_is_a_supported_selection() {
+  local val runner
+  val=$(nm_commands_test_value) || fail "failed to read commands.test from .no-mistakes.yaml"
+  runner=${val%% *}
+  [ -x "$ROOT/$runner" ] || fail "commands.test names a runner that is not executable: $runner"
+  grep -Fq -- '--changed' "$ROOT/$runner" \
+    || fail "$runner no longer implements --changed, which commands.test depends on"
+  grep -Fq -- '--base' "$ROOT/$runner" \
+    || fail "$runner no longer implements --base, which commands.test depends on"
+  pass "the pinned Test command matches a supported bin/fm-test-run.sh selection"
 }
 
 test_ci_still_runs_broad_behavior_suite() {
@@ -123,5 +144,6 @@ test_ci_still_runs_broad_behavior_suite() {
 
 test_nm_yaml_tracked
 test_nm_keeps_lint_pin
-test_nm_has_no_complete_local_test_command
+test_nm_pins_bounded_deterministic_test_command
+test_pinned_test_command_is_a_supported_selection
 test_ci_still_runs_broad_behavior_suite
