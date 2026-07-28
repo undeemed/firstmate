@@ -259,6 +259,38 @@ JSON
   pass "Kimi limit buckets count toward its score without making an otherwise available candidate unscorable"
 }
 
+# Quota data is untrusted: quota-axi may emit a wrongly-typed field, and a jq
+# string operation on a merely-defaulted value raises and aborts the WHOLE
+# scoring program, so one bad field would discard every other candidate's good
+# numbers and silently degrade the array to a random pick. Every row keeps one
+# healthy candidate that must still win through the quota path.
+HEALTHY_CLAUDE='{"provider":"claude","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":10},{"id":"seven_day","kind":"weekly","percentRemaining":10}]}'
+HEALTHY_KIMI='{"provider":"kimi","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":90},{"id":"weekly","kind":"weekly","percentRemaining":95}]}'
+
+test_wrongly_typed_quota_fields_never_abort_scoring() {
+  local name candidates providers quota out err n
+  n=0
+  while IFS='^' read -r name candidates providers; do
+    n=$((n + 1))
+    quota="$TMP_ROOT/typed-$n.json"
+    printf '{"schemaVersion":2,"providers":[%s]}\n' "$providers" > "$quota"
+    out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" \
+      --quota-json "$quota" "$candidates" 2>"$TMP_ROOT/typed-$n.err")
+    err=$(cat "$TMP_ROOT/typed-$n.err")
+    assert_profile "$out" '{"harness":"kimi","model":"kimi-code/k3"}' "$name should leave every other candidate scorable"
+    assert_contains "$err" "selection basis: quota-selected" "$name degraded the whole array to a non-quota basis"
+    assert_not_contains "$err" "could not be evaluated" "$name aborted quota evaluation"
+  done <<ROWS
+non-string Kimi window ids^[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]^$HEALTHY_CLAUDE,{"provider":"kimi","state":{"status":"fresh"},"windows":[{"id":88,"kind":"session","percentRemaining":1},{"id":["limit:1"],"kind":"unknown","percentRemaining":1},{"id":"five_hour","kind":"session","percentRemaining":90},{"id":"weekly","kind":"weekly","percentRemaining":95}]}
+non-string model window id and label^[{"harness":"claude","model":"claude-sonnet-5"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"session","percentRemaining":10},{"id":"seven_day","kind":"weekly","percentRemaining":10},{"id":7,"kind":"model","label":42,"percentRemaining":99}]},$HEALTHY_KIMI
+non-object provider entry^[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]^"not-a-provider",$HEALTHY_CLAUDE,$HEALTHY_KIMI
+non-array provider windows^[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":{"status":"fresh"},"windows":"none"},$HEALTHY_KIMI
+non-string provider state^[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"claude","state":7,"windows":[{"id":"five_hour","kind":"session","percentRemaining":100}]},$HEALTHY_KIMI
+non-string and non-object Grok product windows^[{"harness":"grok"},{"harness":"kimi","model":"kimi-code/k3"}]^{"provider":"grok","state":{"status":"fresh"},"windows":[{"id":9,"kind":"credits","percentRemaining":50},"junk",{"id":"credits","kind":"credits","percentRemaining":50}]},$HEALTHY_KIMI
+ROWS
+  pass "wrongly-typed quota fields are ignored per field instead of aborting the whole array"
+}
+
 test_newly_verified_harnesses_clear_validation() {
   local quota out status body
   quota="$TMP_ROOT/verified-harnesses.json"
@@ -423,6 +455,9 @@ test_malformed_profile_arrays_are_validation_errors() {
 ["claude"]^must be an object
 [{"model":"claude-sonnet-5"}]^needs a non-empty harness
 [{"harness":"claude","model":3}]^model must be a non-empty string
+[{"harness":"claude","model":null}]^model must be a non-empty string
+[{"harness":"claude","model":{"name":"claude-sonnet-5"}}]^model must be a non-empty string
+[{"harness":3}]^needs a non-empty harness
 [{"harness":"spaceship"}]^contains an unverified harness
 [{"harness":"codex","effort":"max"}]^contains an unsupported harness/effort pair
 [{"harness":"kimi","effort":"low"}]^contains an unsupported harness/effort pair
@@ -438,6 +473,7 @@ test_equal_winners_use_os_random_tie_break
 test_provider_and_product_mapping_through_wrappers
 test_kimi_scores_through_general_windows_without_a_model
 test_kimi_limit_buckets_constrain_the_candidate
+test_wrongly_typed_quota_fields_never_abort_scoring
 test_newly_verified_harnesses_clear_validation
 test_most_constrained_relevant_window_scores_candidate
 test_grok_aggregate_fallback_requires_no_product_windows

@@ -801,8 +801,11 @@ ABORT_UNRESTORED=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | 
 assert_focus_is "$CAPTAIN_FOCUS" "concurrent post-create abort cleanup"
 # Only a worker that actually projected performs the focus-audited projected
 # pane close; the flat-fallback worker accepted above never enters that path, so
-# it has no such record to audit. Both panes must still be gone by the exact-pane
-# check below, whichever path cleaned them up.
+# it has no such record to audit. Every projected pane must therefore be gone by
+# the exact-pane check below, while a flat-fallback pane is deliberately retained
+# as the named inspection target and is asserted alive in the block after it.
+# Both panes are projected again, and this retention split disappears, once
+# herdr-abort-acq-signal-a7 restores the two serialized shapes above.
 for ABORT_PANE in $ABORT_PROJECTED_PANES; do
   assert_cleanup_focus_preserved "$ABORT_FOCUS_START" "$ABORT_PANE" "$CAPTAIN_FOCUS"
 done
@@ -823,6 +826,11 @@ if [ -n "${ABORT_FLAT_PANE:-}" ]; then
   grep -F "Inspect target" "$ABORT_FLAT_ERR" | grep -F "$ABORT_FLAT_PANE" >/dev/null 2>&1 \
     || fail "flat-fallback abort retained pane $ABORT_FLAT_PANE without naming it as the inspection target"
   lab pane close "$ABORT_FLAT_PANE" >/dev/null 2>&1 || true
+  # The only test-owned pane close in a file whose invariant is exact focus
+  # preservation; production teardown audits and restores focus itself. Assert
+  # here so any drift is named at this cleanup instead of surfacing two sections
+  # later under the projected-teardown label.
+  assert_focus_is "$CAPTAIN_FOCUS" "flat-fallback pane cleanup"
 fi
 [ ! -e "$HOME_DIR/state/abort-a.meta" ] && [ ! -e "$HOME_DIR/state/abort-b.meta" ] \
   || fail "post-create abort fixtures published task metadata before launch"

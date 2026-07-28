@@ -31,6 +31,13 @@
 #     weekly alone and win against a more available harness. Narrow this to the
 #     coding-capacity buckets if quota-axi later gives them a real kind.
 #   - Unscorable candidates never beat candidates with usable quota data.
+#   - Quota data is untrusted, so every field read from it is type-guarded, not
+#     merely defaulted for absence: a wrongly-typed provider, window, id, label,
+#     or state is ignored field by field. A jq string operation applied to a
+#     defaulted-but-untyped value raises and aborts the whole scoring program,
+#     which would throw away every other candidate's good numbers and silently
+#     degrade the entire array to a random pick, so scoring narrows to the
+#     affected candidate instead.
 #   - Stale-but-cached numbers remain usable, but a fresh candidate wins unless
 #     the best stale score is at least the stale-clear margin higher (default
 #     20 points). Equal winning scores use a random tie-break.
@@ -38,7 +45,9 @@
 #     can be scored, selection falls back uniformly across every valid candidate
 #     using rejection sampling over a 32-bit value from /dev/urandom.
 #   - Runtime quota trouble never turns malformed profile JSON into a fallback;
-#     invalid input exits 2 with an actionable validation error.
+#     invalid input exits 2 with an actionable validation error. Profile fields
+#     are typed by that validation pass, never by the scoring program's guards,
+#     so a wrongly-typed harness, model, or effort stays a loud refusal.
 #
 # FM_DISPATCH_QUOTA_AXI overrides the quota command.
 # FM_DISPATCH_STALE_CLEAR_MARGIN overrides the default 20 point stale margin.
@@ -236,6 +245,7 @@ fi
 selection=$(printf '%s\n' "$quota_json" | jq -ec \
   --argjson profiles "$profiles_json" \
   --argjson margin "$STALE_CLEAR_MARGIN" '
+  def text($value): ($value | strings) // "";
   def clean_text:
     ascii_downcase | gsub("[^a-z0-9]"; "");
   def model_name($model):
@@ -244,8 +254,8 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
       else (($tail | split(":") | first) // "")
       end;
   def route($profile):
-    ($profile.harness // "") as $h
-    | ($profile.model // "") as $model
+    text($profile.harness?) as $h
+    | text($profile.model?) as $model
     | (["pi", "pi-signed", "opencode"] | index($h) != null) as $prefixed
     | if $h == "claude" then {provider: "claude", model: $model}
       elif $h == "codex" then {provider: "codex", model: $model}
@@ -259,11 +269,11 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
         {provider: "grok", product: "api", model: (model_name($model))}
       else null
       end;
-  def provider_for($id): [.providers[]? | select(.provider == $id)][0];
+  def provider_for($id): [.providers[]? | objects | select(.provider == $id)][0];
   def model_window_matches($window; $model):
-    if (($window.kind? // "") != "model") or ($model | length) == 0 then false
+    if (text($window.kind?) != "model") or ($model | length) == 0 then false
     else
-      (($window.id? // "") + " " + ($window.label? // "") | clean_text) as $scope
+      (text($window.id?) + " " + text($window.label?) | clean_text) as $scope
       | ($model | clean_text) as $wanted
       | (($scope | contains($wanted)) or ($wanted | contains($scope))
         or (["fable", "opus", "haiku", "sonnet", "spark"]
@@ -275,20 +285,21 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
     and ($window.percentRemaining >= 0)
     and ($window.percentRemaining <= 100);
   def general_window_matches($window; $provider):
-    if $provider == "claude" then ["five_hour", "seven_day"] | index($window.id? // "") != null
-    elif $provider == "codex" then ["five_hour", "weekly"] | index($window.id? // "") != null
-    elif $provider == "kimi" then
-      (["five_hour", "weekly"] | index($window.id? // "") != null)
-      or (($window.id? // "") | startswith("limit:"))
-    else false
-    end;
+    text($window.id?) as $id
+    | if $provider == "claude" then ["five_hour", "seven_day"] | index($id) != null
+      elif $provider == "codex" then ["five_hour", "weekly"] | index($id) != null
+      elif $provider == "kimi" then
+        (["five_hour", "weekly"] | index($id) != null)
+        or ($id | startswith("limit:"))
+      else false
+      end;
   def relevant_windows($provider; $route):
-    ($provider.windows // []) as $all_windows
+    (($provider.windows? | arrays) // []) as $all_windows
     | ($all_windows | map(select(usable_percent(.)))) as $windows
     | if $route.provider == "grok" then
         ($windows | map(select(.id == ("product:" + $route.product)))) as $product_windows
         | if ($product_windows | length) > 0 then $product_windows
-          elif ($all_windows | map(select((.id? // "") | startswith("product:"))) | length) == 0 then
+          elif ($all_windows | map(select(text(.id?) | startswith("product:"))) | length) == 0 then
             ($windows | map(select(.id == "credits")))
           else []
           end
@@ -303,13 +314,14 @@ selection=$(printf '%s\n' "$quota_json" | jq -ec \
     | route($profile) as $route
     | if $route == null then empty
       else ($root | provider_for($route.provider)) as $provider
-      | if ($provider == null) or (["fresh", "stale"] | index($provider.state.status? // "") | not) then empty
+      | text($provider.state?.status?) as $status
+      | if ($provider == null) or (["fresh", "stale"] | index($status) | not) then empty
         else relevant_windows($provider; $route) as $windows
         | if ($windows | length) == 0 then empty
           else {
             index: $index,
             score: ($windows | map(.percentRemaining) | min),
-            fresh: (($provider.state.status? // "") == "fresh")
+            fresh: ($status == "fresh")
           }
           end
         end
