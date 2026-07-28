@@ -145,6 +145,11 @@ test_provider_and_product_mapping_through_wrappers() {
       {"id":"credits","kind":"credits","percentRemaining":1},
       {"id":"product:api","kind":"credits","percentRemaining":75},
       {"id":"product:grok_build","kind":"credits","percentRemaining":25}
+    ]},
+    {"provider":"kimi","state":{"status":"fresh"},"windows":[
+      {"id":"five_hour","kind":"session","percentRemaining":65},
+      {"id":"weekly","kind":"weekly","percentRemaining":60},
+      {"id":"limit:0","kind":"unknown","percentRemaining":2}
     ]}
   ]
 }
@@ -164,7 +169,64 @@ JSON
   out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
     '[{"harness":"grok"},{"harness":"claude"}]' 2>/dev/null)
   assert_profile "$out" '{"harness":"claude"}' "direct Grok should use product:grok_build"
-  pass "direct and Pi-wrapped candidates map to consumed Claude, Codex, xAI API, and Grok Build quota"
+
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
+    '[{"harness":"claude"},{"harness":"kimi","model":"kimi-code/k3"}]' 2>/dev/null)
+  assert_profile "$out" '{"harness":"kimi","model":"kimi-code/k3"}' "direct Kimi was not scored against its five_hour and weekly windows"
+
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
+    '[{"harness":"pi-signed","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]' 2>/dev/null)
+  assert_profile "$out" '{"harness":"pi-signed","model":"anthropic/claude-sonnet-5"}' "pi-signed Anthropic route was not scored as Claude"
+
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
+    '[{"harness":"pi-signed","model":"xai/grok-4.5"},{"harness":"codex"}]' 2>/dev/null)
+  assert_profile "$out" '{"harness":"pi-signed","model":"xai/grok-4.5"}' "pi-signed xAI route was not scored against product:api"
+  pass "direct and wrapper-hosted candidates map to consumed Claude, Codex, xAI API, Grok Build, and Kimi quota"
+}
+
+test_kimi_scores_through_general_windows_without_a_model() {
+  local quota out err
+  quota="$TMP_ROOT/kimi-modelless.json"
+  cat > "$quota" <<'JSON'
+{"schemaVersion":2,"providers":[
+  {"provider":"claude","state":{"status":"fresh"},"windows":[
+    {"id":"five_hour","kind":"session","percentRemaining":10},
+    {"id":"seven_day","kind":"weekly","percentRemaining":10}
+  ]},
+  {"provider":"kimi","state":{"status":"fresh"},"windows":[
+    {"id":"five_hour","kind":"session","percentRemaining":90},
+    {"id":"weekly","kind":"weekly","percentRemaining":95}
+  ]}
+]}
+JSON
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
+    '[{"harness":"claude"},{"harness":"kimi"}]' 2>"$TMP_ROOT/kimi-modelless.err")
+  err=$(cat "$TMP_ROOT/kimi-modelless.err")
+  assert_profile "$out" '{"harness":"kimi"}' "model-less Kimi candidate was not scored through its provider windows"
+  assert_contains "$err" "selection basis: quota-selected" "model-less Kimi profile degraded the array to a non-quota basis"
+  assert_not_contains "$err" "could not be evaluated" "model-less Kimi profile aborted quota evaluation"
+
+  out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" \
+    '[{"harness":"kimi"},{"harness":"kimi","model":"kimi-code/k3"},{"harness":"claude"}]' 2>/dev/null)
+  assert_profile "$out" '{"harness":"kimi"}' "model-less and model-carrying Kimi candidates should tie on provider windows"
+  pass "a Kimi profile without a model stays quota-aware instead of aborting the whole array"
+}
+
+test_newly_verified_harnesses_clear_validation() {
+  local quota out status body
+  quota="$TMP_ROOT/verified-harnesses.json"
+  printf '%s\n' '{"schemaVersion":2,"providers":[]}' > "$quota"
+  for body in \
+    '[{"harness":"kimi"}]' \
+    '[{"harness":"kimi","model":"kimi-code/k3"}]' \
+    '[{"harness":"pi-signed","model":"anthropic/claude-sonnet-5","effort":"max"}]' \
+    '[{"harness":"pi-signed","model":"xai/grok-4.5","effort":"low"}]'; do
+    status=0
+    out=$(FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ZERO" "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" "$body" 2>/dev/null) || status=$?
+    expect_code 0 "$status" "verified harness profile should not be a validation error: $body"
+    assert_contains "$out" '"harness"' "verified harness profile did not resolve to a profile: $body"
+  done
+  pass "kimi and pi-signed profiles clear validation with the effort levels bootstrap accepts"
 }
 
 test_most_constrained_relevant_window_scores_candidate() {
@@ -316,6 +378,8 @@ test_malformed_profile_arrays_are_validation_errors() {
 [{"harness":"claude","model":3}]^model must be a non-empty string
 [{"harness":"spaceship"}]^contains an unverified harness
 [{"harness":"codex","effort":"max"}]^contains an unsupported harness/effort pair
+[{"harness":"kimi","effort":"low"}]^contains an unsupported harness/effort pair
+[{"harness":"pi-signed","effort":"turbo"}]^contains an unsupported harness/effort pair
 ROWS
   pass "malformed arrays stay actionable validation errors and never enter random fallback"
 }
@@ -325,6 +389,8 @@ test_rule_array_without_select_invokes_quota_axi
 test_legacy_explicit_selector_stays_compatible
 test_equal_winners_use_os_random_tie_break
 test_provider_and_product_mapping_through_wrappers
+test_kimi_scores_through_general_windows_without_a_model
+test_newly_verified_harnesses_clear_validation
 test_most_constrained_relevant_window_scores_candidate
 test_grok_aggregate_fallback_requires_no_product_windows
 test_stale_cache_needs_clear_margin_to_beat_fresh
