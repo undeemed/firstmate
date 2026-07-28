@@ -616,6 +616,38 @@ test_non_numeric_stale_margin_is_an_operator_config_error() {
   pass "a bad stale margin refuses as operator config while numeric margins still score"
 }
 
+# The margin gate belongs at the scoring program that reads it, so selections
+# that never consult it cannot be turned into a dispatch failure by a typo.
+test_bad_stale_margin_only_blocks_the_selection_that_reads_it() {
+  local fakebin quota out status err
+  quota="$TMP_ROOT/margin-placement.json"
+  write_quota "$quota" stale 90 85 fresh 65 60
+
+  status=0
+  out=$(FM_DISPATCH_STALE_CLEAR_MARGIN='20%' \
+    "$ROOT/bin/fm-dispatch-select.sh" --quota-json "$quota" "$profiles" 2>&1) || status=$?
+  expect_code 2 "$status" "a scored multi-profile dispatch must still refuse a bad stale margin"
+  assert_contains "$out" "FM_DISPATCH_STALE_CLEAR_MARGIN must be a number" \
+    "the scored dispatch did not name the operator-config cause"
+
+  out=$(FM_DISPATCH_STALE_CLEAR_MARGIN='20%' \
+    "$ROOT/bin/fm-dispatch-select.sh" '{"harness":"grok","model":"grok-4.5","effort":"high"}' 2>/dev/null)
+  assert_profile "$out" '{"harness":"grok","model":"grok-4.5","effort":"high"}' \
+    "a bad stale margin blocked a single-profile selection that never reads it"
+
+  fakebin=$(fm_fakebin "$TMP_ROOT/margin-fallback")
+  out=$(PATH="$fakebin:$BASE_PATH" FM_DISPATCH_STALE_CLEAR_MARGIN='20%' \
+    FM_DISPATCH_RANDOM_SOURCE="$RANDOM_ONE" \
+    "$ROOT/bin/fm-dispatch-select.sh" "$profiles" 2>"$TMP_ROOT/margin-fallback.err")
+  err=$(cat "$TMP_ROOT/margin-fallback.err")
+  assert_profile "$out" '{"harness":"codex","model":"gpt-5.5","effort":"high"}' \
+    "a bad stale margin blocked the quota-unavailable fallback that never reads it"
+  assert_contains "$err" "quota-axi missing" "the quota-unavailable fallback reason was not logged"
+  assert_not_contains "$err" "FM_DISPATCH_STALE_CLEAR_MARGIN" \
+    "the quota-unavailable fallback reported an unread margin"
+  pass "the stale margin gate fires only where the scoring program consumes it"
+}
+
 test_implicit_array_picks_higher_min_provider
 test_rule_array_without_select_invokes_quota_axi
 test_legacy_explicit_selector_stays_compatible
@@ -636,5 +668,6 @@ test_determined_outcome_never_needs_a_random_source
 test_determined_outcome_never_needs_od
 test_malformed_profile_arrays_are_validation_errors
 test_non_numeric_stale_margin_is_an_operator_config_error
+test_bad_stale_margin_only_blocks_the_selection_that_reads_it
 
 echo "# all fm-dispatch-select tests passed"
