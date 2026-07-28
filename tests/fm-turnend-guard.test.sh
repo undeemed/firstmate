@@ -297,8 +297,9 @@ test_hook_blocks_with_live_lock_and_stale_beacon() {
 # can reach the same physical home through a symlink or, on a case-insensitive
 # filesystem, a differently-cased path - so lock identity must be filesystem
 # identity (same device+inode), not byte-equal strings, or the hook blocks every
-# turn end behind a provably live watcher (observed live 2026-07-06 with
-# /users/xiao/dev/firstmate vs /Users/xiao/Dev/firstmate).
+# turn end behind a provably live watcher (observed live 2026-07-06 with an
+# all-lowercase session cwd vs the canonically-cased spelling of the same
+# macOS home directory).
 test_hook_silent_when_lock_spells_home_via_symlink() {
   local dir link pid identity out status
   dir=$(make_primary_dir "$TMP_ROOT/hook-symlink-home")
