@@ -40,9 +40,10 @@
 #                   selection that was already empty still exits 0.
 #   --allow-empty-after-exclude
 #                   opt out of that refusal: when an exclusion removes every
-#                   selected script, print to stdout which family emptied a
-#                   non-empty selection and which CI job really gates it, then
-#                   exit 0 instead of failing. For the .no-mistakes.yaml Test pin
+#                   selected script, print to stdout which excluded families
+#                   emptied a non-empty selection and that the CI lane covering
+#                   those families is the real gate, then exit 0 instead of
+#                   failing. For the .no-mistakes.yaml Test pin
 #                   only, where a branch whose sole mapped change is an excluded
 #                   script would otherwise turn a legitimate change red with no
 #                   escape but editing the pin.

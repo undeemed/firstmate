@@ -119,7 +119,7 @@ The tracked `.no-mistakes.yaml` keeps test evidence outside the repo and pins `c
 That evidence policy is specific to the firstmate repo: target projects may legitimately commit `.no-mistakes/evidence/` from their own no-mistakes pipeline, but firstmate keeps `.no-mistakes/` local and CI rejects tracked entries under that path.
 It also pins `commands.test`, never to a complete `tests/*.test.sh` walk or `--all`: the step must be deterministic and non-agent because an agent-driven Test step has crashed the daemon, and bounded because CI owns broad regression.
 `.no-mistakes.yaml` is the single owner of that pinned string; it selects the changed-file set of `bin/fm-test-run.sh` minus the real-Herdr-gated family, so read the flags there rather than restating them here.
-The one excluded family is the one CI already gates separately in its dedicated required Herdr lane, the same convention the runner applies to its portable CI lanes, and the runner refuses an exclusion that would empty a non-empty selection.
+The one excluded family is the one CI already gates separately in its dedicated required Herdr lane, the same convention the runner applies to its portable CI lanes, and the runner refuses an exclusion that would empty a non-empty selection unless the caller opts out, which the pin does so a branch whose only mapped change is an excluded script reports that CI owns it instead of turning red.
 The config comment records that reconciliation, and `tests/fm-nm-test-contract.test.sh` asserts the changed-file selection shape of the one-owner runner.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the firstmate-specific local test policy and entry points.
 Portable shard evidence and coverage rules are in [fm-test-portable-shards.md](fm-test-portable-shards.md); [herdr-backend.md](herdr-backend.md#destructive-lab-safety) owns the real-Herdr lane's isolation boundary, and [runtime-backends.md](verification/runtime-backends.md#herdr) owns active evidence.
@@ -222,14 +222,22 @@ This section is the single owner of the canonical schema and its per-field seman
     {
       "when": "<natural-language condition describing a kind of task>",
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>" }
+        {
+          "harness": "<adapter>",
+          "model": "<optional model>",
+          "effort": "<low|medium|high|xhigh|max, optional>"
+        }
       ],
       "select": "<optional strategy>",
       "why": "<optional rationale that helps firstmate choose>"
     }
   ],
   "default": [
-    { "harness": "<adapter>", "model": "<optional model>", "effort": "<optional effort>" }
+    {
+      "harness": "<adapter>",
+      "model": "<optional model>",
+      "effort": "<optional effort>"
+    }
   ]
 }
 ```

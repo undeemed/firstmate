@@ -617,7 +617,7 @@ test_kimi_busy_signature_is_scoped_to_spinner_lines() {
   if fm_pane_is_busy fake kimi; then
     fail "Kimi's idle thinking-effort status label was misread as busy"
   fi
-  kimi_regex_lines=$(grep 'KIMI_BUSY_REGEX' "$ROOT/bin/fm-tmux-lib.sh" "$ROOT/bin/fm-watch.sh")
+  kimi_regex_lines=$(grep 'KIMI_BUSY_REGEX' "$ROOT/bin/fm-tmux-lib.sh")
   if printf '%s\n' "$kimi_regex_lines" | grep -qi thinking; then
     fail "Kimi busy regex still depends on a Thinking or thinking token"
   fi
