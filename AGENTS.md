@@ -184,7 +184,7 @@ If configured harness data names an unverified adapter, report it and fall back 
 When dispatch profiles exist, consult them at every crewmate or scout intake and pass the resolved concrete profile required by `fm-spawn`.
 For any profile array, whether it is a chosen rule's `use`, the top-level `default`, or a rule carrying the legacy `select: "quota-balanced"`, pipe that full rule or array JSON to `bin/fm-dispatch-select.sh` and use the compact JSON profile it prints.
 Routing precedence is an explicit per-task captain override, then the best-fit configured rule, then the configured default, then the static crewmate harness.
-When every candidate is tight, preserve the captain's strongest-reasoning class rather than silently downgrading it solely to conserve quota; stop and report the tight choice if that class cannot proceed.
+When every candidate is tight, preserve the captain's strongest-reasoning class rather than silently downgrading it solely to conserve quota; this is the one exception to using the selector's printed profile, because the selector scores only remaining quota, so dispatch the strongest-reasoning candidate even when the selector names a weaker one, and stop and report the tight choice if that class cannot proceed.
 The generic effort fallback and its precedence are owned by `harness-adapters`: explicit captain and standing configured effort win; otherwise use low for well-understood explicit work, xhigh for ambiguous investigation or design, intermediate levels proportionally, and never max without explicit captain preference.
 Do not add model-specific versions of that policy.
 

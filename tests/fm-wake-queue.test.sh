@@ -434,12 +434,12 @@ test_interruption_before_and_after_raw_commit() {
 # (bin/fm-watch.sh, directly and through fm-push-transition-lib.sh) must not
 # re-clear a wake already resolved into the top-level wake variables, while a
 # deliberate re-bind to another home (bin/fm-supervise-daemon.sh's
-# FM_STATE_OVERRIDE source) must move the queue paths with it.
+# FM_STATE_OVERRIDE source) must move the queue paths and FM_HOME with it.
 test_load_guard_is_idempotent_per_home_and_rebinds_across_homes() {
   local dir home_a home_b out
   dir=$(make_case load-guard)
   home_a="$dir/state"
-  home_b="$dir/state-b"
+  home_b="$dir/home-b/state"
   mkdir -p "$home_b"
 
   out=$(FM_STATE_OVERRIDE="$home_a" bash -c '
@@ -459,7 +459,7 @@ test_load_guard_is_idempotent_per_home_and_rebinds_across_homes() {
     # Deliberate re-bind to another home: queue paths must follow.
     # shellcheck disable=SC1090
     FM_STATE_OVERRIDE="$2" . "$1"
-    printf "rebound %s|%s\n" "$FM_WAKE_QUEUE" "$FM_WAKE_QUEUE_LOCK"
+    printf "rebound %s|%s|%s\n" "$FM_WAKE_QUEUE" "$FM_WAKE_QUEUE_LOCK" "$FM_HOME"
   ' _ "$ROOT/bin/fm-wake-lib.sh" "$home_b") || fail "load-guard probe failed"
 
   case "$out" in
@@ -467,10 +467,10 @@ test_load_guard_is_idempotent_per_home_and_rebinds_across_homes() {
     *) fail "redundant same-home source cleared resolved wake state: $out" ;;
   esac
   case "$out" in
-    *"rebound $home_b/.wake-queue|$home_b/.wake-queue.lock"*) ;;
-    *) fail "FM_STATE_OVERRIDE re-source did not rebind the queue paths: $out" ;;
+    *"rebound $home_b/.wake-queue|$home_b/.wake-queue.lock|$dir/home-b"*) ;;
+    *) fail "FM_STATE_OVERRIDE re-source did not rebind the queue paths and FM_HOME: $out" ;;
   esac
-  pass "wake lib is inert on a redundant same-home source and rebinds on a new state dir"
+  pass "wake lib is inert on a redundant same-home source and rebinds paths and FM_HOME on a new state dir"
 }
 
 test_concurrent_append_and_drain

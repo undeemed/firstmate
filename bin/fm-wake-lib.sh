@@ -20,6 +20,10 @@
 # Because a re-bind must move the queue paths with STATE, FM_WAKE_QUEUE and
 # FM_WAKE_QUEUE_LOCK are assigned unconditionally rather than ${VAR:-...}:
 # a sticky value from the earlier binding would outlive the home it belonged to.
+# FM_HOME follows STATE for the same reason: it is the default `home` argument
+# of fm_watcher_lock_matches_pid and fm_watcher_healthy, so a value left behind
+# by the earlier binding would compare the new home's lock record against the
+# old home's path and report a live watcher as dead.
 FM_WAKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_WAKE_DEFAULT_ROOT="$(cd "$FM_WAKE_LIB_DIR/.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_WAKE_DEFAULT_ROOT}}"
@@ -29,6 +33,9 @@ if [ -n "${FM_WAKE_LIB_BOUND_STATE-}" ] && [ "$FM_WAKE_LIB_BOUND_STATE" = "$STAT
   return 0
 fi
 FM_WAKE_LIB_BOUND_STATE="$STATE"
+if [ "$STATE" != "$FM_HOME/state" ] && [ "${STATE%/state}" != "$STATE" ]; then
+  FM_HOME="${STATE%/state}"
+fi
 
 FM_WAKE_QUEUE="$STATE/.wake-queue"
 FM_WAKE_QUEUE_LOCK="$STATE/.wake-queue.lock"
