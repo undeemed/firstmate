@@ -74,11 +74,17 @@ document:
 # `--list --changed --base origin/main` selects 102 scripts and 92 remain after
 # the exclusion. That expansion is honest selection, not a bug, and the fix for
 # the bleed was never a narrower selection, which would only hide the exposure:
-# `bin/fm-test-run.sh` now unsets FM_HOME and the FM_*_OVERRIDE/FM_BACKEND home
-# selectors in every child environment, serial and parallel alike, so the
+# `bin/fm-test-run.sh` now unsets exactly FM_HOME, FM_STATE_OVERRIDE,
+# FM_DATA_OVERRIDE, FM_ROOT_OVERRIDE, FM_PROJECTS_OVERRIDE, FM_CONFIG_OVERRIDE,
+# and FM_BACKEND in every child environment, serial and parallel alike, so the
 # watcher, wake-queue, watcher-lock, daemon, AFK, tmux, and session-bootstrap
-# suites resolve their home from the repo root under test rather than the
-# invoking operator's live fleet home.
+# suites resolve their home from the repo root of the checkout under test rather
+# than from a home inherited through the environment. For this pin that checkout
+# is the gate's own disposable worktree, which is the path that matters here.
+# That scrub does NOT protect a suite run directly from a checkout that is itself
+# a live firstmate home: with FM_HOME unset, home falls back to FM_ROOT, which is
+# that live checkout's own state/, data/, and config/. Only running the suites
+# from a checkout that is not a live home closes the remaining half.
 # `--jobs` does not apply to this pin, and not because the flags are structurally
 # incompatible: `--jobs` is not a selection mode and `--changed --jobs N` parses
 # fine. The runner refuses N>1 as soon as any selected script falls outside the
