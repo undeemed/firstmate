@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# tests/fm-send-busy-claude.test.sh - fm-send against a MID-TURN claude pane.
+# tests/fm-send-busy-claude.test.sh - fm-send against an IDLE claude pane whose
+# composer carries claude 2.1.220's U+00A0 padding.
 #
 # Task fm-send-busy-false-negative. fm-send reported landed steers as failures
 # (`text not submitted ... verdict=pending`) on roughly ten consecutive
@@ -9,9 +10,19 @@
 # was never exactly `❯` and EVERY clear claude composer classified as real,
 # unsubmitted text. The busy case was simply where a supervisor kept hitting it.
 #
+# SCOPE: every pane below reads IDLE to the code under test, so these cases
+# cover the idle path only, which is where the defect lives. The busy-queued
+# Enter fallback in bin/fm-tmux-lib.sh is NOT exercised: it calls
+# fm_pane_is_busy with no harness argument, so the generic
+# FM_TMUX_BUSY_REGEX_DEFAULT applies and claude's own thinking footer cannot
+# match it. Real mid-turn coverage waits on item kimi-busy, which owns that
+# missing harness argument; do not fake it by writing a foreign harness's busy
+# signature into a claude fixture.
+#
 # Both directions are pinned here, because the value of the submit check is
 # entirely in the second one:
-#   1. A steer to a busy claude pane that queues must exit 0.
+#   1. A steer whose composer clears - to claude's queued-message affordance
+#      included - must exit 0.
 #   2. A steer whose Enter is genuinely swallowed - text still sitting in the
 #      composer - must still exit NON-ZERO.
 #
@@ -30,9 +41,12 @@ TMP_ROOT=$(fm_test_tmproot fm-send-busy-claude)
 CLAUDE_ROW_CLEAR=$(printf '\033[39m\342\235\257\302\240')
 CLAUDE_ROW_QUEUED=$(printf '\033[38;5;246m\342\235\257\302\240\033[2m\033[39mPress up to edit queued messages\033[0m')
 CLAUDE_ROW_TEXT=$(printf '\033[39m\342\235\257\302\240fix findings 1 and 3, skip 2')
-CLAUDE_BUSY_FOOTER='✢ Lollygagging… (13s · thinking with xhigh effort)'
+# claude's mid-turn footer. It matches FM_TMUX_CLAUDE_BUSY_REGEX_DEFAULT but not
+# the generic default the submit core actually applies, so a pane carrying it
+# still reads idle here (see SCOPE above, item kimi-busy).
+CLAUDE_THINKING_FOOTER='✢ Lollygagging… (13s · thinking with xhigh effort)'
 
-# make_pane <dir> <busy-footer|""> <composer-row>
+# make_pane <dir> <footer|""> <composer-row>
 # Writes the styled pane the fake tmux replays. The composer sits on row 3
 # (0-based), which is what the fake reports as cursor_y.
 make_pane() {
@@ -46,10 +60,11 @@ make_pane() {
     printf '  /tmp/proj  master \302\267 Opus 5\n'
   } > "$dir/pane.ansi"
   # `capture-pane` without -e returns the same screen with the SGR runs gone.
-  sed 's/\x1b\[[0-9;]*m//g' "$dir/pane.ansi" > "$dir/pane.plain"
+  local esc; esc=$(printf '\033')
+  LC_ALL=C sed "s/${esc}\\[[0-9;]*m//g" "$dir/pane.ansi" > "$dir/pane.plain"
 }
 
-# make_case <name> <busy-footer|""> -> echoes the case dir.
+# make_case <name> <footer|""> -> echoes the case dir.
 # The fake tmux clears the composer to the queued-affordance row on Enter,
 # unless <dir>/.swallow exists, in which case Enter is dropped entirely.
 make_case() {
@@ -134,21 +149,21 @@ run_send() {  # <dir> <stderr-file> -> exit status of fm-send
     >/dev/null 2>"$err"
 }
 
-# --- Direction 1: the steer landed and was queued ---------------------------
+# --- Direction 1: the steer landed and the composer cleared -----------------
 
-test_busy_claude_queued_steer_exits_zero() {
+test_queued_affordance_steer_exits_zero() {
   local dir err
-  dir=$(make_case busy-queued "$CLAUDE_BUSY_FOOTER")
+  dir=$(make_case thinking-queued "$CLAUDE_THINKING_FOOTER")
   err="$dir/send.err"
   run_send "$dir" "$err" \
-    || fail "fm-send reported a queued steer to a busy claude pane as failed: $(cat "$err")"
+    || fail "fm-send reported a cleared claude composer as an unsubmitted steer: $(cat "$err")"
   grep -qF 'Press up to edit queued messages' "$dir/pane.plain" \
     || fail "test setup: the pane should have ended in claude's queued-message state"
   # One Enter is enough once the cleared composer is read correctly. The extra
   # retries were themselves harmful: a live busy pane queued the steer TWICE.
   [ "$(grep -c '^Enter$' "$dir/sent.log")" -eq 1 ] \
     || fail "a confirmed submit sent $(grep -c '^Enter$' "$dir/sent.log") Enters, risking a duplicate queued steer"
-  pass "fm-send: a steer queued by a mid-turn claude pane exits 0 with a single Enter"
+  pass "fm-send: a steer clearing into claude's queued-message state exits 0 with a single Enter"
 }
 
 test_idle_claude_steer_exits_zero() {
@@ -178,15 +193,14 @@ test_genuine_swallow_still_exits_nonzero() {
   pass "fm-send: a genuinely swallowed Enter still exits non-zero"
 }
 
-test_swallow_on_a_busy_pane_is_not_masked_by_the_queued_affordance() {
+test_swallow_is_not_masked_by_the_queued_affordance() {
   local dir err
-  dir=$(make_case busy-swallow "$CLAUDE_BUSY_FOOTER")
+  dir=$(make_case affordance-swallow "")
   err="$dir/send.err"
   # Delivery is judged from the COMPOSER, never from the screen. Reading the
   # "Press up to edit queued messages" placeholder as a success signal anywhere
   # on the pane was the first theory of this bug; it would have reported this
   # swallowed instruction as delivered. Text left in the composer stays pending.
-  printf '%s\n' "$CLAUDE_BUSY_FOOTER" > "$dir/.footer"
   make_pane "$dir" "Press up to edit queued messages" "$CLAUDE_ROW_TEXT"
   printf 'Press up to edit queued messages\n' > "$dir/.footer"
   touch "$dir/.swallow"
@@ -197,7 +211,7 @@ test_swallow_on_a_busy_pane_is_not_masked_by_the_queued_affordance() {
   pass "fm-send: the queued affordance elsewhere on screen does not mask unsubmitted composer text"
 }
 
-test_busy_claude_queued_steer_exits_zero
+test_queued_affordance_steer_exits_zero
 test_idle_claude_steer_exits_zero
 test_genuine_swallow_still_exits_nonzero
-test_swallow_on_a_busy_pane_is_not_masked_by_the_queued_affordance
+test_swallow_is_not_masked_by_the_queued_affordance

@@ -139,6 +139,12 @@ test_nbsp_padded_agent_glyph_is_empty() {
   [ "$out" = empty ] || fail "an NBSP-padded bordered '❯' is a clear composer, got '$out'"
   out=$(classify 0 "❯${nbsp}fix findings 1 and 3")
   [ "$out" = pending ] || fail "NBSP padding must not swallow real text, got '$out'"
+  out=$(classify 0 ">$nbsp")
+  [ "$out" = unknown ] \
+    || fail "an NBSP-padded BARE shell glyph is still a dead shell, got '$out'"
+  out=$(classify 1 ">$nbsp")
+  [ "$out" = empty ] \
+    || fail "an NBSP-padded shell glyph inside a composer box is the harness prompt, got '$out'"
   pass "fm_composer_classify_content: claude's U+00A0 composer padding is trimmed like a space"
 }
 
