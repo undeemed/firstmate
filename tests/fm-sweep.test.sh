@@ -45,17 +45,27 @@ make_case() {
   fakebin="$case_dir/fakebin"
   mkdir -p "$case_dir/home/state" "$case_dir/home/projects" "$case_dir/home/config" "$fakebin"
 
-  # tmux stub: `display-message` prints FM_TEST_TMUX_COMM (the pane's
-  # foreground command, which fm_backend_agent_alive classifies: a harness
-  # name = alive, a bare shell = dead, anything else = unknown) and exits
-  # FM_TEST_TMUX_DISPLAY_RC (default 1 = unreadable pane -> unknown);
-  # everything else (e.g. kill-window) succeeds silently.
+  # tmux stub for the recovery-grade agent-state probe (bin/backends/tmux.sh
+  # fm_backend_tmux_agent_state), which requires a session:window target: it
+  # first inventories the session with `list-windows` (default here: the crew
+  # window is present, so the recorded window is found), then reads the pane's
+  # foreground command with `display-message`.
+  # `display-message` prints FM_TEST_TMUX_COMM (a harness name = alive, a bare
+  # shell = dead, anything else = ambiguous -> unknown) and exits
+  # FM_TEST_TMUX_DISPLAY_RC (default 1 = unreadable pane -> unknown).
+  # FM_TEST_TMUX_WINDOWS overrides the inventory (set empty to omit the window).
+  # Everything else (e.g. kill-window) succeeds silently.
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
-if [ "${1:-}" = display-message ]; then
-  [ -n "${FM_TEST_TMUX_COMM:-}" ] && printf '%s\n' "$FM_TEST_TMUX_COMM"
-  exit "${FM_TEST_TMUX_DISPLAY_RC:-1}"
-fi
+case "${1:-}" in
+  list-windows)
+    printf '%s\n' ${FM_TEST_TMUX_WINDOWS-fm-task-x1}
+    ;;
+  display-message)
+    [ -n "${FM_TEST_TMUX_COMM:-}" ] && printf '%s\n' "$FM_TEST_TMUX_COMM"
+    exit "${FM_TEST_TMUX_DISPLAY_RC:-1}"
+    ;;
+esac
 exit 0
 SH
   # treehouse stub: return (teardown) and prune (orphan pass) both succeed,
@@ -103,7 +113,7 @@ SH
 write_meta() {  # case_dir mode kind
   local case_dir=$1 mode=$2 kind=$3
   fm_write_meta "$case_dir/home/state/task-x1.meta" \
-    "window=fm-task-x1" \
+    "window=firstmate:fm-task-x1" \
     "worktree=$case_dir/wt" \
     "project=$case_dir/project" \
     "kind=$kind" \
@@ -246,7 +256,7 @@ test_secondmate_is_never_swept() {
   local case_dir out
   case_dir=$(make_case secondmate-skip)
   fm_write_meta "$case_dir/home/state/dom-a1.meta" \
-    "window=fm-dom-a1" \
+    "window=firstmate:fm-dom-a1" \
     "worktree=$case_dir/home/dom-home" \
     "project=$case_dir/home/dom-home" \
     "kind=secondmate" \
