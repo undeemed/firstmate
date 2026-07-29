@@ -23,7 +23,12 @@
 # FM_HOME follows STATE for the same reason: it is the default `home` argument
 # of fm_watcher_lock_matches_pid and fm_watcher_healthy, so a value left behind
 # by the earlier binding would compare the new home's lock record against the
-# old home's path and report a live watcher as dead.
+# old home's path and report a live watcher as dead. That FM_HOME re-bind is
+# derived from the state path, so it requires FM_STATE_OVERRIDE to name a
+# `<home>/state` directory; an override spelled any other way leaves FM_HOME on
+# the earlier binding and its callers must pass `home` explicitly. The re-bind
+# also moves FM_HOME alone: a caller that resolved DATA or CONFIG from FM_HOME
+# before sourcing this file keeps those pointed at the earlier home.
 FM_WAKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_WAKE_DEFAULT_ROOT="$(cd "$FM_WAKE_LIB_DIR/.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_WAKE_DEFAULT_ROOT}}"

@@ -32,7 +32,10 @@
 #   --base <ref>    with --changed, compare against this ref (default: origin/main)
 #   --exclude-family <name>
 #                   drop scripts whose primary family matches <name> after selection
-#                   (repeatable). The portable CI lanes reach the same partition by
+#                   (repeatable). A name that is not in --list-families exits 2
+#                   listing the valid names, because a silent no-op exclusion
+#                   would run the family it was meant to drop.
+#                   The portable CI lanes reach the same partition by
 #                   construction and never pass this flag; the local no-mistakes
 #                   Test pin in .no-mistakes.yaml is its only caller.
 #                   Emptying a non-empty selection is fatal, so an exclusion can
@@ -236,6 +239,15 @@ zellij
 orca
 unclassified
 EOF
+}
+
+# A misspelled or renamed family silently excludes nothing, which would run the
+# excluded family instead of dropping it. That is a safety boundary for
+# real-herdr-gated, so an unknown name is fatal at parse time rather than a
+# no-op at selection time.
+require_known_family() {  # <name>
+  list_known_families | grep -Fxq -- "$1" && return 0
+  die "unknown --exclude-family '$1'; valid names: $(list_known_families | tr '\n' ' ' | sed 's/ *$//')"
 }
 
 list_known_lanes() {
@@ -1038,10 +1050,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     --exclude-family)
       [ "$#" -gt 1 ] || die "--exclude-family requires a name"
+      require_known_family "$2"
       EXCLUDE_FAMILIES+=("$2")
       shift 2
       ;;
     --exclude-family=*)
+      require_known_family "${1#--exclude-family=}"
       EXCLUDE_FAMILIES+=("${1#--exclude-family=}")
       shift
       ;;

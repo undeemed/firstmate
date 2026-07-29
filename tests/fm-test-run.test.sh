@@ -384,6 +384,28 @@ test_exclude_family_refuses_to_empty_a_real_selection() {
   pass "exclude-family refuses to empty a real selection and leaves the empty case passing"
 }
 
+# The real-herdr-gated exclusion is a safety boundary, not a convenience: a
+# misspelled or renamed family that silently excluded nothing would run the very
+# family the caller meant to drop, so an unknown name must fail at parse time.
+test_exclude_family_rejects_an_unknown_name() {
+  local out rc arg
+  for arg in "--exclude-family real-herdr-gate" "--exclude-family=nope"; do
+    rc=0
+    # shellcheck disable=SC2086
+    out=$("$RUNNER" --list $arg 2>&1) || rc=$?
+    [ "$rc" -eq 2 ] || fail "unknown family via '$arg' must exit 2, got $rc: $out"
+    case "$out" in
+      *"unknown --exclude-family"*) ;;
+      *) fail "unknown family via '$arg' must report the rejected name, got: $out" ;;
+    esac
+    case "$out" in
+      *real-herdr-gated*pure-contract-unit*|*pure-contract-unit*real-herdr-gated*) ;;
+      *) fail "unknown family via '$arg' must list the valid names, got: $out" ;;
+    esac
+  done
+  pass "exclude-family rejects an unknown family name and lists the valid ones"
+}
+
 # --allow-empty-after-exclude opts the .no-mistakes.yaml pin out of that refusal,
 # so a branch whose only mapped change is an excluded script is not a red step.
 # It must still say what happened and name the excluded families, which are the
@@ -772,6 +794,7 @@ test_gate_skip_accounting
 test_fail_on_gate_skip_token
 test_exclude_family
 test_exclude_family_refuses_to_empty_a_real_selection
+test_exclude_family_rejects_an_unknown_name
 test_allow_empty_after_exclude_reports_and_exits_zero
 test_ci_and_docs_call_the_owner
 test_portable_shard_union_and_coverage_guard

@@ -43,11 +43,13 @@ document:
 #     limit on what a green local step proves. A branch touching a
 #     real-Herdr-gated test alongside any other mapped file selects both, the
 #     exclusion drops only the Herdr script, and the step reports green without
-#     ever running the test written for that part of the change. This branch is
-#     exactly that shape: commit 68277c4 edited
-#     tests/fm-backend-herdr-presentation-e2e.test.sh and the local step for this
-#     run skips it. CI's required Herdr lane is the only thing that covers that
-#     family, so a green local step is no evidence about it either way.
+#     ever running the test written for that part of the change. That shape is
+#     reachable here rather than hypothetical: any branch that edits
+#     tests/fm-backend-herdr-presentation-e2e.test.sh alongside another mapped
+#     file is it, and a branch whose only mapped change is a real-Herdr-gated
+#     test is the same limit taken to a total drop. CI's required Herdr lane is
+#     the only thing that covers that family, so a green local step is no
+#     evidence about it either way.
 # The real-herdr-gated exclusion is a SAFETY boundary first, not a speed choice,
 # and that is why it must not be deleted: herdr is installed in this container, so
 # those tests do NOT gate-skip here - they would drive the live herdr server. That
