@@ -160,6 +160,35 @@ fm_composer_strip_ghost() {
   '
 }
 
+# NON-BREAKING SPACE padding (task fm-send-busy-false-negative): claude 2.1.220
+# pads its bare `❯` composer prompt with U+00A0, not a plain space. No POSIX
+# [[:space:]] class matches U+00A0, so a caller's own trim leaves it behind, the
+# residual `❯ ` fails the exact bare-agent-glyph match below, and a CLEAR
+# composer classifies as `pending` - real, unsubmitted text. Every claude
+# composer on that build reads pending, so `fm-send` reports a landed steer as an
+# unsubmitted instruction (bin/backends/herdr.sh's non-idle submit path and
+# bin/fm-tmux-lib.sh's submit core both confirm delivery from this verdict), and
+# the away-mode injector's pre-injection guard defers on an idle pane. Normalize
+# U+00A0 to a plain space and re-trim here, in the one shared owner, so no
+# adapter has to know about it.
+#
+# This is the whole defect. A steer to a BUSY claude pane looks different on
+# screen - claude clears the composer and paints "Press up to edit queued
+# messages" - but that placeholder is dim, fm_composer_strip_ghost already drops
+# it, and what reaches this classifier is the same bare `❯` plus U+00A0. No
+# separate queued-placeholder rule is needed, and matching one would be a
+# screen-scoped signal masking a composer-scoped misread.
+FM_COMPOSER_NBSP=$(printf '\302\240')
+
+# fm_composer_normalize_ws: normalize non-breaking spaces to plain spaces, then
+# trim. Callers may trim before handing content over; they cannot know about
+# U+00A0 padding, so this runs again over their result.
+fm_composer_normalize_ws() {  # <text>
+  local s=${1//"$FM_COMPOSER_NBSP"/ }
+  s="${s#"${s%%[![:space:]]*}"}"
+  printf '%s' "${s%"${s##*[![:space:]]}"}"
+}
+
 # fm_composer_classify_content: the single shared composer-content verdict.
 #   <bordered> 1 when <content> came from a genuine agent-composer container (a
 #              bordered composer box, or a structurally-identified bare AGENT
@@ -183,6 +212,8 @@ fm_composer_idle_matches() {
 fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [plain_content]
   local bordered=$1 content=$2 idle_re=${3:-} idle_case=${4:-sensitive} plain_content
   plain_content=${5:-$content}
+  content=$(fm_composer_normalize_ws "$content")
+  plain_content=$(fm_composer_normalize_ws "$plain_content")
   if [ "$bordered" != 1 ] && [ -z "$content" ] && [ -n "$plain_content" ]; then
     case "$plain_content" in
       '❯'|'›') printf 'empty'; return 0 ;;
