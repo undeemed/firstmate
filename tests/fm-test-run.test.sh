@@ -820,6 +820,50 @@ assert len(doc["scripts"])==3
   pass "aggregate-json merges lane timing artifacts"
 }
 
+# A serial run must scrub the home selectors the parallel worker already scrubs,
+# so a stateful suite can never reach the invoking operator's live fleet home.
+test_serial_run_unsets_home_overrides() {
+  local tmp repo runner out
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-serial-env.XXXXXX")
+  repo="$tmp/repo"
+  runner="$repo/bin/fm-test-run.sh"
+  mkdir -p "$repo/bin" "$repo/tests"
+  cp "$RUNNER" "$runner"
+  cat >"$repo/tests/fm-lint.test.sh" <<'SH'
+#!/usr/bin/env bash
+for v in FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_ROOT_OVERRIDE \
+  FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE FM_BACKEND; do
+  if [ -n "${!v+x}" ]; then
+    printf 'leaked %s=%s\n' "$v" "${!v}"
+  else
+    printf 'clean %s\n' "$v"
+  fi
+done
+exit 0
+SH
+  chmod +x "$repo/tests/fm-lint.test.sh"
+  out=$(
+    FM_HOME="$tmp/live-home" \
+      FM_STATE_OVERRIDE="$tmp/live-home/state" \
+      FM_DATA_OVERRIDE="$tmp/live-home/data" \
+      FM_ROOT_OVERRIDE="$tmp/live-home" \
+      FM_PROJECTS_OVERRIDE="$tmp/live-home/projects" \
+      FM_CONFIG_OVERRIDE="$tmp/live-home/config" \
+      FM_BACKEND=herdr \
+      "$runner" tests/fm-lint.test.sh 2>"$tmp/err"
+  ) || { rm -rf "$tmp"; fail "serial env fixture run failed: $(cat "$tmp/err")"; }
+  if printf '%s\n' "$out" | grep -q '^leaked '; then
+    rm -rf "$tmp"
+    fail "serial child inherited home overrides: $(printf '%s\n' "$out" | grep '^leaked ')"
+  fi
+  [ "$(printf '%s\n' "$out" | grep -c '^clean ')" -eq 7 ] \
+    || { rm -rf "$tmp"; fail "serial child env probe incomplete: $out"; }
+  grep -q 'FM_TEST_SUMMARY total=1 failed=0' <<<"$out" \
+    || { rm -rf "$tmp"; fail "serial env fixture summary wrong: $(grep FM_TEST_SUMMARY <<<"$out")"; }
+  rm -rf "$tmp"
+  pass "serial run unsets FM_HOME and the home override selectors"
+}
+
 test_list_all_exact_suite_coverage
 test_family_selection
 test_single_script_selection
@@ -842,3 +886,4 @@ test_portable_shard_docs_match_lanes
 test_jobs_requires_proven_isolated
 test_jobs_parallel_scheduler_and_failure_propagation
 test_aggregate_json
+test_serial_run_unsets_home_overrides

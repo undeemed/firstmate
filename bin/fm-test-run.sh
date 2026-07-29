@@ -90,6 +90,13 @@
 # under-selecting, and its size follows what the change touches, so a narrow
 # change selects a narrow set while a repository-wide change can legitimately
 # select every script.
+#
+# Every script, serial or parallel, runs with FM_HOME, FM_STATE_OVERRIDE,
+# FM_DATA_OVERRIDE, FM_ROOT_OVERRIDE, FM_PROJECTS_OVERRIDE, FM_CONFIG_OVERRIDE,
+# and FM_BACKEND unset in its child environment, so a stateful watcher, lock,
+# AFK, or daemon suite resolves its home from this repo root instead of the
+# invoking operator's live fleet home. Live-harness opt-ins use their own
+# FM_*_LIVE_E2E variables and are unaffected.
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -1327,7 +1334,13 @@ run_one_serial() {
   set +e
   # Stream live output while retaining a copy for gate-skip detection.
   # PIPESTATUS[0] is the test script; tee's exit is ignored for aggregate.
-  bash "$script" 2>&1 | tee "$out"
+  # Same home-override scrub as the parallel worker: a serial run must never
+  # resolve a stateful suite against the invoking operator's live fleet home.
+  (
+    unset FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_ROOT_OVERRIDE \
+      FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE FM_BACKEND 2>/dev/null || true
+    exec bash "$script" 2>&1
+  ) | tee "$out"
   rc=${PIPESTATUS[0]}
   set -e
   : "${rc:=1}"
