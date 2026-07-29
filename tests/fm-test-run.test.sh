@@ -342,7 +342,7 @@ SH
 
 test_exclude_family() {
   local listed
-  listed=$("$RUNNER" --list --all --exclude-family real-herdr-gated)
+  listed=$("$RUNNER" --list --all --exclude-family real-herdr-gated 2>/dev/null)
   printf '%s\n' "$listed" | grep -Fq 'tests/fm-backend-herdr-smoke.test.sh' \
     && fail "exclude-family real-herdr-gated left a real-herdr script"
   printf '%s\n' "$listed" | grep -Fq 'tests/fm-lint.test.sh' \
@@ -352,6 +352,44 @@ test_exclude_family() {
   printf '%s\n' "$listed" | grep -Fq 'tests/fm-backend-herdr-smoke.test.sh' \
     || fail "family real-herdr-gated must list smoke test"
   pass "exclude-family drops the named primary family after selection"
+}
+
+# --exclude-family validates its argument against list_known_families, while the
+# exclusion itself matches family_for_basename. Nothing else binds those two, so
+# a family renamed in the case statement alone would still pass validation and
+# then silently drop nothing - the rename half of the safety boundary the
+# validation exists for. select_family dies on a name that maps to no script, so
+# walking every advertised family fails the moment the two sets drift.
+test_every_listed_family_maps_to_scripts() {
+  local name rc out
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    rc=0
+    out=$("$RUNNER" --list --family "$name" 2>&1) || rc=$?
+    [ "$rc" -eq 0 ] \
+      || fail "--list-families advertises '$name' but --family $name failed: $out"
+    [ -n "$out" ] || fail "--family $name selected nothing"
+  done < <("$RUNNER" --list-families)
+  pass "every --list-families name selects at least one script"
+}
+
+# A partial drop leaves a green step that never ran the excluded tests. Its only
+# record used to be the optional --json artifact, which the pinned gate command
+# does not request, so every drop must reach stderr - including under --list,
+# where the stdout notice is suppressed.
+test_partial_exclusion_is_reported_on_stderr() {
+  local tmp err listed
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-partial-drop.XXXXXX")
+  err="$tmp/err"
+  listed=$("$RUNNER" --list --all --exclude-family real-herdr-gated 2>"$err")
+  printf '%s\n' "$listed" | grep -Fq 'tests/fm-lint.test.sh' \
+    || { rm -rf "$tmp"; fail "partial exclusion must keep the unexcluded scripts"; }
+  grep -Eq 'excluded [1-9][0-9]* script\(s\) in family real-herdr-gated' "$err" \
+    || { rm -rf "$tmp"; fail "partial drop must report count and family on stderr: $(cat "$err")"; }
+  grep -Fq 'the CI lane covering real-herdr-gated is the real gate' "$err" \
+    || { rm -rf "$tmp"; fail "partial drop must name the covering CI lane: $(cat "$err")"; }
+  rm -rf "$tmp"
+  pass "a partial exclusion drop is reported on stderr with its count and family"
 }
 
 # An exclusion that empties a real selection must fail loudly, while a selection
@@ -793,6 +831,8 @@ test_aggregate_exit_behavior
 test_gate_skip_accounting
 test_fail_on_gate_skip_token
 test_exclude_family
+test_every_listed_family_maps_to_scripts
+test_partial_exclusion_is_reported_on_stderr
 test_exclude_family_refuses_to_empty_a_real_selection
 test_exclude_family_rejects_an_unknown_name
 test_allow_empty_after_exclude_reports_and_exits_zero
