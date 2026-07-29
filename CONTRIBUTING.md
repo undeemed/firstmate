@@ -82,9 +82,9 @@ bin/fm-test-run.sh tests/<subject>.test.sh   # one script (primary local focus p
 bin/fm-test-run.sh --family pure-contract-unit   # ordinary family-scoped local path (serial, timed)
 bin/fm-test-run.sh --changed   # conservative changed-file-informed set (scoped by what changed; always prints its selection)
 bin/fm-test-run.sh --proven-isolated --jobs 4   # explicit local parallel of the proven set only (default is serial)
-bin/fm-test-run.sh --lane portable-serial   # portable serial remainder (watcher/AFK/tmux/stateful)
+bin/fm-test-run.sh --lane portable-serial   # portable serial remainder (watcher/AFK/tmux/stateful; see the live-home caveat below)
 bin/fm-test-run.sh --check-coverage   # prove portable shards + serial + Herdr equal the full inventory
-bin/fm-test-run.sh --all   # deliberate complete regression (optional local full walk; not no-mistakes Test)
+bin/fm-test-run.sh --all   # deliberate complete regression (optional local full walk; not no-mistakes Test; see the live-home caveat below)
 bin/fm-test-isolation-proof.sh --list   # proven parallel candidate set (Phase 2 owner)
 bin/fm-test-isolation-proof.sh --jobs 4 --json /tmp/fm-isolation-proof.json   # re-run concurrent isolation proof only
 [ "$(readlink CLAUDE.md)" = "AGENTS.md" ]
@@ -98,6 +98,9 @@ Its header and `--help` own the flags, family labels, lanes, and changed-file ma
 Portable shard balance evidence lives in `docs/fm-test-portable-shards.md`.
 Local no-mistakes Test stays bounded and must not wire `commands.test` to `--all` or a `tests/*.test.sh` walk; the changed-file selection of the one-owner runner is the required shape (currently `--changed --base origin/main --exclude-family real-herdr-gated --allow-empty-after-exclude`), asserted by `tests/fm-nm-test-contract.test.sh`.
 Family selection is the ordinary local path; `--all` is deliberate full regression only.
+`--all` and `--lane portable-serial` both include the watcher, wake-queue, watcher-lock, daemon, AFK, tmux, and session-bootstrap suites, and the runner unsets `FM_HOME` and the six other home selectors for every child, so those suites resolve their home from the repo root of the checkout you run them in.
+Run them from a disposable checkout or worktree, never from a checkout that is itself a live firstmate home: there `FM_HOME` falls back to `FM_ROOT`, which is that home's own `state/`, `data/`, and `config/`, and a full local walk has already taken a live watcher lock and dropped supervision for in-flight tasks.
+Exporting `FM_STATE_OVERRIDE` is not a workaround, because the runner unsets it too; `bin/fm-test-run.sh`'s header owns this caveat.
 CI owns broad regression across required portable parallel shards, the portable serial lane, the Herdr lane, lint, invariants, the coverage guard, and macOS snapshot compatibility in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 Use `bin/fm-test-run.sh --help` for lane names, `--jobs` rules, and required gate-skip flags when reproducing a lane locally.
 Discover tests by listing `tests/*.test.sh`: each is a self-contained bash script named `<subject>.test.sh`, and its header comment describes what it covers, so pass one to `bin/fm-test-run.sh` to focus on a subject with canonical timing output.
