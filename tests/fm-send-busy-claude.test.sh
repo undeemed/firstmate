@@ -64,17 +64,18 @@ make_pane() {
   LC_ALL=C sed "s/${esc}\\[[0-9;]*m//g" "$dir/pane.ansi" > "$dir/pane.plain"
 }
 
-# make_case <name> <footer|""> -> echoes the case dir.
-# The fake tmux clears the composer to the queued-affordance row on Enter,
-# unless <dir>/.swallow exists, in which case Enter is dropped entirely.
+# make_case <name> <footer|""> <cleared-row> -> echoes the case dir.
+# The fake tmux clears the composer to <cleared-row> on Enter - the row the
+# verdict is then computed from - unless <dir>/.swallow exists, in which case
+# Enter is dropped entirely.
 make_case() {
-  local name=$1 footer=$2 dir fb
+  local name=$1 footer=$2 cleared=$3 dir fb
   dir="$TMP_ROOT/$name-$RANDOM"
   fb="$dir/fakebin"
   mkdir -p "$fb" "$dir/state"
   printf 'window=sess:win\nharness=claude\nkind=ship\nbackend=tmux\n' > "$dir/state/steer.meta"
   printf '%s\n' "$footer" > "$dir/.footer"
-  printf '%s\n' "$CLAUDE_ROW_QUEUED" > "$dir/.cleared"
+  printf '%s\n' "$cleared" > "$dir/.cleared"
   cat > "$fb/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -153,7 +154,7 @@ run_send() {  # <dir> <stderr-file> -> exit status of fm-send
 
 test_queued_affordance_steer_exits_zero() {
   local dir err
-  dir=$(make_case thinking-queued "$CLAUDE_THINKING_FOOTER")
+  dir=$(make_case thinking-queued "$CLAUDE_THINKING_FOOTER" "$CLAUDE_ROW_QUEUED")
   err="$dir/send.err"
   run_send "$dir" "$err" \
     || fail "fm-send reported a cleared claude composer as an unsubmitted steer: $(cat "$err")"
@@ -168,10 +169,16 @@ test_queued_affordance_steer_exits_zero() {
 
 test_idle_claude_steer_exits_zero() {
   local dir err
-  dir=$(make_case idle-clear "")
+  # Clears to the bare captured composer row, no queued affordance: this is the
+  # exact row the live pre/post proof was taken on (pre-fix pending, post-fix
+  # empty), so the NBSP pad is what the verdict turns on here.
+  dir=$(make_case idle-clear "" "$CLAUDE_ROW_CLEAR")
   err="$dir/send.err"
   run_send "$dir" "$err" \
     || fail "fm-send failed on an idle claude pane: $(cat "$err")"
+  if grep -qF 'Press up to edit queued messages' "$dir/pane.plain"; then
+    fail "test setup: the idle case must end on the bare composer row, not the queued affordance"
+  fi
   pass "fm-send: a steer to an idle claude pane still exits 0"
 }
 
@@ -179,7 +186,8 @@ test_idle_claude_steer_exits_zero() {
 
 test_genuine_swallow_still_exits_nonzero() {
   local dir err
-  dir=$(make_case genuine-swallow "")
+  # The cleared row is never reached below: .swallow drops every Enter.
+  dir=$(make_case genuine-swallow "" "$CLAUDE_ROW_CLEAR")
   err="$dir/send.err"
   # Text typed, every Enter dropped: the instruction is sitting unsubmitted in
   # the composer. This MUST stay loud - it is the whole point of the check.
@@ -195,7 +203,7 @@ test_genuine_swallow_still_exits_nonzero() {
 
 test_swallow_is_not_masked_by_the_queued_affordance() {
   local dir err
-  dir=$(make_case affordance-swallow "")
+  dir=$(make_case affordance-swallow "" "$CLAUDE_ROW_CLEAR")
   err="$dir/send.err"
   # Delivery is judged from the COMPOSER, never from the screen. Reading the
   # "Press up to edit queued messages" placeholder as a success signal anywhere
