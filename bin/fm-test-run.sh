@@ -28,7 +28,9 @@
 #   --list          print selected script paths (one per line) and exit 0.
 #                   Exclusions apply before listing, so an --exclude-family that
 #                   empties a non-empty selection still refuses with exit 2 unless
-#                   --allow-empty-after-exclude is set.
+#                   --allow-empty-after-exclude is set, whose stdout notice is
+#                   suppressed here so this stdout stays script paths only. The
+#                   stderr exclusion report is not suppressed.
 #   --base <ref>    with --changed, compare against this ref (default: origin/main)
 #   --exclude-family <name>
 #                   drop scripts whose primary family matches <name> after selection
@@ -41,12 +43,17 @@
 #                   Emptying a non-empty selection is fatal, so an exclusion can
 #                   never turn a real selection into a green run of nothing; a
 #                   selection that was already empty still exits 0.
+#                   Any drop, partial or total, is reported on stderr with the
+#                   count and the excluded families, so a green step never hides
+#                   the tests it did not run.
 #   --allow-empty-after-exclude
 #                   opt out of that refusal: when an exclusion removes every
 #                   selected script, print to stdout which excluded families
 #                   emptied a non-empty selection and that the CI lane covering
 #                   those families is the real gate, then exit 0 instead of
-#                   failing. For the .no-mistakes.yaml Test pin
+#                   failing. That stdout notice is suppressed under --list, whose
+#                   stdout contract is script paths only; the stderr report above
+#                   still fires. For the .no-mistakes.yaml Test pin
 #                   only, where a branch whose sole mapped change is an excluded
 #                   script would otherwise turn a legitimate change red with no
 #                   escape but editing the pin.
@@ -840,7 +847,7 @@ detect_gate_skip_token() {
 }
 
 apply_exclude_families() {
-  local s fam keep ex before names
+  local s fam keep ex before names removed
   local -a kept=()
   [ "${#EXCLUDE_FAMILIES[@]}" -gt 0 ] || return 0
   before=${#SCRIPTS[@]}
@@ -856,6 +863,17 @@ apply_exclude_families() {
     [ "$keep" -eq 1 ] && kept+=("$s")
   done
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
+  names=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")
+  removed=$(( before - ${#SCRIPTS[@]} ))
+  # A partial drop is otherwise invisible where the operator reads the run: the
+  # exclusion is recorded only in the optional --json artifact, so a branch that
+  # edits an excluded test alongside another mapped file reports green without
+  # any sign that the test written for that part of the change never ran. Report
+  # every drop on stderr, including under --list and in the emptied case below,
+  # whose stdout notice repeats the same families for the step log.
+  if [ "$removed" -gt 0 ]; then
+    log "excluded $removed script(s) in family $names; the CI lane covering $names is the real gate"
+  fi
   # An exclusion that empties a real selection is a gate that ran nothing, not a
   # change with no tests. Name the applied families so the operator can tell the
   # two apart; the same convention as the empty-lane refusal above. This refusal
@@ -863,7 +881,6 @@ apply_exclude_families() {
   # out with --allow-empty-after-exclude, because for it the same shape is a
   # legitimate branch whose only mapped change is an excluded script.
   if [ "$before" -gt 0 ] && [ "${#SCRIPTS[@]}" -eq 0 ]; then
-    names=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")
     if [ "$ALLOW_EMPTY_AFTER_EXCLUDE" -eq 1 ]; then
       # stdout, and before the empty-run summary, so the operator reading the
       # step's output cannot mistake this for a change with no tests. Suppressed
