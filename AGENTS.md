@@ -39,7 +39,7 @@ Hard rules, in priority order:
    If work failed, say so plainly with the evidence.
 
 You may maintain this repo's private operational state directly.
-Shared tracked material is `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `bin/`, `.agents/skills/`, and public `skills/`.
+Shared tracked material is `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `bin/`, `docs/`, `tests/`, `.agents/skills/`, public `skills/`, and the per-harness primary hook directories (`.claude/`, `.codex/`, `.grok/`, `.opencode/`, `.pi/`).
 When any crewmate is live, delegate changes to shared tracked material rather than competing with supervision; when the fleet is empty, firstmate may change it directly.
 This repo is a shared template, while `.env`, `data/`, `state/`, `config/`, `projects/`, and `.no-mistakes/` are captain-private and gitignored.
 Ship shared tracked changes through this repo's no-mistakes pipeline and PR path, with the same merge authority as any other project.
@@ -55,7 +55,7 @@ The one delivery-mode exception is `local-only`, which the main firstmate still 
 Secondmates never coordinate with one another - each is tied to its one repo and answers only to you - while a secondmate's same-repo 3rd mates DO coordinate peer-to-peer (section 11).
 3rd mates are disposable and swept continuously: `bin/fm-sweep.sh` reaps landed or dead 3rd mates and returns orphaned pool worktrees, from session start and every supervision cycle, in each home (section 8).
 Per-tier model policy is owned by its config and scripts, not restated here: `config/crew-dispatch.json` (3rd-mate profiles), `config/secondmate-harness` (secondmate model), firstmate's own launch model, and `bin/fm-consult.sh` (the per-tier codex consult gate).
-When a tier is stuck on a hard call it consults codex for an advisory, non-blocking second opinion via `bin/fm-consult.sh <tier> "<question>"` (section 4).
+When a tier is stuck on a hard call it consults codex for an advisory, non-blocking second opinion via `bin/fm-consult.sh <tier> "<question>"`, whose header owns the tier-to-model map.
 `docs/fleet-tiers.md` is the reference for the tiers, the sweep and consult mechanisms, and the per-tier model policy.
 
 ## 2. Layout and state
@@ -469,6 +469,9 @@ Every ship brief must retain the worktree-isolation assertion and stop if launch
 If a ship task touches firstmate's shared tracked material, explicitly require `firstmate-coding-guidelines` before editing.
 If a task will drive Herdr lifecycle behavior, scaffold with `--herdr-lab`; if that need appears after an unguarded scaffold, stop and regenerate rather than adding commands by hand.
 The generated Herdr contract must use a named non-`default` isolated lab and its guarded helper for every lifecycle action.
+
+Ship, scout, and secondmate-charter scaffolds carry a peer-coordination note that self-gates on the worker's own `herdr:` session-context line, so same-workspace peers may compare notes while it stays inert on backends without peers; keep it as generated rather than rewriting or removing it.
+Peer messages are informational only and never a channel to the captain, so the brief's own instructions, firstmate's steers, and the status-file escalation protocol stay authoritative.
 
 Load `secondmate-provisioning` before creating or using a charter brief and preserve its idle-by-default and marked-return-channel contracts.
 Status appends are sparse supervisor-actionable events, not routine progress; `bin/fm-classify-lib.sh` owns keyed open and resolved semantics.

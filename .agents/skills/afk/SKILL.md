@@ -43,11 +43,11 @@ batched digest rather than per-wake injections.
      active pane** (`herdr pane split`): a split co-tenants the tab and visibly
      shrinks the captain's pane (docs/herdr-backend.md "Away-mode supervisor
      support").
-   Both paths share `bin/fm-afk-start.sh` as the daemon entry.
-   The native path tells it that the launcher already prepared lifecycle state; the terminal-backed path lets the entry perform its existing state setup inside the new terminal.
-   It exits immediately if the identity-backed daemon lock already names a live process, otherwise it execs `bin/fm-supervise-daemon.sh` in the foreground.
-   The daemon is **presence-gated**: it injects escalations only while
-   `state/.afk` exists, and stays quiet otherwise.
+     Both paths share `bin/fm-afk-start.sh` as the daemon entry.
+     The native path tells it that the launcher already prepared lifecycle state; the terminal-backed path lets the entry perform its existing state setup inside the new terminal.
+     It exits immediately if the identity-backed daemon lock already names a live process, otherwise it execs `bin/fm-supervise-daemon.sh` in the foreground.
+     The daemon is **presence-gated**: it injects escalations only while
+     `state/.afk` exists, and stays quiet otherwise.
 
 3. **Do not separately arm `fm-watch.sh`.** The daemon manages the watcher as
    its child; the singleton lock no-ops a stray arm harmlessly.
@@ -93,6 +93,8 @@ injection, dispatched through `bin/fm-backend.sh` for the supervisor's own
 backend (tmux or herdr; see "Auto-discovered supervisor pane" below):
 
 - **`pane_is_busy`** - the harness shows a busy footer (agent mid-turn) on tmux (shared with `fm-send.sh` via `bin/fm-tmux-lib.sh`); on herdr, tries the native `agent.get`-backed busy state first, trusts only `busy` outright, and corroborates every non-`busy` verdict with the same regex-over-capture reader.
+  The supervisor pane has no recorded task harness, so it falls back to the generic combined busy default in `bin/fm-tmux-lib.sh`, which deliberately excludes kimi's moon-plus-middot signature so stray glyphs cannot mark another harness busy.
+  On a kimi primary a mid-turn pane therefore reads not-busy and the composer-state guard below is the only remaining protection against a mid-turn injection; that is an accepted limit until an observed kimi pane yields a busy signature worth adding, not a knob to guess at.
 - **Composer-state guard** - `inject_msg` reads the full `empty`/`pending`/`unknown` verdict from `fm_backend_composer_state` and injects only when it is affirmatively `empty`.
   `pending` means real unsubmitted text, while `unknown` includes an unreadable pane and a bare shell prompt left after the agent exits, so both defer.
   The shared `bin/fm-composer-lib.sh` owns the content decision after each backend captures and structurally identifies its own composer row.
