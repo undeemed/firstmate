@@ -94,9 +94,14 @@
 # Every script, serial or parallel, runs with FM_HOME, FM_STATE_OVERRIDE,
 # FM_DATA_OVERRIDE, FM_ROOT_OVERRIDE, FM_PROJECTS_OVERRIDE, FM_CONFIG_OVERRIDE,
 # and FM_BACKEND unset in its child environment, so a stateful watcher, lock,
-# AFK, or daemon suite resolves its home from this repo root instead of the
-# invoking operator's live fleet home. Live-harness opt-ins use their own
-# FM_*_LIVE_E2E variables and are unaffected.
+# AFK, or daemon suite resolves its home from the repo root of the checkout under
+# test instead of a home inherited through the environment. That scrub does NOT
+# protect a run started from a checkout that is itself a live firstmate home:
+# with FM_HOME unset, home falls back to FM_ROOT, which is that live checkout's
+# own state/, data/, and config/. Live-harness opt-ins gate on their own
+# variables - FM_CODEX_LIVE_E2E, FM_GROK_LIVE_E2E, FM_OPENCODE_LIVE_E2E,
+# FM_PI_LIVE_E2E, FM_AFK_PI_HERDR_E2E, and FM_SEND_MARKER_HERDR_E2E - none of
+# which this scrub touches.
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
