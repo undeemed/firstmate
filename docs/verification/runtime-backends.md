@@ -78,11 +78,16 @@ Tmux needs the exact `pi-launcher`, `pi-signed`, `pi`, and `Pi` process identiti
 Herdr uses native registered-agent state and needs no process-name branch.
 Zellij has no verified recovery-grade agent process probe, while Orca and cmux do not support secondmate spawns, so those three retain their existing generic ordinary-launch semantics without a new liveness matcher.
 
-The structural multi-row composer reader, Kimi pointer-delivery path, and OpenCode 1.18.4 busy-queue behavior are pinned by:
+Claude Code 2.1.220 pads its bare `❯` composer prompt with U+00A0 instead of a plain space, verified on 2026-07-29 against a live claude pane.
+No POSIX `[[:space:]]` class matches that codepoint, so the same clear composer row read at the same instant classified as `pending` without the shared classifier's non-breaking-space normalization and `empty` with it, on an idle pane with nothing typed.
+Normalization covers that one codepoint only, so a composer still holding text remains `pending` and a genuinely swallowed Enter still fails.
+
+The structural multi-row composer reader, Kimi pointer-delivery path, OpenCode 1.18.4 busy-queue behavior, and claude's non-breaking-space composer padding are pinned by:
 
 ```sh
 tests/fm-composer-ghost.test.sh
 tests/fm-kimi-harness.test.sh
+tests/fm-send-busy-claude.test.sh
 tests/fm-tmux-submit-busy.test.sh
 ```
 
@@ -112,15 +117,15 @@ herdr 0.7.5
 
 The CLI matrix was checked directly:
 
-| Guarantee | Command shape | Result |
-| --- | --- | --- |
-| Explicit session routing | `herdr <verb> ... --session <name>` | Reached the named session even while another server was running. |
-| Literal send | `herdr pane send-text <pane> <text> --session <name>` | Left text unsubmitted until Enter. |
-| Keys | `herdr pane send-keys <pane> enter|escape|ctrl+c --session <name>` | Enter and Escape worked; Ctrl-C interrupted foreground work. |
-| Capture | `herdr pane read <pane> --source recent --lines N` | Small N could return empty below viewport height; a 200-line request plus local trim was stable. |
-| Native state | `herdr agent get <pane>` | Working and done transitions were visible; long foreground tool waits required rendered-busy corroboration. |
-| Restart | guarded named-session stop then start | Workspace, tab, pane, and labels persisted; the agent process and registration did not. |
-| Close | `herdr pane close <pane> --session <name>` | The exact one-pane task tab closed; closing a final tab could remove the workspace. |
+| Guarantee                | Command shape                                         | Result                                                                                                      |
+| ------------------------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Explicit session routing | `herdr <verb> ... --session <name>`                   | Reached the named session even while another server was running.                                            |
+| Literal send             | `herdr pane send-text <pane> <text> --session <name>` | Left text unsubmitted until Enter.                                                                          |
+| Keys                     | `herdr pane send-keys <pane> enter                    | escape                                                                                                      | ctrl+c --session <name>` | Enter and Escape worked; Ctrl-C interrupted foreground work. |
+| Capture                  | `herdr pane read <pane> --source recent --lines N`    | Small N could return empty below viewport height; a 200-line request plus local trim was stable.            |
+| Native state             | `herdr agent get <pane>`                              | Working and done transitions were visible; long foreground tool waits required rendered-busy corroboration. |
+| Restart                  | guarded named-session stop then start                 | Workspace, tab, pane, and labels persisted; the agent process and registration did not.                     |
+| Close                    | `herdr pane close <pane> --session <name>`            | The exact one-pane task tab closed; closing a final tab could remove the workspace.                         |
 
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
@@ -256,17 +261,17 @@ The dedicated Herdr daemon workspace topology is covered by `tests/fm-afk-launch
 The current compatibility floor and latest verification are Zellij 0.44.0 with `jq` on macOS aarch64.
 All real tests use a uniquely named session and `tests/zellij-test-safety.sh`; they never touch a session named `firstmate` or call all-session deletion.
 
-| Guarantee | Command shape | Result |
-| --- | --- | --- |
-| Headless session | `zellij attach -b <name>` without a TTY | Created a persistent background session and returned. |
-| Session list | `zellij list-sessions --short --no-formatting` | Returned one plain name per line without starting a session. |
-| Create tab | `zellij action new-tab --cwd <dir> --name <title>` | Returned a numeric tab id and focused the new tab when a client was attached. |
-| Pane discovery | `zellij action list-panes --json` | Included terminal pane id, tab id, plugin flag, and top-level `pane_cwd`. |
-| Literal send | `zellij action paste --pane-id <id> -- <text>` | Left text unsubmitted. |
-| Keys | `send-keys --pane-id <id> Enter`, `Esc`, and one argument `Ctrl c` | All three shared operations worked. |
-| Capture | `dump-screen --pane-id <id>` or `--full` | Worked with no attached client; no line-bound flag exists. |
-| Close | `close-tab-by-id <id>` | Removed the live task pane and tab together. |
-| Failure exit | actions against missing targets | Returned exit 0, requiring structural preflight and output-shape validation. |
+| Guarantee        | Command shape                                                      | Result                                                                        |
+| ---------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Headless session | `zellij attach -b <name>` without a TTY                            | Created a persistent background session and returned.                         |
+| Session list     | `zellij list-sessions --short --no-formatting`                     | Returned one plain name per line without starting a session.                  |
+| Create tab       | `zellij action new-tab --cwd <dir> --name <title>`                 | Returned a numeric tab id and focused the new tab when a client was attached. |
+| Pane discovery   | `zellij action list-panes --json`                                  | Included terminal pane id, tab id, plugin flag, and top-level `pane_cwd`.     |
+| Literal send     | `zellij action paste --pane-id <id> -- <text>`                     | Left text unsubmitted.                                                        |
+| Keys             | `send-keys --pane-id <id> Enter`, `Esc`, and one argument `Ctrl c` | All three shared operations worked.                                           |
+| Capture          | `dump-screen --pane-id <id>` or `--full`                           | Worked with no attached client; no line-bound flag exists.                    |
+| Close            | `close-tab-by-id <id>`                                             | Removed the live task pane and tab together.                                  |
+| Failure exit     | actions against missing targets                                    | Returned exit 0, requiring structural preflight and output-shape validation.  |
 
 `pane_cwd` stayed frozen when a foreground subshell changed directory.
 The marker-delimited `pwd` probe returned the live nested cwd and is covered by the real smoke.
@@ -336,16 +341,16 @@ The app configuration writer did not retain a hand-added socket password, which 
 
 Current active CLI findings:
 
-| Guarantee | Command shape | Result |
-| --- | --- | --- |
-| Create | `new-workspace --name <title> --cwd <dir> --focus false --id-format uuids` | Created one workspace with one surface without focusing it. |
-| Fresh readiness | `list-panes --workspace <id> --json --id-format uuids` | Found a brand-new surface before content existed. |
-| Fresh read counterexample | `read-screen` before any write | Returned `internal_error: Failed to read terminal text`. |
-| Literal send | `send --workspace <id> --surface <id> -- <text>` | Left text unsubmitted. |
-| Keys | `send-key ... enter|escape|ctrl-c` | All shared key operations worked. |
-| Nested cwd | `current_directory` plus foreground subshell | Structured cwd froze; the marker-delimited `pwd` probe found the live cwd. |
-| Last surface | `close-surface` on the only surface | Refused with `invalid_state: Cannot close the last surface`. |
-| Last workspace | `close-workspace` on the only workspace in a window | Printed success but left the workspace present. |
+| Guarantee                 | Command shape                                                              | Result                                                                     |
+| ------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Create                    | `new-workspace --name <title> --cwd <dir> --focus false --id-format uuids` | Created one workspace with one surface without focusing it.                |
+| Fresh readiness           | `list-panes --workspace <id> --json --id-format uuids`                     | Found a brand-new surface before content existed.                          |
+| Fresh read counterexample | `read-screen` before any write                                             | Returned `internal_error: Failed to read terminal text`.                   |
+| Literal send              | `send --workspace <id> --surface <id> -- <text>`                           | Left text unsubmitted.                                                     |
+| Keys                      | `send-key ... enter                                                        | escape                                                                     | ctrl-c` | All shared key operations worked. |
+| Nested cwd                | `current_directory` plus foreground subshell                               | Structured cwd froze; the marker-delimited `pwd` probe found the live cwd. |
+| Last surface              | `close-surface` on the only surface                                        | Refused with `invalid_state: Cannot close the last surface`.               |
+| Last workspace            | `close-workspace` on the only workspace in a window                        | Printed success but left the workspace present.                            |
 
 The last-workspace workaround was reverified on 2026-07-10 in Automation mode.
 After creating one unfocused unnamed sibling in the same window, `close-workspace` removed the exact task workspace and left only cmux's default sibling.
