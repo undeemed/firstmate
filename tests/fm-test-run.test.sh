@@ -820,8 +820,11 @@ assert len(doc["scripts"])==3
   pass "aggregate-json merges lane timing artifacts"
 }
 
-# A serial run must scrub the home selectors the parallel worker already scrubs,
-# so a stateful suite can never reach the invoking operator's live fleet home.
+# A serial run must scrub the home selectors the parallel worker already scrubs:
+# all seven are absent from the child environment, so a stateful suite can never
+# reach a home inherited through the environment. That is the whole claim; a run
+# started from a checkout that is itself a live home still resolves through
+# FM_ROOT, which this scrub does not and cannot change.
 test_serial_run_unsets_home_overrides() {
   local tmp repo runner out
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-serial-env.XXXXXX")
