@@ -63,6 +63,7 @@ Real text on any content row is pending, while only an unambiguous box with ever
 Unreadable, incomplete, or structurally ambiguous boxes fail closed, and panes without a bordered composer retain the compatible cursor-row classification.
 The shared classifier accepts a shell glyph as an empty agent composer only inside a verified bordered composer.
 A bare shell prompt is `unknown`, so away-mode escalation is never injected into a dead shell.
+Claude 2.1.220 pads its bare `❯` composer prompt with U+00A0, which no POSIX `[[:space:]]` class trims, so the shared classifier normalizes that one codepoint to a plain space before judging a row and a clear claude composer reads `empty` instead of `pending`.
 
 Rendered busy detection is also harness-scoped.
 Task metadata selects only that harness's verified signature, so output from one harness cannot make another harness appear busy.
