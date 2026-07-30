@@ -1,12 +1,108 @@
 # Per-repo no-mistakes overrides.
 
-# Run the firstmate bash behavior suite deterministically as the test-step
-# baseline, instead of delegating to an agent (an agent-driven test step has
-# crashed the daemon). Mirrors .github/workflows/ci.yml: iterate every
-# tests/*.test.sh, run each, and fail the step if any one exits non-zero. The
-# e2e tests need tmux on PATH, which the firstmate environment provides.
+# firstmate is an agent-orchestration repo: its AGENTS.md installs a fleet-captain
+# identity. Disable project-level agent settings/instructions for gate agents so a
+# no-mistakes review/fix/document/test/lint/pr/rebase/ci agent never adopts that
+# identity or drives the fleet. Trusted-only: a pushed branch cannot turn this off,
+# so it is honored only from the default-branch copy of this file. Layered above
+# the NO_MISTAKES_GATE lifecycle refusal (bin/fm-gate-refuse-lib.sh) and the
+# HEAD-continuity guard; see docs/architecture.md "No-mistakes gate authority boundary."
+disable_project_settings: true
+
+# Trusted documentation placement policy for the Document step.
+# The audience inventory and coding guideline own the detail; keep this as a
+# pointer so gate instructions cannot become a second prose policy.
+document:
+  instructions: |
+    Read docs/documentation-audiences.md and its machine-consumed
+    docs/documentation-audiences.json inventory before changing documentation.
+    Apply the knowledge-placement policy in
+    .agents/skills/firstmate-coding-guidelines/SKILL.md.
+    For changed prose, verify audience, authoritative owner, current relevance,
+    evidence destination, and unique safety facts, then review the complete
+    branch diff again after every documentation or lint fix.
+
+# Pin lint to the same owner CI runs instead of leaving it to no-mistakes'
+# default handling, which does not invoke the repository's canonical lint gate.
+# `bin/fm-lint.sh` owns the complete lint definition and
+# `.github/workflows/ci.yml` invokes it directly, with parity asserted by
+# `tests/fm-lint.test.sh`.
+#
+# Pin test to a deterministic, non-agent command, and bound how much of the suite
+# the local step runs. Two contracts meet here and both are kept:
+#   - WHO runs the step: never an agent. An agent-driven Test step has crashed
+#     the daemon, so this repository pins a concrete command instead of leaving
+#     Test to default agent-driven handling.
+#   - HOW MUCH it runs: the changed-file map minus the real-Herdr-gated family.
+#     `--changed` puts every suite the branch edits into the selection BY
+#     CONSTRUCTION, so selection itself never misses the tests written for the
+#     change. Bounding by lane instead bounds membership rather than relevance,
+#     which is how an earlier `--lane portable-serial` pin excluded exactly the
+#     suites its own branch edited; `--changed` cannot repeat that on any branch.
+#     The exclusion below then removes part of that selection, and that is a real
+#     limit on what a green local step proves. A branch touching a
+#     real-Herdr-gated test alongside any other mapped file selects both, the
+#     exclusion drops only the Herdr script, and the step reports green without
+#     ever running the test written for that part of the change. That shape is
+#     reachable here rather than hypothetical: any branch that edits
+#     tests/fm-backend-herdr-presentation-e2e.test.sh alongside another mapped
+#     file is it, and a branch whose only mapped change is a real-Herdr-gated
+#     test is the same limit taken to a total drop. CI's required Herdr lane is
+#     the only thing that covers that family, so a green local step is no
+#     evidence about it either way.
+# The real-herdr-gated exclusion is a SAFETY boundary first, not a speed choice,
+# and that is why it must not be deleted: herdr is installed in this container, so
+# those tests do NOT gate-skip here - they would drive the live herdr server. That
+# is live-home bleed, which already killed supervision on this box during this
+# branch's own validation, when a full-suite run took this home's live watcher lock
+# and dropped supervision for nine in-flight tasks. CI's dedicated required Herdr
+# lane owns that family's coverage, so excluding it here leaves nothing ungated;
+# the portable CI lanes reach the same partition by construction and never pass
+# --exclude-family, so this pin is that flag's only caller (`bin/fm-test-run.sh`
+# header).
+# By default the runner refuses a total wipe: `--exclude-family` fails when it
+# removes EVERY selected script. That refusal is right for a hand-run selection
+# and wrong for this pin, because a branch whose only mapped change IS a
+# real-Herdr-gated test is a legitimate change, not a gate that ran nothing, and
+# its only escape from a red step would be editing this tracked pin. So the pin
+# adds --allow-empty-after-exclude: that exact case prints to stdout which family
+# emptied a non-empty selection and that the CI lane covering that family is the
+# real gate, then exits 0. A partial drop, the case described above, is reported
+# on stderr with the count and the excluded family, but is still not refused.
+# `--changed` is not narrow by nature: its set is whatever the change maps to, so
+# a repository-wide branch legitimately expands broadly. Measured on this branch,
+# `--list --changed --base origin/main` selects 102 scripts and 92 remain after
+# the exclusion. That expansion is honest selection, not a bug, and the fix for
+# the bleed was never a narrower selection, which would only hide the exposure:
+# `bin/fm-test-run.sh` now unsets exactly FM_HOME, FM_STATE_OVERRIDE,
+# FM_DATA_OVERRIDE, FM_ROOT_OVERRIDE, FM_PROJECTS_OVERRIDE, FM_CONFIG_OVERRIDE,
+# and FM_BACKEND in every child environment, serial and parallel alike, so the
+# watcher, wake-queue, watcher-lock, daemon, AFK, tmux, and session-bootstrap
+# suites resolve their home from the repo root of the checkout under test rather
+# than from a home inherited through the environment. For this pin that checkout
+# is the gate's own disposable worktree, which is the path that matters here.
+# That scrub does NOT protect a suite run directly from a checkout that is itself
+# a live firstmate home: with FM_HOME unset, home falls back to FM_ROOT, which is
+# that live checkout's own state/, data/, and config/. Only running the suites
+# from a checkout that is not a live home closes the remaining half.
+# `--jobs` does not apply to this pin, and not because the flags are structurally
+# incompatible: `--jobs` is not a selection mode and `--changed --jobs N` parses
+# fine. The runner refuses N>1 as soon as any selected script falls outside the
+# proven-isolated set, and a changed-file selection this wide always includes
+# stateful scripts.
+# CI owns complete regression through the portable-parallel-1,
+# portable-parallel-2, and portable-serial lanes plus the required Herdr lane,
+# with `bin/fm-test-run.sh --check-coverage` proving that partition is complete.
+# `bin/fm-test-run.sh` remains the one owner of selection composition, so the pin
+# cannot rot the way a hand-picked script list would, and the step exits non-zero
+# when any selected script fails.
+# Do not drop either half: replacing this with an absent commands.test restores
+# the agent-driven crash risk, and hardcoding a complete-suite walk or --all puts
+# the local step back on a fixed full run CI already owns. Use `--all` by hand for
+# deliberate full local regression instead.
 commands:
-  test: 'command -v tmux >/dev/null || { echo "tmux is required for e2e tests" >&2; exit 1; }; tmux -V; rc=0; for t in tests/*.test.sh; do echo "== $t =="; bash "$t" || rc=1; done; exit "$rc"'
+  lint: 'bin/fm-lint.sh'
+  test: 'bin/fm-test-run.sh --changed --base origin/main --exclude-family real-herdr-gated --allow-empty-after-exclude'
 
 # Keep test evidence out of this repo; it stays in a temp dir instead.
 test:
