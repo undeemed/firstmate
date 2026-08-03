@@ -411,18 +411,23 @@ test_orphan_pass_scopes_prune_per_pool() {
 }
 
 test_orphan_pass_skips_self_origin_clone() {
-  local case_dir log self out
+  local case_dir log self out clone
   case_dir=$(make_case orphan-self-origin)
   # Stand in for this firstmate checkout, so the case is hermetic.
   self="$case_dir/selfrepo"
   git init -q "$self"
   git -C "$self" remote add origin https://example.invalid/undeemed/firstmate.git
 
-  # Same repository as $self, spelled scp-style and without the .git suffix:
-  # `treehouse prune` here would target the pool holding the primary and every
-  # secondmate home, so it must be skipped.
-  git init -q "$case_dir/home/projects/firstmate"
-  git -C "$case_dir/home/projects/firstmate" remote add origin git@example.invalid:undeemed/firstmate
+  # Every ordinary spelling of that SAME repository must be skipped: `treehouse
+  # prune` in any of them would target the pool holding the primary and every
+  # secondmate home. The ported ssh:// form is what anyone behind a firewall
+  # has (GitHub's own fallback is ssh://git@ssh.github.com:443/owner/repo).
+  for clone in scp:git@example.invalid:undeemed/firstmate \
+    ported:ssh://git@example.invalid:2222/undeemed/firstmate \
+    https:https://example.invalid/undeemed/firstmate.git; do
+    git init -q "$case_dir/home/projects/self-${clone%%:*}"
+    git -C "$case_dir/home/projects/self-${clone%%:*}" remote add origin "${clone#*:}"
+  done
   # A different repository on the same host must still be pruned.
   git init -q "$case_dir/home/projects/other"
   git -C "$case_dir/home/projects/other" remote add origin https://example.invalid/undeemed/other.git
@@ -434,9 +439,11 @@ test_orphan_pass_skips_self_origin_clone() {
 
   assert_grep "cwd=$case_dir/home/projects/other" "$log" \
     "self-origin: a different-origin clone must still be pruned"
-  assert_no_grep "cwd=$case_dir/home/projects/firstmate" "$log" \
-    "self-origin: must never prune the pool backing this firstmate checkout"
-  pass "a clone of this firstmate checkout's own repo is skipped; other pools still pruned"
+  for clone in scp ported https; do
+    assert_no_grep "cwd=$case_dir/home/projects/self-$clone" "$log" \
+      "self-origin ($clone spelling): must never prune the pool backing this firstmate checkout"
+  done
+  pass "every spelling (scp, ported ssh, https) of this firstmate checkout's own repo is skipped; other pools still pruned"
 }
 
 test_orphan_idle_output_stays_quiet() {
