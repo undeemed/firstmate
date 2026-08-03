@@ -149,29 +149,15 @@ test_brief_assertion_precedes_branch() {
 
 # --- GUARD 1b: fm-spawn isolation abort -------------------------------------
 
-# A fake tmux that reports FM_FAKE_PANE_PATH as the post-`treehouse get` pane cwd
-# (so the spawn's worktree-resolution loop resolves to a path we control), names
-# the session on '#S', and swallows window ops. When FM_FAKE_PANE_PATH_FIRST is
-# set, the very first pane-path read returns it instead (a transient
-# mid-acquire cwd), using FM_FAKE_PANE_COUNT_FILE to count reads. Echoes the
-# fakebin dir.
+# A fake tmux that names the session on '#S' and swallows window ops, paired
+# with the shared fake treehouse whose `get --lease` hands back FM_FAKE_WORKTREE
+# - the leased path the spawn then validates. Echoes the fakebin dir.
 make_spawn_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
-case "$*" in
-  *"#{pane_current_path}"*)
-    if [ -n "${FM_FAKE_PANE_PATH_FIRST:-}" ] && [ -n "${FM_FAKE_PANE_COUNT_FILE:-}" ]; then
-      n=0
-      [ -f "$FM_FAKE_PANE_COUNT_FILE" ] && n=$(cat "$FM_FAKE_PANE_COUNT_FILE")
-      n=$((n + 1))
-      printf '%s\n' "$n" > "$FM_FAKE_PANE_COUNT_FILE"
-      if [ "$n" -le 1 ]; then printf '%s\n' "$FM_FAKE_PANE_PATH_FIRST"; exit 0; fi
-    fi
-    printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
@@ -180,19 +166,18 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse
+  fm_fake_treehouse_lease "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
 run_spawn() {
-  local home=$1 id=$2 proj=$3 pane=$4 fakebin=$5
+  local home=$1 id=$2 proj=$3 wt=$4 fakebin=$5
   mkdir -p "$home/data/$id"
   printf 'brief\n' > "$home/data/$id/brief.md"
   FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" TMUX="fake,1,0" \
-    FM_SPAWN_WT_WAIT_SECS="${FM_SPAWN_WT_WAIT_SECS:-2}" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_WORKTREE="$wt" TMUX="fake,1,0" \
     PATH="$fakebin:$PATH" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" codex 2>&1
 }
@@ -207,35 +192,23 @@ test_spawn_isolation_abort() {
   git -C "$proj" worktree add -q --detach "$TMP_ROOT/spawn-wt" >/dev/null 2>&1
   mkdir -p "$TMP_ROOT/spawn-notgit" "$proj/sub"
 
-  # Abort: the pane resolves to a plain non-git directory (not a worktree at all).
+  # Abort: the lease resolves to a plain non-git directory (not a worktree at all).
   out=$(run_spawn "$home" abort-notgit-dd4 "$proj" "$TMP_ROOT/spawn-notgit" "$fakebin"); status=$?
   expect_code 1 "$status" "spawn into a non-worktree dir should abort"
   assert_contains "$out" "did not yield an isolated worktree" "non-worktree spawn lacked the isolation error"
   assert_absent "$home/state/abort-notgit-dd4.meta" "aborted spawn must not record meta"
 
-  # Abort: the pane resolves INTO the primary checkout (a subdir of PROJ_ABS).
+  # Abort: the lease resolves INTO the primary checkout (a subdir of PROJ_ABS).
   out=$(run_spawn "$home" abort-primary-ee5 "$proj" "$proj/sub" "$fakebin"); status=$?
   expect_code 1 "$status" "spawn landing inside the primary checkout should abort"
   assert_contains "$out" "did not yield an isolated worktree" "primary-checkout spawn lacked the isolation error"
 
-  # Proceed: the pane resolves to a genuine, isolated worktree.
+  # Proceed: the lease resolves to a genuine, isolated worktree.
   out=$(run_spawn "$home" ok-isolated-ff6 "$proj" "$TMP_ROOT/spawn-wt" "$fakebin"); status=$?
   expect_code 0 "$status" "spawn into a genuine isolated worktree should succeed"
   assert_contains "$out" "spawned ok-isolated-ff6" "isolated spawn did not report success"
   assert_not_contains "$out" "did not yield an isolated worktree" "isolated spawn wrongly tripped the guard"
-
-  # Ride-through: mid-acquire, the pane's foreground process is treehouse (or
-  # one of its git children) whose cwd can transiently read as a non-worktree
-  # path such as the bare pool root; the poll must keep waiting for the real
-  # worktree instead of capturing the transient read and aborting.
-  mkdir -p "$TMP_ROOT/spawn-poolroot"
-  out=$(FM_FAKE_PANE_PATH_FIRST="$TMP_ROOT/spawn-poolroot" \
-    FM_FAKE_PANE_COUNT_FILE="$TMP_ROOT/spawn-pane-count" \
-    run_spawn "$home" ok-transient-gg7 "$proj" "$TMP_ROOT/spawn-wt" "$fakebin"); status=$?
-  expect_code 0 "$status" "a transient non-worktree pane read must not abort the spawn"
-  assert_contains "$out" "spawned ok-transient-gg7" "ride-through spawn did not report success"
-  assert_not_contains "$out" "did not yield an isolated worktree" "transient pool-root read was captured as the worktree"
-  pass "fm-spawn: aborts unless the resolved worktree is a genuine, isolated worktree"
+  pass "fm-spawn: aborts unless the leased worktree is a genuine, isolated worktree"
 }
 
 # --- GUARD 1c: fm-spawn tmux window construction ----------------------------
@@ -248,11 +221,9 @@ test_spawn_isolation_abort() {
 #     tmux appends at the next free index instead of the active window index, which
 #     collides under base-index 1;
 #   - the window id is captured (-P -F #{window_id}) and automatic-rename/allow-rename
-#     are disabled so the fm-<id> name survives treehouse cd'ing into the worktree;
-#   - the treehouse-get send-keys and the worktree wait loop target that stable
-#     window id, never the (possibly-renamed) name - a lost name would let
-#     display-message fall back to the active client's window and misread firstmate's
-#     OWN pane as the worktree, tangling a hook into the primary checkout.
+#     are disabled so the fm-<id> name survives the shell cd'ing into the worktree;
+#   - the worktree cd is sent to that stable window id, never the
+#     (possibly-renamed) name, which a later send would otherwise misroute.
 make_spawn_record_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
@@ -260,9 +231,6 @@ make_spawn_record_fakebin() {
 #!/usr/bin/env bash
 set -u
 [ -n "${FM_TMUX_REC:-}" ] && printf 'tmux %s\n' "$*" >> "$FM_TMUX_REC"
-case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   new-window) printf '%s\n' "@spawnwid"; exit 0 ;;
@@ -272,18 +240,18 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse
+  fm_fake_treehouse_lease "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
 run_spawn_record() {
-  local home=$1 id=$2 proj=$3 pane=$4 fakebin=$5 rec=$6
+  local home=$1 id=$2 proj=$3 wt=$4 fakebin=$5 rec=$6
   mkdir -p "$home/data/$id"
   printf 'brief\n' > "$home/data/$id/brief.md"
   FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" TMUX="fake,1,0" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_WORKTREE="$wt" TMUX="fake,1,0" \
     FM_TMUX_REC="$rec" \
     PATH="$fakebin:$PATH" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" codex 2>&1
@@ -316,11 +284,9 @@ test_spawn_tmux_window_construction() {
   assert_grep "set-window-option -t @spawnwid allow-rename off" "$rec" \
     "must disable allow-rename on the spawned window"
 
-  # Bug 2 fix (b): treehouse-get and the worktree wait loop target the stable id.
-  assert_grep "send-keys -t @spawnwid treehouse get Enter" "$rec" \
-    "treehouse get must be sent to the stable window id"
-  assert_grep "display-message -p -t @spawnwid #{pane_current_path}" "$rec" \
-    "the worktree wait loop must query the stable window id, not the name"
+  # Bug 2 fix (b): the worktree cd targets the stable id.
+  assert_grep "send-keys -t @spawnwid cd '$wt' Enter" "$rec" \
+    "the worktree cd must be sent to the stable window id"
 
   pass "fm-spawn: appends windows by session-colon, pins the name, and targets the window id"
 }

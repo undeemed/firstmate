@@ -80,7 +80,8 @@ fm_test_tmproot() {
 #
 # fm_fakebin <dir> creates <dir>/fakebin and echoes it; prepend it to PATH to
 # shadow real tools with stubs. fm_fake_exit0 drops trivial exit-0 stubs for the
-# named tools into a fakebin dir.
+# named tools into a fakebin dir. fm_fake_treehouse_lease drops the one treehouse
+# stub every fm-spawn fixture needs.
 
 fm_fakebin() {
   local dir=$1 fakebin="$1/fakebin"
@@ -98,6 +99,30 @@ exit 0
 SH
     chmod +x "$fakebin/$tool"
   done
+}
+
+# fm_fake_treehouse_lease <fakebin>: a treehouse stub whose `get --lease` prints
+# $FM_FAKE_WORKTREE on stdout, the way the real one prints the leased worktree
+# path (banners go to stderr). Every other subcommand is a silent exit 0.
+#
+# This is shared, unlike the fake tmux/no-mistakes mocks the header above keeps
+# with their suites, because it encodes no terminal or lifecycle assumption that
+# can differ per suite: fm-spawn.sh takes the worktree path from this one
+# command's stdout, so there is exactly one correct behavior and a suite that
+# got it subtly wrong would silently fake a broken spawn. A suite that needs
+# treehouse to fail, or to model lease state, still writes its own stub -
+# see tests/fm-spawn-worktree-lease.test.sh.
+fm_fake_treehouse_lease() {
+  local fakebin=$1
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = get ]; then
+  printf '%s\n' "${FM_FAKE_WORKTREE:-}"
+fi
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
 }
 
 # --- deterministic git identity and fixtures --------------------------------
