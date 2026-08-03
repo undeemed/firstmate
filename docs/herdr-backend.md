@@ -187,6 +187,7 @@ A working Pi, pending middle row, missing identity, incomplete separator pair, o
 
 ANSI capture preserves de-emphasized placeholder style.
 `bin/fm-composer-lib.sh` is the fleet-wide owner that strips dim or faint runs and dark truecolor placeholders while retaining bright typed input.
+That owner also normalizes claude's non-breaking-space composer padding, so a clear claude composer reads `empty` here too; the contract is in [tmux backend](tmux-backend.md#current-behavior-and-safety).
 If a future Herdr version strips ANSI style, ghost suggestions become pending rather than empty, which safely defers injection and eventually raises the wedge alarm.
 
 A bare shell prompt is never an empty agent composer.

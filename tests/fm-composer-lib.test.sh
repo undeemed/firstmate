@@ -125,8 +125,32 @@ test_real_text_is_pending() {
   pass "fm_composer_classify_content: real unsubmitted text reads pending (including a popup argument-hint fill)"
 }
 
+# --- claude's non-breaking-space composer padding ---------------------------
+# Task fm-send-busy-false-negative: claude 2.1.220 pads its bare `❯` with
+# U+00A0, which no POSIX [[:space:]] class trims, so a CLEAR composer used to
+# read `pending` and every steer to that pane was reported as unsubmitted.
+
+test_nbsp_padded_agent_glyph_is_empty() {
+  local nbsp out
+  nbsp=$(printf '\302\240')
+  out=$(classify 0 "❯$nbsp")
+  [ "$out" = empty ] || fail "an NBSP-padded bare '❯' is a clear composer, got '$out'"
+  out=$(classify 1 "❯$nbsp")
+  [ "$out" = empty ] || fail "an NBSP-padded bordered '❯' is a clear composer, got '$out'"
+  out=$(classify 0 "❯${nbsp}fix findings 1 and 3")
+  [ "$out" = pending ] || fail "NBSP padding must not swallow real text, got '$out'"
+  out=$(classify 0 ">$nbsp")
+  [ "$out" = unknown ] \
+    || fail "an NBSP-padded BARE shell glyph is still a dead shell, got '$out'"
+  out=$(classify 1 ">$nbsp")
+  [ "$out" = empty ] \
+    || fail "an NBSP-padded shell glyph inside a composer box is the harness prompt, got '$out'"
+  pass "fm_composer_classify_content: claude's U+00A0 composer padding is trimmed like a space"
+}
+
 test_bare_shell_glyphs_are_unknown
 test_stripped_unbordered_content_uses_plain_content
+test_nbsp_padded_agent_glyph_is_empty
 test_bare_shell_prompt_with_command_is_not_empty
 test_bordered_shell_glyph_is_empty
 test_agent_glyphs_are_empty_bordered_and_bare
