@@ -1274,7 +1274,17 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 
   validate_spawn_worktree "treehouse get --lease" "$T"
 
-  spawn_send_text_line "$WT_TARGET" "cd $(shell_quote "$WT")"
+  # Enter the worktree in a NESTED shell, leaving the pane's own shell in the
+  # project directory. This is the same process shape the in-pane `treehouse
+  # get` produced (it dropped the agent into a subshell inside the tree), and it
+  # is load-bearing: fm-teardown runs `treehouse return --force` - which
+  # "terminates lingering processes" in the worktree, the agent included, by
+  # design - BEFORE it closes the task pane. A pane whose ONLY shell sits inside
+  # the worktree therefore dies during the return, and for the herdr backend
+  # that takes the projection workspace with it, so the exact-pane close that
+  # restores the captain's focus finds nothing left to close. A bare
+  # `cd "$WT"` here reproduces exactly that.
+  spawn_send_text_line "$WT_TARGET" "(cd $(shell_quote "$WT") && exec \"\${SHELL:-/bin/sh}\")"
 fi
 
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't

@@ -187,14 +187,6 @@ if [ "$status" -eq 0 ] && [ "$mutation" = tab-create ]; then
       ;;
   esac
 fi
-if [ "$status" -eq 0 ] && [ "${1:-} ${2:-}" = "pane get" ] && [ -d "$POST_CREATE_ABORT_CONTROL" ]; then
-  for task_dir in "$POST_CREATE_ABORT_CONTROL"/abort-*; do
-    [ -d "$task_dir" ] || continue
-    [ "${3:-}" = "$(cat "$task_dir/task-pane" 2>/dev/null || true)" ] || continue
-    out=$(printf '%s' "$out" | jq --arg cwd "$POST_CREATE_ABORT_CONTROL/not-a-worktree" '.result.pane.foreground_cwd = $cwd')
-    break
-  done
-fi
 if [ -n "$mutation" ]; then
   after=$(focus_snapshot || printf ambiguous/ambiguous)
   printf '%s\t%s\t%s\t%s\n' "$mutation" "$before" "$after" "$mutation_target" >> "$FOCUS_AUDIT_LOG"
@@ -219,7 +211,12 @@ set -u
   done
   printf '\n'
 } >> "$TREEHOUSE_CALL_LOG"
+# Arm the post-create abort: hand back a real directory that is not a worktree,
+# so the spawn's own isolation check refuses it. fm-spawn.sh leases the worktree
+# in its own process and reads the path off stdout, so the doomed path is a bad
+# lease, not a pane that never leaves the project directory.
 if [ -d "$POST_CREATE_ABORT_CONTROL" ] && [ "${1:-}" = get ]; then
+  printf '%s\n' "$POST_CREATE_ABORT_CONTROL/not-a-worktree"
   exit 0
 fi
 exec "$REAL_TREEHOUSE" "$@"
@@ -751,7 +748,7 @@ FAIL_CLOSED_PANES=$(sed -n "$((FAIL_START + 1)),\$p" "$HERDR_CALL_LOG" | awk -F 
 assert_no_ordering_lifecycle_calls_since "$FAIL_START" "failed presentation ordering"
 pass "real Herdr lab: forced workspace.move failure leaves a successful worker in default order with a warning and no cleanup"
 
-mkdir -p "$POST_CREATE_ABORT_CONTROL"
+mkdir -p "$POST_CREATE_ABORT_CONTROL/not-a-worktree"
 ABORT_START=$(log_line_count)
 ABORT_FOCUS_START=$(focus_audit_line_count)
 spawn_task abort-a "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/abort-a.out" 2> "$TMP_ROOT/abort-a.err" &

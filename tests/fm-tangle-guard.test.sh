@@ -285,8 +285,14 @@ test_spawn_tmux_window_construction() {
     "must disable allow-rename on the spawned window"
 
   # Bug 2 fix (b): the worktree cd targets the stable id.
-  assert_grep "send-keys -t @spawnwid cd '$wt' Enter" "$rec" \
-    "the worktree cd must be sent to the stable window id"
+  # The nested-shell form is load-bearing, not cosmetic: fm-teardown runs
+  # `treehouse return --force` (which terminates processes inside the worktree)
+  # before it closes the task window, so the window's own shell must stay
+  # outside the tree or the return kills the window. The herdr e2e that first
+  # caught this is gated on a real herdr binary; this assertion is the one that
+  # always runs, so a regression to a bare `cd` fails here.
+  assert_grep "send-keys -t @spawnwid (cd '$wt' && exec \"\${SHELL:-/bin/sh}\") Enter" "$rec" \
+    "the worktree cd must be sent to the stable window id, in the nested-shell form"
 
   pass "fm-spawn: appends windows by session-colon, pins the name, and targets the window id"
 }
