@@ -63,6 +63,7 @@ Real text on any content row is pending, while only an unambiguous box with ever
 Unreadable, incomplete, or structurally ambiguous boxes fail closed, and panes without a bordered composer retain the compatible cursor-row classification.
 The shared classifier accepts a shell glyph as an empty agent composer only inside a verified bordered composer.
 A bare shell prompt is `unknown`, so away-mode escalation is never injected into a dead shell.
+Claude 2.1.220 pads its bare `❯` composer prompt with U+00A0, which no POSIX `[[:space:]]` class trims, so the shared classifier normalizes that one codepoint to a plain space before judging a row and a clear claude composer reads `empty` instead of `pending`.
 
 Rendered busy detection is also harness-scoped.
 Task metadata selects only that harness's verified signature, so output from one harness cannot make another harness appear busy.
@@ -73,6 +74,7 @@ It types a message once and retries Enter only until the composer clears.
 Only a proven empty composer is a positive delivery acknowledgement.
 Text left in established structure remains `pending`, text in ambiguous structure remains unproven, and unreadable or unsafe state remains unknown.
 `fm-send.sh` reports every unconfirmed verdict as a failure instead of retyping or assuming delivery.
+`tests/fm-send-busy-claude.test.sh` pins both directions on a claude pane carrying the U+00A0 padding above: a composer that clears exits zero after a single Enter, while text left unsubmitted still exits non-zero even when the queued-message affordance is on screen elsewhere.
 
 OpenCode 1.18.4 has one busy-queue exception.
 While OpenCode is mid-turn, Enter queues the message but leaves its text visible until the turn completes.
@@ -89,6 +91,7 @@ Ambiguous pending text never receives the busy-queue conversion.
 tests/fm-backend-tmux-smoke.test.sh
 tests/fm-composer-ghost.test.sh
 tests/fm-kimi-harness.test.sh
+tests/fm-send-busy-claude.test.sh
 tests/fm-tmux-submit-busy.test.sh
 tests/fm-bootstrap.test.sh
 ```
