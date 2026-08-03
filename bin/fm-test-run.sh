@@ -1326,7 +1326,7 @@ record_script_result() {
 
 run_one_serial() {
   local script=$1
-  local base family expected out begin_iso begin_ms end_ms end_iso duration rc
+  local base family expected out begin_iso begin_ms end_ms end_iso duration rc script_pid
   base=$(basename "$script")
   family=$(family_for_basename "$base")
   expected=$(expected_gate_skip_for_family "$family")
@@ -1338,18 +1338,28 @@ run_one_serial() {
     "$begin_iso" "$script" "$family" "$expected"
 
   set +e
-  # Stream live output while retaining a copy for gate-skip detection.
-  # PIPESTATUS[0] is the test script; tee's exit is ignored for aggregate.
+  # Capture to a file and wait only on the pid we started, exactly as the
+  # parallel worker below already does. A pipeline (`... | tee "$out"`) cannot
+  # be used here: bash waits for the whole pipeline, and tee exits only on EOF,
+  # which needs every writer to the pipe closed. Background processes a test
+  # script leaves behind inherit its stdout, so one leaked child holds the pipe
+  # open and wedges the entire run - after the script itself has already exited
+  # and possibly failed. Nothing after that script would ever run.
+  # The cost is that serial output is no longer streamed line by line; it is
+  # printed once the script finishes, with FM_TEST_BEGIN still marking the start.
   # Same home-override scrub as the parallel worker: a serial run must never
   # resolve a stateful suite against the invoking operator's live fleet home.
   (
     unset FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_ROOT_OVERRIDE \
       FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE FM_BACKEND 2>/dev/null || true
     exec bash "$script" 2>&1
-  ) | tee "$out"
-  rc=${PIPESTATUS[0]}
+  ) >"$out" &
+  script_pid=$!
+  wait "$script_pid"
+  rc=$?
   set -e
   : "${rc:=1}"
+  cat "$out"
 
   end_ms=$(now_ms)
   end_iso=$(now_iso)

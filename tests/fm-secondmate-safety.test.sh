@@ -10,7 +10,15 @@ set -u
 # shellcheck source=tests/secondmate-helpers.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/secondmate-helpers.sh"
 
-TMP_ROOT=$(fm_test_tmproot fm-secondmate-safety)
+# Register the temp root in THIS shell, not in a command substitution.
+# fm_test_tmproot appends to FM_TEST_CLEANUP_DIRS, and `$( )` runs in a subshell
+# whose array append is discarded on return - so the dir was never registered
+# and each run leaked its scratch root (166 repo clones, ~680MB) forever.
+TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-secondmate-safety.XXXXXX")
+FM_TEST_CLEANUP_DIRS+=("$TMP_ROOT")
+trap fm_test_cleanup EXIT
+trap 'fm_test_cleanup; exit 130' INT
+trap 'fm_test_cleanup; exit 143' TERM
 export FM_BACKEND=tmux
 
 file_mode() {
