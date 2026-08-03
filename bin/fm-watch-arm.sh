@@ -32,6 +32,10 @@
 #   watcher: FAILED - cycle ended without an actionable reason
 #                                                        - a clean cycle ended with no wake and no
 #                                                          verified healthy successor
+# A failure caused by a live watcher from ANOTHER checkout holding this home's
+# lock is named explicitly (pid, recorded watcher-path and fm-home) on the line
+# before the FAILED line, so that refusal is self-explaining instead of a generic
+# timeout. Arm never kills or steals such a holder; that call is a human's.
 # It NEVER reports started/attached/healthy off a stale beacon or a dead/reused pid: a
 # stale-beacon or dead-pid holder either self-heals (the fresh child steals the
 # dead lock per the singleton self-eviction/steal path and is confirmed) or this
@@ -250,7 +254,26 @@ wait_for_healthy_successor() {
   done
 }
 
+# Name a live FOREIGN holder of this home's watch lock. Both plain arm (it sees a
+# live holder, its child stands down, and confirmation times out) and --restart
+# (clear_stale_recorded_watcher_lock will not clear a lock whose pid is alive)
+# correctly refuse to touch it - clearing or killing another checkout's live
+# watcher from here would be wrong - but without this line the operator only sees
+# a generic failure. Diagnostic only: never kills or steals, and resolution stays
+# a human or supervisor decision. Prints nothing when the holder is dead or is
+# genuinely this checkout's watcher, so it is only ever reached on a failure path.
+report_foreign_watcher_lock() {
+  local pid lock_path lock_home
+  pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
+  fm_pid_alive "$pid" || return 0
+  lock_path=$(cat "$WATCH_LOCK/watcher-path" 2>/dev/null || true)
+  lock_home=$(cat "$WATCH_LOCK/fm-home" 2>/dev/null || true)
+  fm_same_path "$lock_path" "$WATCH" && fm_same_path "$lock_home" "$FM_HOME" && return 0
+  echo "watcher: lock held by a live watcher from another checkout - pid=$pid watcher-path=${lock_path:-none} fm-home=${lock_home:-none} (this checkout: watcher-path=$WATCH fm-home=$FM_HOME); refusing to clear or kill it"
+}
+
 fail_unexplained_cycle() {
+  report_foreign_watcher_lock
   echo "watcher: FAILED - cycle ended without an actionable reason"
   return 1
 }
@@ -438,6 +461,7 @@ owned_child_finished() {
   cycle_log_append "$rc" "$signal" "$reason_type" none
   print_watch_output "$child_out"
   if ! grep -q '^watcher: FAILED' "$child_out" 2>/dev/null; then
+    report_foreign_watcher_lock
     echo "watcher: FAILED - watcher cycle exited $rc without an actionable reason"
   fi
   rm -f "$child_out" 2>/dev/null || true
@@ -488,5 +512,6 @@ cleanup_child
 wait "$child" 2>/dev/null
 rc=$?
 cycle_log_append "$rc" "$(cycle_signal_name "$rc")" confirmation-timeout none
+report_foreign_watcher_lock
 echo "watcher: FAILED - no live watcher with a fresh beacon"
 exit 1

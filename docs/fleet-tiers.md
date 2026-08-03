@@ -69,7 +69,9 @@ The poll has an arming window the check gate alone cannot see: in PR-based ship 
 So a PR-based-mode ship candidate with neither an armed `check.sh` nor a recorded `pr=` is LEFT too, on both candidate paths; once `pr=` is recorded, `fm-teardown`'s landed-work check owns the decision, and local-only ship tasks and scouts have no PR and are unaffected.
 A swept teardown does none of the normal post-teardown bookkeeping; the `SWEEP:` digest lines are the cue to reconcile the backlog and relay a not-yet-relayed outcome (the `bootstrap-diagnostics` skill owns the per-line response).
 
-The firstmate repo's OWN pool (where the primary and project-less firstmate-repo crews live) is deliberately out of scope for the automated orphan prune, so the sweep never prunes the pool the running primary lives in; meta-tracked firstmate-repo crews are still reaped by the teardown path, and firstmate-repo-pool orphans are left to manual `treehouse prune`.
+The firstmate repo's OWN pool (where the primary and project-less firstmate-repo crews live) is out of scope for the automated orphan prune, so the sweep never prunes the pool the running primary lives in; meta-tracked firstmate-repo crews are still reaped by the teardown path, and firstmate-repo-pool orphans are left to manual `treehouse prune`.
+The sweep enforces that rather than relying on nobody having cloned firstmate: `treehouse prune` is keyed by the cwd clone's origin, so any clone under `projects/` whose origin resolves to the same repository as this checkout's origin is silently skipped.
+Without that skip, a firstmate clone under `projects/` would aim the prune at the pool holding the primary and every secondmate home, whose `state/` and `data/` are gitignored and therefore invisible to prune's uncommitted-changes gate.
 
 Properties: lock-gated by its callers (session start runs it only when locked; the watcher is a per-home singleton), best-effort and non-fatal, idempotent, fast, quiet when there is nothing to reap, and guarded by its own lock so overlapping runs are a no-op.
 

@@ -38,10 +38,16 @@
 #     scoped per pool via the working directory; --all/--global is never used, so
 #     a sibling home's pools are never touched. The firstmate repo's OWN pool
 #     (FM_ROOT, where the primary itself and project-less firstmate-repo crews
-#     live) is deliberately out of scope for this automated prune: meta-tracked
-#     firstmate-repo crews are still reaped by the fm-teardown path above, and
-#     leaving the primary's own pool to manual `treehouse prune` avoids ever
-#     pruning the pool the running primary lives in.
+#     live) is out of scope for this automated prune, and the code ENFORCES that
+#     rather than relying on nobody having cloned firstmate: a clone whose origin
+#     resolves to the same repository as this checkout's origin is skipped. Since
+#     `treehouse prune` is keyed by the cwd clone's origin, without that skip a
+#     firstmate clone under projects/ - an ordinary thing to have when a
+#     secondmate works on firstmate itself - would aim the prune at the pool
+#     holding this primary and every secondmate home, whose state/ and data/ are
+#     gitignored and therefore invisible to prune's uncommitted-changes gate.
+#     Meta-tracked firstmate-repo crews are still reaped by the fm-teardown path
+#     above, and the primary's own pool is left to manual `treehouse prune`.
 #
 # REAP GATE (cheap-first; fm-teardown is the final safety net either way):
 #   1. fm_backend_agent_alive (bin/fm-backend.sh) reads the endpoint for a live
@@ -228,14 +234,41 @@ sweep_metas() {
   done
 }
 
+# Reduce a remote URL to host/owner/repo so the spellings of one repository
+# compare equal: https://host/owner/repo.git, git@host:owner/repo, and
+# ssh://git@host/owner/repo all normalize to host/owner/repo. Our own clones
+# already vary on the .git suffix (founder-mode.git vs fpsmaxxing). An
+# unparseable or empty URL normalizes to itself/empty and simply fails to match.
+normalize_remote() {
+  local url=$1
+  url=${url%/}
+  url=${url%.git}
+  url=${url#*://}   # scheme
+  url=${url#*@}     # user@ (ssh, or credentials in an https URL)
+  url=${url/:/\/}   # scp-style host:owner/repo -> host/owner/repo
+  printf '%s' "$url" | tr '[:upper:]' '[:lower:]'
+}
+
 sweep_orphan_worktrees() {
   [ "${FM_SWEEP_PRUNE_ORPHANS:-1}" != 0 ] || return 0
   command -v treehouse >/dev/null 2>&1 || return 0
   [ -d "$PROJECTS" ] || return 0
-  local proj name out summary
+  local proj name out summary self_origin proj_origin
+  # This checkout's own origin keys the pool the primary and every secondmate
+  # home live in (see the SAFETY note above). Empty (no origin) disables the
+  # comparison entirely rather than matching every origin-less clone.
+  self_origin=$(normalize_remote "$(git -C "$FM_ROOT" remote get-url origin 2>/dev/null || true)")
   for proj in "$PROJECTS"/*; do
     [ -d "$proj" ] || continue
     git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 || continue
+    # Never point the prune at our own pool. A clone with no origin is not a
+    # match and keeps its normal behavior. Silent: this is a skip, not an event.
+    if [ -n "$self_origin" ]; then
+      proj_origin=$(normalize_remote "$(git -C "$proj" remote get-url origin 2>/dev/null || true)")
+      if [ -n "$proj_origin" ] && [ "$proj_origin" = "$self_origin" ]; then
+        continue
+      fi
+    fi
     name=$(basename "$proj")
     # treehouse prune owns pool landed-safety; --yes executes, scoped to THIS
     # pool via cwd (never --all/--global). Best-effort: a prune failure or a
