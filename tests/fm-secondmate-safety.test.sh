@@ -16,9 +16,32 @@ set -u
 # and each run leaked its scratch root (166 repo clones, ~680MB) forever.
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-secondmate-safety.XXXXXX")
 FM_TEST_CLEANUP_DIRS+=("$TMP_ROOT")
-trap fm_test_cleanup EXIT
-trap 'fm_test_cleanup; exit 130' INT
-trap 'fm_test_cleanup; exit 143' TERM
+
+# Reap every background job this shell started before cleanup deletes the tree
+# those jobs are running against. This suite supervises a real background
+# watcher, so a signal between spawning it and killing it would otherwise leave
+# it live while its whole state tree vanished under it. `jobs -p` is this
+# shell's own job table - pids we recorded ourselves - never a scan of the
+# process listing, which cannot tell a fixture from another agent's watcher.
+fm_test_reap_bg() {
+  local pid i
+  for pid in $(jobs -p 2>/dev/null); do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  i=0
+  while [ "$i" -lt 20 ] && [ -n "$(jobs -pr 2>/dev/null)" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  for pid in $(jobs -p 2>/dev/null); do
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
+}
+
+trap 'fm_test_reap_bg; fm_test_cleanup' EXIT
+trap 'fm_test_reap_bg; fm_test_cleanup; exit 130' INT
+trap 'fm_test_reap_bg; fm_test_cleanup; exit 143' TERM
 export FM_BACKEND=tmux
 
 file_mode() {
