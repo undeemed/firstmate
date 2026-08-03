@@ -433,7 +433,8 @@ fm_backend_cmux_target_ready() {  # <target> [expected-label]
 
 # fm_backend_cmux_current_path: the live foreground process's cwd, or empty on
 # any error. Mirrors fm_backend_zellij_current_path's active pwd-marker-probe
-# workaround (bin/backends/zellij.sh:306-347) verbatim in spirit.
+# workaround (bin/backends/zellij.sh:306-347) verbatim in spirit. No production
+# caller today, for the same reason given there.
 #
 # Verified pitfall (finding #2 above): cmux's `current_directory` field DOES
 # reflect a `cd` run directly in the surface's own top-level shell, but stays

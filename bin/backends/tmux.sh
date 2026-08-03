@@ -94,8 +94,13 @@ fm_backend_tmux_create_task() {  # <session> <window-name> <proj-abs> -> prints 
 }
 
 # fm_backend_tmux_current_path: the live pane's current working directory, or
-# empty on any tmux error. Mirrors fm-spawn.sh's worktree-discovery poll:
-# `tmux display-message -p -t "$T" '#{pane_current_path}'`.
+# empty on any tmux error: `tmux display-message -p -t "$T" '#{pane_current_path}'`.
+#
+# No production caller today. fm-spawn.sh used to poll it to discover where an
+# in-pane `treehouse get` had landed; it now leases the worktree in its own
+# process and reads the path off stdout, so nothing has to watch a pane's cwd.
+# Kept as part of the per-backend adapter surface, alongside the herdr, zellij,
+# and cmux implementations of the same probe.
 fm_backend_tmux_current_path() {  # <target>
   tmux display-message -p -t "$1" '#{pane_current_path}' 2>/dev/null
 }

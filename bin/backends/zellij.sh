@@ -382,8 +382,11 @@ fm_backend_zellij_target_ready() {  # <target> [expected-label]
 }
 
 # fm_backend_zellij_current_path: the live pane's cwd, or empty on any error.
-# Mirrors tmux's pane_current_path poll used for worktree-path discovery after
-# `treehouse get`.
+# Mirrors tmux's pane_current_path probe. No production caller today: fm-spawn.sh
+# now leases the worktree in its own process rather than running `treehouse get`
+# in the pane and watching where it lands (see bin/backends/tmux.sh's note on the
+# same probe). The pitfall below is kept because it is what makes an in-pane
+# acquisition unobservable here in the first place.
 #
 # Verified pitfall (docs/zellij-backend.md "Worktree-path discovery: pane_cwd
 # does not track a subshell"): `list-panes --json`'s `pane_cwd` DOES reflect a
