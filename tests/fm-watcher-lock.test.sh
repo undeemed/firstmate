@@ -1021,6 +1021,76 @@ test_linux_pid_identity_ignores_wall_clock_and_detects_pid_reuse() {
   pass "Linux process identity detects pid reuse"
 }
 
+# An attached arm must not outlive the cycle it attached to. It can never deliver
+# a wake reason - that goes to the stdout of the arm that owns the watcher as a
+# child - and the wake is durably queued either way, so hopping onto a successor
+# buys no supervision and parks the arm forever: healthy supervision keeps
+# producing a successor inside the confirmation window, so every redundant arm
+# ever issued against a long-lived watcher accumulates. Gen-1 here ends the way
+# it really ends, on an actionable wake rather than a signal, and the
+# confirmation window is deliberately long so a pass can only come from the
+# successor path and never from a no-successor timeout.
+test_attached_arm_unwinds_at_cycle_end_with_live_successor() {
+  local dir state fakebin out1 out2 armout w1 w2 armpid i status
+  dir=$(make_case arm-successor-unwind)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out1="$dir/watch-gen1.out"
+  out2="$dir/watch-gen2.out"
+  armout="$dir/arm.out"
+  mark_pr_check_migration_complete "$state"
+
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out1" &
+  w1=$!
+  i=0
+  while [ "$i" -lt 60 ]; do
+    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$w1" ] && [ -e "$state/.last-watcher-beat" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$w1" ] || fail "gen-1 watcher did not take the lock"
+
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT=30 "$WATCH_ARM" > "$armout" &
+  armpid=$!
+  i=0
+  while [ "$i" -lt 80 ]; do
+    grep -qF "watcher: attached pid=$w1" "$armout" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -qF "watcher: attached pid=$w1" "$armout" || fail "arm did not attach to the gen-1 watcher"
+
+  printf 'working: setup\nneeds-decision: pick A or B\n' > "$state/task.status"
+  wait_for_exit "$w1" 100 >/dev/null 2>&1
+  is_live_non_zombie "$w1" && fail "gen-1 watcher did not exit on an actionable signal"
+
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out2" &
+  w2=$!
+  i=0
+  while [ "$i" -lt 60 ]; do
+    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$w2" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$w2" ] || fail "gen-2 watcher did not take the lock"
+
+  status=0
+  wait_for_exit "$armpid" 100 || status=$?
+  [ "$status" -ne 124 ] || fail "attached arm parked across a watcher generation change instead of unwinding"
+  [ "$status" -eq 0 ] || fail "attached arm did not unwind cleanly onto a healthy successor (status $status)"
+  ! grep -qF 'watcher: FAILED' "$armout" || fail "attached arm called a healthy successor a failure: $(cat "$armout")"
+  grep -qF "successor pid=$w2" "$armout" || fail "attached arm did not name the healthy successor: $(cat "$armout")"
+  grep -q "arm_pid=$armpid.*origin=attached.*reason=attached-cycle-ended.*successor=healthy:$w2" "$state/.watch-cycle-exits.log" \
+    || fail "attached arm unwind was not recorded in the lifecycle ledger"
+  is_live_non_zombie "$w2" || fail "unwinding the attached arm tore down the successor watcher"
+
+  kill "$w2" 2>/dev/null || true
+  wait "$w2" 2>/dev/null || true
+  pass "attached arm unwinds at cycle end instead of hopping onto a live successor"
+}
+
 test_singleton_start
 test_pid_identity_is_locale_invariant
 test_linux_pid_identity_ignores_wall_clock_and_detects_pid_reuse
@@ -1040,6 +1110,7 @@ test_watch_restart_attaches_to_healthy_peer
 test_watcher_self_evicts_on_lock_takeover
 test_arm_self_eviction_is_loud_without_successor
 test_arm_attaches_and_waits_for_live_fresh_watcher
+test_attached_arm_unwinds_at_cycle_end_with_live_successor
 test_attached_arm_signal_is_recorded_in_cycle_ledger
 test_arm_starts_and_self_heals
 test_arm_hup_cleans_child_and_temp_output

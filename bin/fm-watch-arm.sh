@@ -40,11 +40,12 @@
 # stale-beacon or dead-pid holder either self-heals (the fresh child steals the
 # dead lock per the singleton self-eviction/steal path and is confirmed) or this
 # returns the FAILED line. On started it waits the child and propagates the wake
-# reason; on attached it stays live across identity-matched successors. An
-# attached cycle that ends without a healthy successor is a typed nonzero failure,
-# never a clean empty completion. On FAILED it exits non-zero so the failure is
-# loud. A live cycle already present means re-arm attaches - do not start a second
-# watcher.
+# reason; on attached it stays live for exactly that one cycle and then unwinds,
+# because hopping onto each successor never exits under healthy supervision and
+# parks the arm forever (see attach_and_wait). An attached cycle that ends without
+# a healthy successor is a typed nonzero failure, never a clean empty completion.
+# On FAILED it exits non-zero so the failure is loud. A live cycle already present
+# means re-arm attaches - do not start a second watcher.
 #
 # Every observed watcher cycle appends one tab-separated lifecycle record to
 # state/.watch-cycle-exits.log. The arm layer owns that bounded ledger; it records
@@ -284,28 +285,46 @@ fail_unexplained_cycle() {
   return 1
 }
 
-# Stay alive across identity-matched healthy holders. If one cycle ends, attach
-# to a verified successor. With no successor, fail loudly instead of returning a
-# clean empty completion that an adapter could mistake for a no-op.
+# Stay alive for exactly the one cycle we attached to, then unwind.
+#
+# An attached arm is a real supervision channel while its cycle runs - it holds a
+# harness-tracked task open so the cycle's end notifies firstmate - but it is not
+# the channel that carries the wake REASON. That reason goes to the stdout of the
+# arm that owns the watcher as a child, and every actionable wake is durably
+# queued (bin/fm-watch.sh appends to state/.wake-queue before it prints and
+# exits), so an attached arm's whole contribution is delivered by unwinding at
+# cycle end.
+#
+# Continuing onto a successor is therefore the leak, not the feature. Each new
+# generation already has its own owning arm delivering its reason, so a hopping
+# arm adds no supervision and never exits: healthy supervision re-arms well
+# inside the confirmation window, so an arm that hops survives every generation
+# change and parks until the machine reboots. That inverts the incentive - the
+# better wake triage gets at absorbing benign wakes, the longer each watcher
+# lives and the more redundant arms accumulate behind it.
+#
+# Unwinding costs one extra harness notification per redundant arm per cycle,
+# which is bounded by the real wake rate and self-limiting: once a redundant arm
+# unwinds it is gone unless the supervisor arms twice again. Returning at the
+# first attach instead would spin, so the boundary is one full cycle, not zero.
+#
+# With no successor at all the outcome is unchanged: a typed nonzero failure,
+# never a clean empty completion that an adapter could mistake for a no-op.
 attach_and_wait() {
   local attached_pid=$1
   while :; do
-    if healthy_watcher; then
-      if [ "$HEALTHY_PID" != "$attached_pid" ]; then
-        cycle_log_append unknown unknown lock-replaced "attached:$HEALTHY_PID"
-        attached_pid=$HEALTHY_PID
-        cycle_begin "$attached_pid" attached
-        report_attached
-      fi
+    if healthy_watcher && [ "$HEALTHY_PID" = "$attached_pid" ]; then
       sleep "$ATTACH_POLL"
       continue
     fi
-    if wait_for_healthy_successor; then
-      cycle_log_append unknown unknown attached-cycle-ended "attached:$HEALTHY_PID"
-      attached_pid=$HEALTHY_PID
-      cycle_begin "$attached_pid" attached
-      report_attached
-      continue
+    # Our cycle is over: the holder is gone, or a different watcher replaced it
+    # in place. healthy_watcher clears HEALTHY_PID unless it succeeded, so a
+    # non-empty value here is exactly the replaced-in-place case and needs no
+    # second confirmation window.
+    if [ -n "$HEALTHY_PID" ] || wait_for_healthy_successor; then
+      cycle_log_append 0 none attached-cycle-ended "healthy:$HEALTHY_PID"
+      echo "watcher: attached cycle ended pid=$attached_pid - successor pid=$HEALTHY_PID healthy; unwinding this arm"
+      return 0
     fi
     cycle_log_append unknown unknown attached-cycle-ended none
     fail_unexplained_cycle
