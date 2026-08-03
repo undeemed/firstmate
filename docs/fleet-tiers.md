@@ -72,6 +72,7 @@ A swept teardown does none of the normal post-teardown bookkeeping; the `SWEEP:`
 The firstmate repo's OWN pool (where the primary and project-less firstmate-repo crews live) is out of scope for the automated orphan prune, so the sweep never prunes the pool the running primary lives in; meta-tracked firstmate-repo crews are still reaped by the teardown path, and firstmate-repo-pool orphans are left to manual `treehouse prune`.
 The sweep enforces that rather than relying on nobody having cloned firstmate: `treehouse prune` is keyed by the cwd clone's origin, so any clone under `projects/` whose origin resolves to the same repository as this checkout's origin is silently skipped.
 Without that skip, a firstmate clone under `projects/` would aim the prune at the pool holding the primary and every secondmate home, whose `state/` and `data/` are gitignored and therefore invisible to prune's uncommitted-changes gate.
+Origins are compared normalized, so a trailing `.git` and the `git@host:owner/repo`, `https://host/owner/repo`, and `ssh://git@host:2222/owner/repo` spellings of one repository all match; a clone with no origin is deliberately not a match and keeps its normal prune behavior.
 
 Properties: lock-gated by its callers (session start runs it only when locked; the watcher is a per-home singleton), best-effort and non-fatal, idempotent, fast, quiet when there is nothing to reap, and guarded by its own lock so overlapping runs are a no-op.
 
