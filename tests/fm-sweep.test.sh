@@ -70,10 +70,11 @@ exit 0
 SH
   # treehouse stub: return (teardown) and prune (orphan pass) both succeed,
   # printing FM_TEST_TREEHOUSE_OUT when set (silent otherwise), and every
-  # invocation is logged for the orphan-scoping assertion.
+  # invocation is logged with its cwd (prune is scoped by cwd, so the cwd is what
+  # identifies the pool) for the orphan-scoping assertions.
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
-[ -n "${FM_TEST_TREEHOUSE_LOG:-}" ] && printf '%s\n' "$*" >> "$FM_TEST_TREEHOUSE_LOG"
+[ -n "${FM_TEST_TREEHOUSE_LOG:-}" ] && printf '%s cwd=%s\n' "$*" "$PWD" >> "$FM_TEST_TREEHOUSE_LOG"
 [ -n "${FM_TEST_TREEHOUSE_OUT:-}" ] && printf '%s\n' "$FM_TEST_TREEHOUSE_OUT"
 exit 0
 SH
@@ -409,6 +410,35 @@ test_orphan_pass_scopes_prune_per_pool() {
   pass "orphan pass runs 'treehouse prune --yes' per pool, never --all/--global"
 }
 
+test_orphan_pass_skips_self_origin_clone() {
+  local case_dir log self out
+  case_dir=$(make_case orphan-self-origin)
+  # Stand in for this firstmate checkout, so the case is hermetic.
+  self="$case_dir/selfrepo"
+  git init -q "$self"
+  git -C "$self" remote add origin https://example.invalid/undeemed/firstmate.git
+
+  # Same repository as $self, spelled scp-style and without the .git suffix:
+  # `treehouse prune` here would target the pool holding the primary and every
+  # secondmate home, so it must be skipped.
+  git init -q "$case_dir/home/projects/firstmate"
+  git -C "$case_dir/home/projects/firstmate" remote add origin git@example.invalid:undeemed/firstmate
+  # A different repository on the same host must still be pruned.
+  git init -q "$case_dir/home/projects/other"
+  git -C "$case_dir/home/projects/other" remote add origin https://example.invalid/undeemed/other.git
+
+  log="$case_dir/treehouse.log"
+  out=$(run_sweep "$case_dir" FM_ROOT_OVERRIDE="$self" FM_TEST_TREEHOUSE_LOG="$log") \
+    || fail "self-origin: sweep exited non-zero"
+  [ -z "$out" ] || fail "self-origin: a skip is not a reportable event (got: $out)"
+
+  assert_grep "cwd=$case_dir/home/projects/other" "$log" \
+    "self-origin: a different-origin clone must still be pruned"
+  assert_no_grep "cwd=$case_dir/home/projects/firstmate" "$log" \
+    "self-origin: must never prune the pool backing this firstmate checkout"
+  pass "a clone of this firstmate checkout's own repo is skipped; other pools still pruned"
+}
+
 test_orphan_idle_output_stays_quiet() {
   local case_dir out idle
   case_dir=$(make_case orphan-idle)
@@ -448,5 +478,6 @@ test_pr_recorded_landed_crew_is_reaped
 test_fresh_sweep_lock_is_silent_noop
 test_stale_sweep_lock_is_reclaimed
 test_orphan_pass_scopes_prune_per_pool
+test_orphan_pass_skips_self_origin_clone
 test_orphan_idle_output_stays_quiet
 test_orphan_action_output_is_reported
