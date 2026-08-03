@@ -719,6 +719,66 @@ SH
   pass "arm propagates an immediate watcher wake before confirmation"
 }
 
+# A live lock holder recorded against ANOTHER checkout must be named, not left to
+# time out into a generic failure. Arm is right to refuse it (neither clearing nor
+# killing another agent's live watcher is arm's call), so the only fix is saying so.
+test_arm_names_foreign_watcher_lock_holder() {
+  local dir state fakebin armout peer foreign_path foreign_home rc
+  dir=$(make_case arm-foreign-lock)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  foreign_path="$dir/foreign-checkout/bin/fm-watch.sh"
+  foreign_home="$dir/foreign-home"
+  mark_pr_check_migration_complete "$state"
+  sleep 300 &
+  peer=$!
+  mkdir "$state/.watch.lock"
+  printf '%s\n' "$peer" > "$state/.watch.lock/pid"
+  printf '%s\n' "$foreign_home" > "$state/.watch.lock/fm-home"
+  printf '%s\n' "$foreign_path" > "$state/.watch.lock/watcher-path"
+  printf '%s\n' "recorded-by-the-other-checkout" > "$state/.watch.lock/pid-identity"
+  touch "$state/.last-watcher-beat"
+
+  rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=1 FM_ARM_ATTACH_POLL=0.1 "$WATCH_ARM" > "$armout" || rc=$?
+  [ "$rc" -ne 0 ] || fail "arm must still exit non-zero behind a foreign lock holder"
+  grep -qF "pid=$peer" "$armout" || fail "arm did not name the foreign holder's pid: $(cat "$armout")"
+  grep -qF "watcher-path=$foreign_path" "$armout" || fail "arm did not name the recorded watcher-path: $(cat "$armout")"
+  grep -qF "fm-home=$foreign_home" "$armout" || fail "arm did not name the recorded fm-home: $(cat "$armout")"
+  grep -qF 'watcher: FAILED' "$armout" || fail "arm dropped its FAILED line: $(cat "$armout")"
+
+  # Same live pid, but the lock is genuinely this checkout's (a recycled pid, not a
+  # foreign holder): the diagnostic must stay silent rather than misattribute it.
+  printf '%s\n' "$dir" > "$state/.watch.lock/fm-home"
+  printf '%s\n' "$WATCH" > "$state/.watch.lock/watcher-path"
+  touch "$state/.last-watcher-beat"
+  rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=1 FM_ARM_ATTACH_POLL=0.1 "$WATCH_ARM" > "$armout" || rc=$?
+  ! grep -qF 'another checkout' "$armout" \
+    || fail "arm blamed a foreign checkout for its own lock: $(cat "$armout")"
+
+  # A pid-only lock (fm_lock_claim publishes pid before bin/fm-watch.sh records
+  # fm-home/watcher-path, so a SIGKILL in that window leaves one behind) is
+  # UNKNOWN, not foreign: an absent field must never be read as a mismatch.
+  rm -f "$state/.watch.lock/fm-home" "$state/.watch.lock/watcher-path" \
+    "$state/.watch.lock/pid-identity"
+  touch "$state/.last-watcher-beat"
+  rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=1 FM_ARM_ATTACH_POLL=0.1 "$WATCH_ARM" > "$armout" || rc=$?
+  ! grep -qF 'another checkout' "$armout" \
+    || fail "arm blamed a foreign checkout for a pid-only lock: $(cat "$armout")"
+  grep -qF 'watcher: FAILED' "$armout" || fail "arm dropped its FAILED line: $(cat "$armout")"
+  [ "$rc" -ne 0 ] || fail "arm must still exit non-zero behind a live pid-only lock holder"
+
+  kill "$peer" 2>/dev/null || true
+  wait "$peer" 2>/dev/null || true
+  pass "a live foreign lock holder is named (pid, watcher-path, fm-home) instead of timing out silently"
+}
+
 test_arm_waits_for_peer_beacon_after_child_stands_down() {
   local dir state fakebin armout peer identity armpid status i
   dir=$(make_case arm-peer-startup-race)
@@ -985,6 +1045,7 @@ test_arm_starts_and_self_heals
 test_arm_hup_cleans_child_and_temp_output
 test_arm_propagates_immediate_wake_before_confirmation
 test_arm_waits_for_peer_beacon_after_child_stands_down
+test_arm_names_foreign_watcher_lock_holder
 test_arm_fails_loud_when_no_fresh_watcher_confirmable
 test_cycle_exit_ledger_links_successor_and_stays_bounded
 test_stopped_watcher_is_live_but_stale_then_exit_is_classified

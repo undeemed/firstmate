@@ -70,10 +70,11 @@ exit 0
 SH
   # treehouse stub: return (teardown) and prune (orphan pass) both succeed,
   # printing FM_TEST_TREEHOUSE_OUT when set (silent otherwise), and every
-  # invocation is logged for the orphan-scoping assertion.
+  # invocation is logged with its cwd (prune is scoped by cwd, so the cwd is what
+  # identifies the pool) for the orphan-scoping assertions.
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
-[ -n "${FM_TEST_TREEHOUSE_LOG:-}" ] && printf '%s\n' "$*" >> "$FM_TEST_TREEHOUSE_LOG"
+[ -n "${FM_TEST_TREEHOUSE_LOG:-}" ] && printf '%s cwd=%s\n' "$*" "$PWD" >> "$FM_TEST_TREEHOUSE_LOG"
 [ -n "${FM_TEST_TREEHOUSE_OUT:-}" ] && printf '%s\n' "$FM_TEST_TREEHOUSE_OUT"
 exit 0
 SH
@@ -409,6 +410,42 @@ test_orphan_pass_scopes_prune_per_pool() {
   pass "orphan pass runs 'treehouse prune --yes' per pool, never --all/--global"
 }
 
+test_orphan_pass_skips_self_origin_clone() {
+  local case_dir log self out clone
+  case_dir=$(make_case orphan-self-origin)
+  # Stand in for this firstmate checkout, so the case is hermetic.
+  self="$case_dir/selfrepo"
+  git init -q "$self"
+  git -C "$self" remote add origin https://example.invalid/undeemed/firstmate.git
+
+  # Every ordinary spelling of that SAME repository must be skipped: `treehouse
+  # prune` in any of them would target the pool holding the primary and every
+  # secondmate home. The ported ssh:// form is what anyone behind a firewall
+  # has (GitHub's own fallback is ssh://git@ssh.github.com:443/owner/repo).
+  for clone in scp:git@example.invalid:undeemed/firstmate \
+    ported:ssh://git@example.invalid:2222/undeemed/firstmate \
+    https:https://example.invalid/undeemed/firstmate.git; do
+    git init -q "$case_dir/home/projects/self-${clone%%:*}"
+    git -C "$case_dir/home/projects/self-${clone%%:*}" remote add origin "${clone#*:}"
+  done
+  # A different repository on the same host must still be pruned.
+  git init -q "$case_dir/home/projects/other"
+  git -C "$case_dir/home/projects/other" remote add origin https://example.invalid/undeemed/other.git
+
+  log="$case_dir/treehouse.log"
+  out=$(run_sweep "$case_dir" FM_ROOT_OVERRIDE="$self" FM_TEST_TREEHOUSE_LOG="$log") \
+    || fail "self-origin: sweep exited non-zero"
+  [ -z "$out" ] || fail "self-origin: a skip is not a reportable event (got: $out)"
+
+  assert_grep "cwd=$case_dir/home/projects/other" "$log" \
+    "self-origin: a different-origin clone must still be pruned"
+  for clone in scp ported https; do
+    assert_no_grep "cwd=$case_dir/home/projects/self-$clone" "$log" \
+      "self-origin ($clone spelling): must never prune the pool backing this firstmate checkout"
+  done
+  pass "every spelling (scp, ported ssh, https) of this firstmate checkout's own repo is skipped; other pools still pruned"
+}
+
 test_orphan_idle_output_stays_quiet() {
   local case_dir out idle
   case_dir=$(make_case orphan-idle)
@@ -448,5 +485,6 @@ test_pr_recorded_landed_crew_is_reaped
 test_fresh_sweep_lock_is_silent_noop
 test_stale_sweep_lock_is_reclaimed
 test_orphan_pass_scopes_prune_per_pool
+test_orphan_pass_skips_self_origin_clone
 test_orphan_idle_output_stays_quiet
 test_orphan_action_output_is_reported
