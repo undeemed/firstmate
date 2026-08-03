@@ -262,13 +262,19 @@ wait_for_healthy_successor() {
 # a generic failure. Diagnostic only: never kills or steals, and resolution stays
 # a human or supervisor decision. Prints nothing when the holder is dead or is
 # genuinely this checkout's watcher, so it is only ever reached on a failure path.
+#
+# An ABSENT watcher-path or fm-home means UNKNOWN, never foreign: fm_lock_claim
+# publishes pid before bin/fm-watch.sh records fm-home/watcher-path/pid-identity,
+# so a pid-only lock is a legitimate transient of this checkout's own crashed
+# watcher. Only a recorded AND different path or home names a foreign holder.
 report_foreign_watcher_lock() {
   local pid lock_path lock_home
   pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
   fm_pid_alive "$pid" || return 0
   lock_path=$(cat "$WATCH_LOCK/watcher-path" 2>/dev/null || true)
   lock_home=$(cat "$WATCH_LOCK/fm-home" 2>/dev/null || true)
-  fm_same_path "$lock_path" "$WATCH" && fm_same_path "$lock_home" "$FM_HOME" && return 0
+  { [ -n "$lock_path" ] && ! fm_same_path "$lock_path" "$WATCH"; } ||
+    { [ -n "$lock_home" ] && ! fm_same_path "$lock_home" "$FM_HOME"; } || return 0
   echo "watcher: lock held by a live watcher from another checkout - pid=$pid watcher-path=${lock_path:-none} fm-home=${lock_home:-none} (this checkout: watcher-path=$WATCH fm-home=$FM_HOME); refusing to clear or kill it"
 }
 

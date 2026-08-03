@@ -760,6 +760,20 @@ test_arm_names_foreign_watcher_lock_holder() {
   ! grep -qF 'another checkout' "$armout" \
     || fail "arm blamed a foreign checkout for its own lock: $(cat "$armout")"
 
+  # A pid-only lock (fm_lock_claim publishes pid before bin/fm-watch.sh records
+  # fm-home/watcher-path, so a SIGKILL in that window leaves one behind) is
+  # UNKNOWN, not foreign: an absent field must never be read as a mismatch.
+  rm -f "$state/.watch.lock/fm-home" "$state/.watch.lock/watcher-path" \
+    "$state/.watch.lock/pid-identity"
+  touch "$state/.last-watcher-beat"
+  rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=1 FM_ARM_ATTACH_POLL=0.1 "$WATCH_ARM" > "$armout" || rc=$?
+  ! grep -qF 'another checkout' "$armout" \
+    || fail "arm blamed a foreign checkout for a pid-only lock: $(cat "$armout")"
+  grep -qF 'watcher: FAILED' "$armout" || fail "arm dropped its FAILED line: $(cat "$armout")"
+  [ "$rc" -ne 0 ] || fail "arm must still exit non-zero behind a live pid-only lock holder"
+
   kill "$peer" 2>/dev/null || true
   wait "$peer" 2>/dev/null || true
   pass "a live foreign lock holder is named (pid, watcher-path, fm-home) instead of timing out silently"

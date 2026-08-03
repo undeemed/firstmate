@@ -235,16 +235,25 @@ sweep_metas() {
 }
 
 # Reduce a remote URL to host/owner/repo so the spellings of one repository
-# compare equal: https://host/owner/repo.git, git@host:owner/repo, and
-# ssh://git@host/owner/repo all normalize to host/owner/repo. Our own clones
+# compare equal: https://host/owner/repo.git, git@host:owner/repo,
+# ssh://git@host/owner/repo, and the ported ssh://git@host:2222/owner/repo all
+# normalize to host/owner/repo. Our own clones
 # already vary on the .git suffix (founder-mode.git vs fpsmaxxing). An
 # unparseable or empty URL normalizes to itself/empty and simply fails to match.
 normalize_remote() {
-  local url=$1
+  local url=$1 scheme=0
   url=${url%/}
   url=${url%.git}
+  case "$url" in *://*) scheme=1 ;; esac
   url=${url#*://}   # scheme
   url=${url#*@}     # user@ (ssh, or credentials in an https URL)
+  # A scheme-bearing URL may carry an explicit port that is not part of the
+  # repository's identity (GitHub's SSH-over-443 fallback is spelled
+  # ssh://git@ssh.github.com:443/owner/repo). Without a scheme the colon is
+  # the scp-style path separator, never a port, so it is left alone.
+  if [ "$scheme" = 1 ] && [[ $url =~ ^([^/:]+):[0-9]+(/.*)?$ ]]; then
+    url="${BASH_REMATCH[1]}${BASH_REMATCH[2]:-}"
+  fi
   url=${url/:/\/}   # scp-style host:owner/repo -> host/owner/repo
   printf '%s' "$url" | tr '[:upper:]' '[:lower:]'
 }
