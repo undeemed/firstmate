@@ -867,6 +867,64 @@ SH
   pass "serial run unsets FM_HOME and the home override selectors"
 }
 
+# A test script that leaves a background child behind must not wedge the run.
+# The serial path once piped each script through tee, and tee only sees EOF once
+# every writer to the pipe is closed. A leaked child inherits the script's
+# stdout, so it held that pipe open forever after the script itself had already
+# exited and failed: the failure was never reported and no later script ran.
+# Deadline is enforced by polling for the summary rather than by `timeout`, which
+# stock macOS does not ship.
+test_serial_leaked_child_does_not_wedge_the_run() {
+  local tmp leaky_f after_f runner_pid leak_pid rc i
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-leak.XXXXXX")
+  leaky_f="$tmp/leaky.test.sh"
+  after_f="$tmp/after.test.sh"
+  cat >"$leaky_f" <<'SH'
+#!/usr/bin/env bash
+sleep 300 &
+printf '%s\n' "$!" > "$(dirname "$0")/leak.pid"
+echo "not ok - leaky"
+exit 1
+SH
+  cat >"$after_f" <<'SH'
+#!/usr/bin/env bash
+echo "ok - after"
+exit 0
+SH
+  chmod +x "$leaky_f" "$after_f"
+  set +e
+  "$RUNNER" "$leaky_f" "$after_f" >"$tmp/out.txt" 2>"$tmp/err.txt" &
+  runner_pid=$!
+  i=0
+  while [ "$i" -lt 600 ] && ! grep -q '^FM_TEST_SUMMARY ' "$tmp/out.txt" 2>/dev/null; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if ! grep -q '^FM_TEST_SUMMARY ' "$tmp/out.txt" 2>/dev/null; then
+    kill -KILL "$runner_pid" 2>/dev/null
+    wait "$runner_pid" 2>/dev/null
+    leak_pid=$(cat "$tmp/leak.pid" 2>/dev/null)
+    [ -n "$leak_pid" ] && kill -KILL "$leak_pid" 2>/dev/null
+    set -e
+    rm -rf "$tmp"
+    fail "runner wedged on a test script that leaked a background child"
+  fi
+  wait "$runner_pid"
+  rc=$?
+  leak_pid=$(cat "$tmp/leak.pid" 2>/dev/null)
+  [ -n "$leak_pid" ] && kill -KILL "$leak_pid" 2>/dev/null
+  set -e
+  [ "$rc" -ne 0 ] || { rm -rf "$tmp"; fail "runner must still report the leaky script's failure"; }
+  grep -q 'FM_TEST_SUMMARY total=2 failed=1' "$tmp/out.txt" \
+    || { rm -rf "$tmp"; fail "summary should report total=2 failed=1: $(grep FM_TEST_SUMMARY "$tmp/out.txt")"; }
+  grep -q '^not ok - leaky$' "$tmp/out.txt" \
+    || { rm -rf "$tmp"; fail "runner dropped the leaky script's own output"; }
+  grep -q '^ok - after$' "$tmp/out.txt" \
+    || { rm -rf "$tmp"; fail "runner did not run the script scheduled after the leaky one"; }
+  rm -rf "$tmp"
+  pass "a leaked background child does not wedge the serial run"
+}
+
 test_list_all_exact_suite_coverage
 test_family_selection
 test_single_script_selection
@@ -890,3 +948,4 @@ test_jobs_requires_proven_isolated
 test_jobs_parallel_scheduler_and_failure_propagation
 test_aggregate_json
 test_serial_run_unsets_home_overrides
+test_serial_leaked_child_does_not_wedge_the_run
