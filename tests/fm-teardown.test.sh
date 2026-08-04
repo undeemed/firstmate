@@ -522,10 +522,13 @@ test_teardown_prompts_tasks_axi_done_when_compatible() {
   add_compatible_tasks_axi "$case_dir"
 
   out=$(run_teardown "$case_dir") || fail "teardown failed with compatible tasks-axi"
-  printf '%s\n' "$out" | grep -F 'tasks-axi done task-x1 --pr https://github.com/example/repo/pull/7' >/dev/null \
-    || fail "teardown did not prompt tasks-axi done: $out"
-  printf '%s\n' "$out" | grep -F 'tasks-axi ready' >/dev/null \
-    || fail "teardown did not prompt tasks-axi ready: $out"
+  # Both printed commands must name the backlog by absolute path: the reader pastes
+  # them into a shell whose directory is unknown, and tasks-axi silently falls back to
+  # ./data/backlog.md when it is not told which file to use.
+  printf '%s\n' "$out" | grep -E 'tasks-axi done task-x1 --pr https://github\.com/example/repo/pull/7 --file "/[^"]*/data/backlog\.md"' >/dev/null \
+    || fail "teardown did not prompt tasks-axi done with an absolute backlog file: $out"
+  printf '%s\n' "$out" | grep -E 'tasks-axi ready --file "/[^"]*/data/backlog\.md"' >/dev/null \
+    || fail "teardown did not prompt tasks-axi ready with an absolute backlog file: $out"
   printf '%s\n' "$out" | grep -F 'check date gates' >/dev/null \
     || fail "teardown did not preserve date-gate check: $out"
   printf '%s\n' "$out" | grep -F 'keep Done to the 10 most recent' >/dev/null \
@@ -542,8 +545,8 @@ test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present() {
   add_compatible_tasks_axi "$case_dir"
 
   out=$(run_teardown "$case_dir") || fail "teardown failed with manual backlog backend"
-  printf '%s\n' "$out" | grep -F 'Update data/backlog.md - move task-x1 to Done' >/dev/null \
-    || fail "teardown did not prompt manual backlog update under opt-out: $out"
+  printf '%s\n' "$out" | grep -E 'Update /[^ ]*/data/backlog\.md - move task-x1 to Done' >/dev/null \
+    || fail "teardown did not prompt an absolute manual backlog path under opt-out: $out"
   printf '%s\n' "$out" | grep -F 'tasks-axi done' >/dev/null \
     && fail "teardown prompted tasks-axi despite manual backend opt-out: $out"
   pass "teardown honors config/backlog-backend=manual even when tasks-axi is compatible"

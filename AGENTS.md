@@ -444,6 +444,8 @@ Mention cost as a courtesy when unusually much work is running, but never block 
 
 `data/backlog.md` is the durable queue.
 It tracks work items only, never agents; persistent secondmates never appear as backlog items.
+Every `tasks-axi` command you run must name the backlog explicitly with `--file <absolute path to this home's data/backlog.md>`, placed after the subcommand; placeholder examples anywhere in this repo show only the verb and its own flags, so add this one yourself when you run one.
+Without that flag `tasks-axi` reads `.tasks.toml` only when the current directory happens to contain it and otherwise silently reads or creates a different backlog, so a full queue reports empty and an added item lands where nobody will ever read it.
 Work routed to a secondmate is recorded in that secondmate home's own backlog, not the main backlog.
 When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item; use `tasks-axi hold <id> --reason "<reason>" --kind captain` for a captain-gated thread.
 Unresolved decisions discovered by investigations or visual reviews follow `decision-hold-lifecycle`, which owns their mandatory backlog lifecycle.
