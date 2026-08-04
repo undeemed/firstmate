@@ -420,30 +420,40 @@ work_is_landed() {
 }
 
 backlog_refresh_reminder() {
-  local pr done_cmd report_path
+  local pr done_cmd report_path abs_data backlog file_arg
   [ "$KIND" = secondmate ] && return 0
+  # These commands are pasted into a shell whose directory is unknown, and tasks-axi
+  # reads .tasks.toml only from the current directory - from anywhere else it silently
+  # falls back to ./data/backlog.md, so a full queue reads empty and an add lands in a
+  # file nobody reads. Name the backlog absolutely; --file is a global flag and parses
+  # only after the subcommand.
+  abs_data=$(cd "$DATA" 2>/dev/null && pwd -P) || abs_data=$DATA
+  backlog="$abs_data/backlog.md"
+  file_arg="--file \"$backlog\""
   if fm_tasks_axi_backend_available "$CONFIG"; then
     case "$KIND" in
       scout)
+        # --report stays relative: it is a link stored in the backlog, not a path
+        # resolved at run time, and tasks-axi rejects any form but data/<id>/report.md.
         report_path="data/$ID/report.md"
-        done_cmd="tasks-axi done $ID --report $report_path"
+        done_cmd="tasks-axi done $ID --report $report_path $file_arg"
         ;;
       *)
         if [ "$MODE" = local-only ]; then
-          done_cmd="tasks-axi done $ID --note \"local main\""
+          done_cmd="tasks-axi done $ID --note \"local main\" $file_arg"
         else
           pr=$PR_URL
           if [ -n "$pr" ]; then
-            done_cmd="tasks-axi done $ID --pr $pr"
+            done_cmd="tasks-axi done $ID --pr $pr $file_arg"
           else
-            done_cmd="tasks-axi done $ID --pr PR_URL"
+            done_cmd="tasks-axi done $ID --pr PR_URL $file_arg"
           fi
         fi
         ;;
     esac
-    printf '%s\n' "Backlog: $ID just finished. Run $done_cmd, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
+    printf '%s\n' "Backlog: $ID just finished. Run $done_cmd, then run tasks-axi ready $file_arg for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   else
-    printf '%s\n' "Backlog: $ID just finished. Update data/backlog.md - move $ID to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
+    printf '%s\n' "Backlog: $ID just finished. Update $backlog - move $ID to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
   fi
 }
 
