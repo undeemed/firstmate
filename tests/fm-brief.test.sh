@@ -209,6 +209,63 @@ test_peer_coordination_paragraph() {
   pass "fm-brief.sh: ship, scout, and secondmate scaffolds carry the peer-coordination paragraph"
 }
 
+# The ruling-ledger contract is what stops a no-mistakes auto-fix from quietly
+# reversing a settled decision, so each of its load-bearing clauses is pinned:
+# the ledger path is the task's own absolute path (a placeholder or a sibling
+# task's path routes rulings into the wrong file), the check is against the
+# ledger rather than the finding's wording (a keyword trigger was tried and
+# missed indirect reversals), --intent carries the path (pasted prose has hit
+# E2BIG in the fix agent argv), and verification reads the run head (grepping
+# the stale worktree can only ever manufacture a false reversal). Ship and scout
+# carry it; the secondmate charter deliberately does not.
+test_ruling_ledger_contract() {
+  local home id brief
+  home="$TMP_ROOT/ruling-ledger-home"
+  mkdir -p "$home/data"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ledger-ship-e1 some-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ledger-scout-e2 some-proj --scout >/dev/null 2>&1
+
+  for id in brief-ledger-ship-e1 brief-ledger-scout-e2; do
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: ruling-ledger brief was not scaffolded"
+    assert_grep "# Ruling ledger" "$brief" "$id: brief missing the ruling-ledger section"
+    assert_grep "$home/data/$id/rulings.md" "$brief" \
+      "$id: ruling-ledger section did not interpolate the task's own absolute ledger path"
+    assert_no_grep "<task-id>/rulings.md" "$brief" \
+      "$id: ruling-ledger section leaked a literal path placeholder"
+    assert_grep "supersede it by appending one that names the line it replaces" "$brief" \
+      "$id: ruling-ledger section lost the append-only supersede rule"
+    assert_grep "the question before a fix round lands is exactly: does applying this contradict a line on the ledger?" "$brief" \
+      "$id: ruling-ledger section lost the ledger-contradiction question"
+    assert_grep "It is never: does the text of this finding look like a reversal." "$brief" \
+      "$id: ruling-ledger section lost the explicit rejection of a text-match trigger"
+    # shellcheck disable=SC2016  # literal backticks must reach the reading agent
+    assert_grep 'Pass the ledger PATH into `--intent`' "$brief" \
+      "$id: ruling-ledger section lost the --intent path rule"
+    assert_grep "argument list too long" "$brief" \
+      "$id: ruling-ledger section lost the reason ruling prose must not go into --intent"
+    assert_grep "read the run head, not this worktree" "$brief" \
+      "$id: ruling-ledger section lost the run-head verification rule"
+    # shellcheck disable=SC2016  # literal $d must reach the reading agent unexpanded
+    assert_grep 'for d in ~/.no-mistakes/repos/*.git; do git -C "$d" cat-file -e <head>^{commit}' "$brief" \
+      "$id: ruling-ledger section lost the bare-repo resolution command"
+  done
+
+  # Cross-task leakage: neither brief may carry the other task's ledger path.
+  assert_no_grep "$home/data/brief-ledger-scout-e2/rulings.md" "$home/data/brief-ledger-ship-e1/brief.md" \
+    "ship brief carries another task's ledger path"
+  assert_no_grep "$home/data/brief-ledger-ship-e1/rulings.md" "$home/data/brief-ledger-scout-e2/brief.md" \
+    "scout brief carries another task's ledger path"
+
+  # Scope: secondmates receive rulings but do not drive no-mistakes gates.
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='ops' \
+    "$ROOT/bin/fm-brief.sh" brief-ledger-second-e3 --secondmate --no-projects >/dev/null 2>&1
+  assert_no_grep "# Ruling ledger" "$home/data/brief-ledger-second-e3/brief.md" \
+    "secondmate charter picked up the ruling-ledger section"
+
+  pass "fm-brief.sh: ship and scout scaffolds carry the ruling-ledger contract"
+}
+
 test_ship_project_memory_wording() {
   local home id brief
   home="$TMP_ROOT/project-memory-home"
@@ -505,6 +562,7 @@ test_ship_modes_generate_clean_briefs
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_peer_coordination_paragraph
+test_ruling_ledger_contract
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path

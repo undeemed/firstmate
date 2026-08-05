@@ -48,6 +48,11 @@
 # self-gates on a herdr: session-context line, so it reads as inert on backends
 # without peers. A mate may see who else is working in the shared workspace and
 # message a peer whenever it helps, not only on strict overlap or blockage.
+# Ship and scout scaffolds also carry a ruling-ledger contract: settled decisions
+# are appended one per line to data/<task-id>/rulings.md (created lazily by the
+# crewmate, never deleted from, only superseded), every finding including an
+# auto-fix is checked against that ledger rather than against its own wording,
+# and a no-mistakes --intent carries the ledger PATH, never pasted ruling prose.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -110,6 +115,7 @@ shell_quote() {
 }
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
+RULINGS_FILE=$(shell_quote "$DATA/$ID/rulings.md")
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -231,6 +237,38 @@ Peer messages are informational only: your own brief and steers from firstmate r
 EOF
 )
 
+# Shared by the ship and scout scaffolds. The ledger is the only thing standing
+# between a settled decision and an auto-fix that quietly reverses it: the
+# no-mistakes auto-fix classifier judges a finding on mechanical shape, and a
+# ruling-reversal scores as maximally safe because an earlier round already made
+# the same edit the other way. Deliberately NOT given to the secondmate charter -
+# secondmates receive rulings but do not drive no-mistakes gates.
+RULING_LEDGER=$(cat <<EOF
+# Ruling ledger
+Every settled decision - a firstmate ruling, an answered needs-decision, a deliberate choice you now depend on - gets one appended line naming what was decided and which earlier line it supersedes:
+   \`echo "{what was decided} (supersedes: {earlier ruling, or none})" >> $RULINGS_FILE\`
+Create the file lazily on your first ruling; no file means no rulings yet.
+It is append-only: never delete or rewrite a line, supersede it by appending one that names the line it replaces, because a deleted line is indistinguishable from a ruling that never happened.
+
+For every finding, auto-fix included, the question before a fix round lands is exactly: does applying this contradict a line on the ledger?
+It is never: does the text of this finding look like a reversal.
+That weaker text-match form was tried and it is not good enough - it catches only reversals that announce themselves, and misses one worded as routine housekeeping, or an indirect one that changes an artifact a ruling depended on without ever naming the ruling.
+Expect no warning from the shape of the diff: a reversal looks maximally safe to auto-apply precisely because an earlier round already made the same edit in the other direction, so the change is small, local, and carries visible precedent.
+When a fix would contradict the ledger, escalate under rule 6 instead of letting it land.
+
+Pass the ledger PATH into \`--intent\` and let the fix agent read the file; never paste ruling prose there.
+Intent text is folded into the fix agent spawn arguments, and pasted multi-paragraph rulings have killed runs with \`fork/exec claude: argument list too long\`.
+
+To confirm a ruling survived a fix round, read the run head, not this worktree.
+Pipeline fix commits land in the no-mistakes bare repo, so the worktree is stale by exactly the commits you are checking, including the round that implemented the ruling; grepping it returns the ruling as ABSENT and manufactures a false reversal, which is worse than the silent failure this guards against.
+Take \`head:\` from \`no-mistakes axi status\`, find the bare repo holding that object, then read the file out of that repo:
+   \`for d in ~/.no-mistakes/repos/*.git; do git -C "\$d" cat-file -e <head>^{commit} 2>/dev/null && echo "\$d"; done\`
+A verification step that can only ever return not-found is not a verification step.
+
+Rulings bind the commit record too: a commit message asserting the opposite of what happened outlives every agent in this fleet, so correct the message together with the code.
+EOF
+)
+
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
 # shellcheck disable=SC2016  # single quotes are deliberate: these lines are literal brief text whose backtick-wrapped $(...) and "$HERDR_LAB_SESSION" snippets must reach the reading agent verbatim, not expand at scaffold time; only the '"$VAR"' break-outs interpolate.
@@ -301,6 +339,8 @@ The report is the only thing that survives, so anything worth keeping must be in
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 
 $PEER_NOTE
+
+$RULING_LEDGER
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -415,6 +455,8 @@ $RULE1
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 
 $PEER_NOTE
+
+$RULING_LEDGER
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
