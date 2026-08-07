@@ -51,5 +51,8 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "claude-code-wakatime@wakatime": true
   }
 }
