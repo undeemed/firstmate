@@ -1,6 +1,6 @@
 ---
 name: harness-adapters
-description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, kimi, and muse.
+description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, omp, pi, pi-signed, grok, kimi, and muse.
 user-invocable: false
 metadata:
   internal: true
@@ -41,6 +41,7 @@ If the captain asks for a new harness, propose verifying it first: spawn a trivi
 
 `bin/fm-harness.sh` prints firstmate's own harness, using verified env markers first and then process ancestry.
 Within the Pi family, only the exact launch-boundary marker `FM_PI_HARNESS=pi-signed` alongside `PI_CODING_AGENT=true` selects the signed identity; unmarked shared launcher ancestry remains `pi`.
+`omp` exports `OMPCODE=1` and `CLAUDECODE=1` together into every child it spawns, so its own marker is tested before claude's; reordering those two checks makes every omp session read as claude.
 `bin/fm-harness.sh crew` resolves the effective crewmate harness from `config/crew-harness` (absent or `default` -> own).
 `bin/fm-harness.sh secondmate` resolves the secondmate-launch harness through the chain `config/secondmate-harness` -> `config/crew-harness` -> own, so an unset `config/secondmate-harness` matches the crew harness.
 `bin/fm-spawn.sh` uses `crew` mode for a crewmate/scout launch and `secondmate` mode for a `--secondmate` launch, re-resolving on every spawn so the split is durable across respawns; an explicit per-spawn harness arg overrides either.
@@ -120,6 +121,7 @@ The supported launch-profile flags below are verified locally; each row records 
 | codex | `--model <model>` | `-c 'model_reasoning_effort="<low\|medium\|high\|xhigh>"'` | Verified on codex-cli 0.142.1. The installed binary schema contains `model_reasoning_effort`, the active config uses it, and the bundled model catalog advertises only low/medium/high/xhigh. `max` is omitted. |
 | grok | `--model <model>` | `--reasoning-effort <low\|medium\|high>` | Verified on grok 0.2.99 (2026-07-13). `--effort` is an alias, but firstmate's profile axis is reasoning effort. As of 0.2.99 the ceiling is `high`; both `xhigh` and `max` are rejected with `use one of: high, medium, low`, so firstmate omits them. |
 | pi / pi-signed | `--model <model>` | `--thinking <low\|medium\|high\|xhigh\|max>` | Verified 2026-07-27 on Pi and pi-signed 0.82.0. Both expose the same accepted thinking levels and completed the same model-qualified max-thinking smoke. |
+| omp | `--model <model>` | `--thinking <low\|medium\|high\|xhigh\|max>` | Verified 2026-08-15 against installed omp 17.3.4 `--help`. The flag also accepts `off\|minimal\|auto`, which sit outside the shared vocabulary and stay unreachable rather than remapped. |
 | opencode | `--model <provider/model>` | none for firstmate's interactive launch | Verified on opencode 1.17.6. `opencode run` has `--variant`, but firstmate launches the interactive `opencode --prompt` path, which has no verified effort flag. |
 | kimi | `--model <model>` | none | Verified 2026-07-25 on Kimi Code CLI 0.29.1. |
 | muse | `--model <model>` | `--reasoning-effort <low\|medium\|high\|xhigh>`, and `ultra` only for an explicit `max` | Verified 2026-08-05 on Muse Code 0.1.0-R708.1. The flag accepts `none\|minimal\|low\|medium\|high\|xhigh\|ultra` and defaults to `high`. `ultra` is muse's max-class level, so it is reachable only through an explicit captain `max`, never from the generic fallback; `none` and `minimal` sit below the shared vocabulary and stay unreachable. |
@@ -138,6 +140,7 @@ Use the discovery surface in the current authenticated environment because suppo
 | codex | Open the current interactive session's `/model` picker. |
 | opencode | Run `opencode models [provider]`, which lists available provider/model identifiers. |
 | pi / pi-signed | Run the selected executable as `<executable> --list-models [search]`; Pi's installed `docs/models.md` owns how built-in, extension-registered, and custom provider/model entries reach that list. |
+| omp | Run `omp models`, or open the running session's `/model` picker. `--model` fuzzy-matches, so quote the listing's exact identifier rather than an abbreviation. |
 | grok | Run `grok models`, which lists the models available to the current Grok installation and account. |
 | kimi | Run `kimi provider list --json`, which lists the current provider and model configuration. |
 
@@ -157,6 +160,7 @@ Natural language is acceptable if uncertain.
 - codex: `$<skill>`, for example `$no-mistakes`; `/<skill>` is claude-only and codex rejects it as "Unrecognized command".
 - opencode: no separate verified skill invocation beyond normal slash-command behavior; use natural language if the exact skill command is uncertain.
 - pi and pi-signed: no separate verified skill invocation beyond normal command behavior; use natural language if the exact skill command is uncertain.
+- omp: `/skill:<skill>`, for example `/skill:no-mistakes`. The `skill:` prefix is part of the registered command name, so the bare claude form `/no-mistakes` is not a registered omp command; use natural language if the exact skill command is uncertain.
 - grok: `/<skill>`, for example `/no-mistakes` (same form as claude). Verified end to end: grok discovers the user-level `no-mistakes` skill, `/no-mistakes` invokes it, and grok drives a real `no-mistakes axi run`. Like codex's `$`/`/` popups, typing `/<skill>` opens grok's slash-autocomplete, so a too-fast Enter selects the popup entry instead of sending, and for an argument-taking command (like `/no-mistakes`'s optional task-first argument) that first Enter only expands the popup selection into an argument-hint placeholder rather than submitting - a genuine second Enter is required (see the grok section below for the 2026-07-03 incident and fix). `fm_tmux_submit_core`'s retried Enter (used by `fm-send` on the tmux backend) handles this through the structural composer reader; the herdr backend needed a dedicated fix (`fm_backend_herdr_composer_state`, docs/herdr-backend.md) because its prior delta-based verification false-positived on that same popup-close content change.
 - kimi: `/<skill>`, for example `/no-mistakes`.
 
@@ -296,6 +300,33 @@ Pi's primary watcher protocol also requires the tracked `.pi/extensions/fm-prima
 The model arms through `fm_watch_arm_pi`, never a foreground bash arm; the watcher tool result and clean-exit fallback are owned by `docs/supervision-protocols/pi.md`.
 `bin/fm-session-start.sh` reports when the live Pi-family session has not loaded both the turn-end guard and watcher extensions, and points at the selected executable after project trust as the fix, with `-e` as a trust-free fallback.
 When a secondmate is launched on Pi or pi-signed, `fm-spawn.sh --secondmate` launches the selected executable with both `-e .pi/extensions/fm-primary-turnend-guard.ts` and `-e .pi/extensions/fm-primary-pi-watch.ts`, both already present in the secondmate home's git worktree.
+
+## omp (Oh My Pi) (omp 17.3.4; liveness VERIFIED 2026-08-15, remaining rows STATIC EVIDENCE and live TUI facts NOT yet verified)
+
+omp is a pi fork distributed as the npm package `@oh-my-pi/pi-coding-agent` and executed by bun.
+It is a CREWMATE and SCOUT adapter only.
+`bin/fm-spawn.sh` refuses `--secondmate` on omp because the tracked primary turn-end guard re-arms from pi's `agent_settled`, which omp does not emit; porting that guard is what would make omp a secondmate adapter.
+
+Liveness is the one row measured against a real omp process, through the opt-in drift guard.
+Every other row below is read from the installed binary's `--help`, its shipped TypeScript declarations, and its bundle, not from a live supervised session.
+Treat the composer, dialog, and submission rows as UNVERIFIED until a real omp crewmate has been supervised end to end, and re-read this section's date before trusting them.
+
+| Fact | Value |
+|---|---|
+| Binary | `omp` on `PATH`, a bun launcher for `@oh-my-pi/pi-coding-agent/dist/cli.js`. Measured live: the pane title reads `bun` and only the foreground `comm` reads `omp`, so supervision attributes an omp pane from the foreground name alone (evidence: `docs/verification/runtime-backends.md`). |
+| Launch | Positional prompt, the pi shape, so the brief rides the launch command. Keep it as ONE positional argument. |
+| Autonomy | `--auto-approve` (skip every tool-approval prompt). `--approval-mode yolo` is the equivalent long form. |
+| Busy state | The Firstmate-owned extension's `agent_start` (busy) and `agent_end` (idle). omp has NO `agent_settled`, so idle requires all three of its own settle signals to agree: `event.willContinue` false, `ctx.isIdle()` true, and `ctx.hasPendingMessages()` false. |
+| Turn-end | The same extension's `turn_end`, loaded with `-e` from `state/<id>.omp-ext.ts` outside the worktree. |
+| Exit command | `/exit`, or `/quit` (alias `/q`); both resolve to the same handler. `Ctrl-D` is the `app.exit` keybind. |
+| Interrupt | Single Escape (`app.interrupt`, default key `escape`). |
+| Environment marker | `OMPCODE=1`, exported to children ALONGSIDE `CLAUDECODE=1`; see Detection above for the precedence this forces. omp does NOT set `PI_CODING_AGENT`, so there is no collision with the pi marker. |
+| Effort | `--thinking`; see the launch-profile table above for the mapping. |
+| Resume | `-c` / `--continue` for the previous session, `-r` / `--resume <id-prefix\|path>` for a specific one; bare `-r` opens a picker. |
+| Trust dialog | None found. omp 17.3.4 ships no `trust.json` store and none exists under `~/.omp/agent/`, unlike pi. This is a bundle-level negative, not an observed first run, and the launch path does not depend on it because the extension is loaded from `state/` by absolute path. |
+
+`--extension`/`-e` loads an extension by explicit path even when `--no-extensions` disables discovery, so the firstmate extension survives a discovery-disabled profile.
+omp registers skills as `/skill:<name>` commands rather than bare `/<name>`.
 
 ## grok (VERIFIED 2026-06-29, grok 0.2.73; slash-submit re-verified 2026-07-03 on 0.2.82; reasoning-effort ceiling re-verified 2026-07-13 on 0.2.99; exit paths re-verified 2026-07-19 on grok 0.2.103)
 

@@ -76,6 +76,15 @@ fm_backend_agent_state tmux museliv:zsh
 alive
 ```
 
+The crewmate-only omp (Oh My Pi) 17.3.4 adapter was verified on 2026-08-15 against tmux 3.6 on Linux x86_64, through the same live drift guard.
+omp is the second harness after Claude Code whose title does not attribute it at all: bun launches the bundle, so `#{pane_current_command}` reads `bun` and only the foreground `comm` carries `omp`.
+Nothing in the classifier names omp directly; the verdict comes from the exact harness path component owned by `bin/fm-session-lock-lib.sh`, which is why `composer` and `docker-compose` stay ambiguous.
+
+```text
+# omp omp/17.3.4: title='bun' foreground=[omp ]
+ok - harness liveness: omp omp/17.3.4 classifies alive
+```
+
 `#{pane_current_command}` and foreground `ps -o comm=` read different name fields, but which one preserves executable identity is platform-dependent.
 On macOS the pane command reflected the rewritable title while the full install path could survive in `ps -o comm=`; in the Linux portable regression those roles reversed for the version-named native executable, with the identifying path retained in argv[0].
 The classifier therefore accepts a harness basename first, then an exact harness path component in the full executable path, then the same component in argv[0], without depending on which field carries it on a given platform.
