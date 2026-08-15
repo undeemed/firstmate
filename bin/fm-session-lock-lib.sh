@@ -62,6 +62,15 @@ fm_harness_process_matches() {  # <comm> <args>
     case "$name" in claude) FM_HARNESS_IS_CLAUDE=1 ;; esac
     return 0
   fi
+  # omp (Oh My Pi) ships as a bun-executed bundle. bun renames the process to
+  # omp, which the name evidence above already catches, but the pre-rename shape
+  # reports comm=bun with the bundle path in argv, and the interpreter arm below
+  # cannot see it because bun is neither node nor python. Reading the package
+  # path as a second independent signal keeps identity from resting on the
+  # rename alone; it is exact enough that no other harness can carry it.
+  case "$args" in
+    *@oh-my-pi/pi-coding-agent*) return 0 ;;
+  esac
   # Bare interpreter (e.g. node): match the harness name in its script path.
   case "$comm" in
     *node*|*python*)
