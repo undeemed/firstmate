@@ -134,6 +134,71 @@ SH
   pass "session-lock: ordinary script paths under a harness directory are not harness processes"
 }
 
+test_omp_session_is_identified_and_lookalikes_are_not() {
+  local dir fakebin got comm_omp comm_lookalike
+  dir="$TMP_ROOT/omp-session"
+  fakebin=$(fm_fakebin "$dir")
+  mkdir -p "$dir/state"
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+set -u
+field= pid=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) field=$2; shift 2 ;;
+    -p) pid=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$pid:$field:${FM_TEST_OMP_SHAPE:-omp}" in
+  900:comm=:omp) printf '%s\n' 'omp' ;;
+  900:args=:omp) printf '%s\n' 'bun /home/u/.bun/bin/omp' ;;
+  900:comm=:lookalike) printf '%s\n' 'composer' ;;
+  900:args=:lookalike) printf '%s\n' '/opt/compose/bin/composer run' ;;
+  900:ppid=:*) printf '%s\n' 1 ;;
+  *:comm=:*) printf '%s\n' bash ;;
+  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-watch-arm.sh' ;;
+  *:ppid=:*) printf '%s\n' 900 ;;
+esac
+SH
+  chmod +x "$fakebin/ps"
+  printf '900\n' > "$dir/state/.lock"
+
+  # Prove the two shapes really do report different processes before asserting
+  # that identity separates them, so neither half can pass by quietly reporting
+  # the other one's command name.
+  comm_omp=$(FM_TEST_OMP_SHAPE=omp "$fakebin/ps" -o comm= -p 900)
+  comm_lookalike=$(FM_TEST_OMP_SHAPE=lookalike "$fakebin/ps" -o comm= -p 900)
+  [ "$comm_omp" = omp ] \
+    || fail "fixture drift: the omp shape reported '$comm_omp' rather than omp"
+  [ "$comm_lookalike" = composer ] \
+    || fail "fixture drift: the lookalike shape reported '$comm_lookalike' rather than composer"
+
+  # omp runs its tool commands in-process, so the walk starts AT the session:
+  # procps reports the renamed exec name omp while argv[0] still says bun.
+  got=$(FM_TEST_OMP_SHAPE=omp lib_eval "$fakebin" 'fm_harness_ancestry_pid') \
+    || fail "omp: the session was not found in the ancestry at all"
+  [ "$got" = 900 ] || fail "omp: ancestry resolved '$got', expected the omp session pid 900"
+  FM_TEST_OMP_SHAPE=omp lib_eval "$fakebin" 'fm_harness_pid_alive 900' \
+    || fail "omp: a live omp session was not recognized as a harness"
+  FM_TEST_OMP_SHAPE=omp lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
+    || fail "omp: the session holding the lock did not recognize itself as the owner"
+
+  # That identity is anchored on purpose, because it is matched as a substring:
+  # a command name that merely CONTAINS omp - composer, docker-compose - must
+  # stay outside it.
+  if FM_TEST_OMP_SHAPE=lookalike lib_eval "$fakebin" 'fm_harness_ancestry_pid'; then
+    fail "omp: an omp-lookalike command name was treated as a harness process"
+  fi
+  if FM_TEST_OMP_SHAPE=lookalike lib_eval "$fakebin" 'fm_harness_pid_alive 900'; then
+    fail "omp: an omp-lookalike command name passed the harness-liveness predicate"
+  fi
+  if FM_TEST_OMP_SHAPE=lookalike lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'"; then
+    fail "omp: an omp-lookalike command name claimed the home's session lock"
+  fi
+  pass "session-lock: an omp session is identified while omp-lookalike names are not"
+}
+
 test_harness_beyond_a_gap_never_owns_the_lock() {
   local dir fakebin got
   dir="$TMP_ROOT/gap"
@@ -358,6 +423,7 @@ test_e2e_daemon_parented_version_named_session_keeps_its_lock() {
 
 test_version_named_session_is_identified_on_both_platforms
 test_ordinary_paths_are_never_harness_processes
+test_omp_session_is_identified_and_lookalikes_are_not
 test_harness_beyond_a_gap_never_owns_the_lock
 test_competing_version_named_session_is_seen_as_live
 test_e2e_version_named_session_claims_the_home
