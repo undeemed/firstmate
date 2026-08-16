@@ -48,7 +48,8 @@ $ grep -nE 'muse-bin|exec ' launcher.sh
 
 `ps -o comm= -p <pid>` returns the full executable path, whose basename is `muse-bin-<version>`.
 That is why both `bin/fm-harness.sh` and `bin/backends/tmux.sh` match the anchored prefix `muse-bin-*` rather than an exact name, and why neither can rely on an install-path component: `~/.local/bin/muse-bin-<version>` contains no `muse` path component.
-The Muse launch clears `CLAUDECODE`, `PI_CODING_AGENT`, `GROK_AGENT`, and `FM_PI_HARNESS` before the worker starts so foreign primary markers cannot override the versioned ancestry.
+The Muse launch template clears `CLAUDECODE`, `PI_CODING_AGENT`, `GROK_AGENT`, and `FM_PI_HARNESS` before the worker starts so foreign primary markers cannot override the versioned ancestry.
+Those four are Muse's own measured launch property; the shared scrub that `bin/fm-spawn.sh` prepends to every locally sent launch command also clears `OMPCODE`, so an inherited omp marker cannot survive a Muse launch either.
 
 [`runtime-backends.md`](runtime-backends.md#agent-liveness-name-sources) owns the resulting tmux liveness verdict and its relationship to the portable decoy regression.
 

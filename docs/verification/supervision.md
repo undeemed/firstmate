@@ -231,6 +231,7 @@ macOS reports `argv[0]` in `ps -o comm=` instead, so a renamed omp session there
 That macOS behaviour is UNVERIFIED: no macOS host was available for this measurement, so omp identity is recorded as proven on Linux only and is NOT claimed cross-platform.
 One command on a live macOS omp session closes it: `ps -o comm=,args= -p <omp pid>`.
 `tests/fm-session-lock-ancestry.test.sh` pins both platforms' reporting semantics behind a deterministic process table, covers omp identification together with the rejection of an omp-lookalike command name, and runs the real Stop auto-arm in version-named, daemon-parented, and combined real process trees.
+`tests/fm-omp-harness.test.sh` pins the rest of omp identity: omp's own `OMPCODE` marker is tested before the `CLAUDECODE` it exports alongside it, the bundle-path arms in both files resolve the unmeasured `comm=bun` shape, and an omp-lookalike command name reaches neither the detection verdict nor the lock holder.
 `tests/fm-watch-arm.test.sh` runs a real watcher and attached arm to verify that a delivered reason survives queue draining, while an unrelated queue append cannot make a watcher cycle that delivered nothing look successful.
 
 The Claude product live path ran with Claude Code 2.1.219 on 2026-07-24:
