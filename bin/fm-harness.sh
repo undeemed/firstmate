@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Detect the agent harness this process tree runs on.
-# Usage: fm-harness.sh                  print own harness: claude|codex|opencode|pi|pi-signed|grok|kimi|muse|unknown
+# Usage: fm-harness.sh                  print own harness: claude|codex|opencode|omp|pi|pi-signed|grok|kimi|muse|unknown
 #        fm-harness.sh crew             print the effective CREWMATE harness
 #                                        (config/crew-harness; "default" resolves to own)
 #        fm-harness.sh secondmate       print the harness the PRIMARY uses to launch
@@ -30,11 +30,15 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 detect_own() {
   # Layer 1: environment markers for verified harnesses.
   # Keep marker detection before ancestry detection as an explicit precedence rule.
-  # Only claude, pi, and grok set verified markers of their own; codex, opencode,
-  # kimi, and muse are markerless, so a foreign marker retained in a terminal
-  # multiplexer's stored environment can silently misidentify one of them before
-  # ancestry is consulted. This is a precedence hazard, not evidence that
-  # CLAUDECODE inheritance into a kimi child was observed; it was not observed.
+  # Only claude, omp, pi, and grok set verified markers of their own; codex,
+  # opencode, kimi, and muse are markerless, so a foreign marker retained in a
+  # terminal multiplexer's stored environment can silently misidentify one of them
+  # before ancestry is consulted. For those four that stays a precedence hazard,
+  # not an observation. omp is the one MEASURED case of a foreign marker: it
+  # exports OMPCODE=1 and CLAUDECODE=1 together into every child process it
+  # spawns (verified in the omp 17.3.4 bundle's child-environment builder), so its
+  # own marker has to be tested FIRST or every omp session is read as claude.
+  [ "${OMPCODE:-}" = "1" ] && { echo omp; return; }
   [ "${CLAUDECODE:-}" = "1" ] && { echo claude; return; }
   if [ "${PI_CODING_AGENT:-}" = "true" ]; then
     if [ "${FM_PI_HARNESS:-}" = pi-signed ]; then echo pi-signed; else echo pi; fi
@@ -73,6 +77,23 @@ detect_own() {
       # prefix rather than any exact name. Deliberately anchored, never *muse*, so
       # unrelated commands (musescore, amuse) cannot be misread as this harness.
       muse|muse-bin-*) echo muse; return ;;
+      # omp (Oh My Pi) is a pi fork whose bun launcher renames the process to
+      # omp, so a live session reports comm=omp while argv[0] still says bun.
+      # Deliberately anchored, never *omp*, so composer and docker-compose
+      # cannot be misread as this harness.
+      omp) echo omp; return ;;
+      # Defensive insurance, not a measured shape: on the one platform measured
+      # (Linux, omp 17.3.4, recorded in docs/verification/supervision.md) no omp
+      # process reports comm=bun with omp's bundle in argv, and a live session
+      # reports the renamed comm=omp that the arm above catches. Match the
+      # package path, which no other harness carries, rather than widening the
+      # interpreter arm below to every binary that happens to live under
+      # ~/.bun/bin.
+      bun)
+        args=$(ps -o args= -p "$pid" 2>/dev/null)
+        case "$args" in
+          *@oh-my-pi/pi-coding-agent*) echo omp; return ;;
+        esac ;;
       pi-signed) echo pi; return ;;
       pi) echo pi; return ;;
       node*|python*)
