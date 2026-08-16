@@ -82,10 +82,13 @@ detect_own() {
       # Deliberately anchored, never *omp*, so composer and docker-compose
       # cannot be misread as this harness.
       omp) echo omp; return ;;
-      # Pre-rename shape: comm is still the bun interpreter with omp's bundle in
-      # argv. Match the package path, which no other harness carries, rather
-      # than widening the interpreter arm below to every binary that happens to
-      # live under ~/.bun/bin.
+      # Defensive insurance, not a measured shape: on the one platform measured
+      # (Linux, omp 17.3.4, recorded in docs/verification/supervision.md) no omp
+      # process reports comm=bun with omp's bundle in argv, and a live session
+      # reports the renamed comm=omp that the arm above catches. Match the
+      # package path, which no other harness carries, rather than widening the
+      # interpreter arm below to every binary that happens to live under
+      # ~/.bun/bin.
       bun)
         args=$(ps -o args= -p "$pid" 2>/dev/null)
         case "$args" in
