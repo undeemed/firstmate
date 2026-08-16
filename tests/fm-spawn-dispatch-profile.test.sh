@@ -522,6 +522,8 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   assert_contains "$out" "spawned $id harness=pi-signed" "pi-signed spawn did not preserve its visible identity"
   assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed openai-codex/gpt-5.6-sol max
   launch=$(cat "$LAUNCH_LOG")
+  [ "$launch" != "${launch#unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; }" ] \
+    || fail "pi-signed launch must clear inherited identity markers BEFORE its own FM_PI_HARNESS prefix: $launch"
   assert_contains "$launch" "FM_PI_HARNESS=pi-signed pi-signed --model 'openai-codex/gpt-5.6-sol' --thinking 'max' -e" \
     "pi-signed launch did not share Pi's model, thinking, and extension semantics"
   assert_contains "$launch" "fm-operational-input.sh' encode launch-brief" \
