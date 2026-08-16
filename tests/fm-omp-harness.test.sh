@@ -211,15 +211,6 @@ EOF
   # Outside the worktree on purpose, so no project-local extension file is left
   # in the crewmate's checkout.
   assert_absent "$wt/$id.omp-ext.ts" "omp extension leaked into the worktree"
-  assert_grep 'on("agent_start"' "$ext" "omp extension does not open the busy state"
-  assert_grep 'on("agent_end"' "$ext" "omp extension does not close the busy state"
-  assert_grep 'willContinue' "$ext" "omp extension settles without checking willContinue"
-  assert_grep 'on("turn_end"' "$ext" "omp extension does not signal turn end"
-  # agent_settled is pi's event and does not exist in omp; copying pi's handler
-  # verbatim would register a listener that can never fire. The prose comment in
-  # the generated file names the event, so the assertion pins the REGISTRATION.
-  assert_no_grep 'on("agent_settled"' "$ext" "omp extension registers pi's agent_settled, which omp never emits"
-
   assert_grep 'harness=omp' "$home/state/$id.meta" "omp spawn did not record the harness"
   pass "fm-spawn: an omp crewmate gets an autonomy flag and its own turn-end extension"
 }

@@ -308,6 +308,7 @@ When a secondmate is launched on Pi or pi-signed, `fm-spawn.sh --secondmate` lau
 omp is a pi fork distributed as the npm package `@oh-my-pi/pi-coding-agent` and executed by bun.
 It is a CREWMATE and SCOUT adapter only.
 `bin/fm-spawn.sh` refuses `--secondmate` on omp because the tracked primary turn-end guard re-arms from pi's `agent_settled`, which omp does not emit; porting that guard is what would make omp a secondmate adapter.
+omp is absent from the "Primary turn-end guard" and "Primary pre-arm (PreToolUse) seatbelt" lists above, so `bin/fm-supervision-instructions.sh` maps it to `docs/supervision-protocols/unknown.md` and a firstmate primary detected as omp renders the unknown protocol with no wired turn-end or pre-arm hook.
 
 Liveness is the one row measured against a real omp process, through the opt-in drift guard.
 Every other row below is read from the installed binary's `--help`, its shipped TypeScript declarations, and its bundle, not from a live supervised session.
@@ -318,7 +319,7 @@ Treat the composer, dialog, and submission rows as UNVERIFIED until a real omp c
 | Binary | `omp` on `PATH`, a bun launcher for `@oh-my-pi/pi-coding-agent/dist/cli.js`. Measured live: the pane title reads `bun` and only the foreground `comm` reads `omp`, so supervision attributes an omp pane from the foreground name alone (evidence: `docs/verification/runtime-backends.md`). |
 | Launch | Positional prompt, the pi shape, so the brief rides the launch command. Keep it as ONE positional argument. |
 | Autonomy | `--auto-approve` (skip every tool-approval prompt). `--approval-mode yolo` is the equivalent long form. |
-| Busy state | The Firstmate-owned extension's `agent_start` (busy) and `agent_end` (idle). omp has NO `agent_settled`, so idle requires all three of its own settle signals to agree: `event.willContinue` false, `ctx.isIdle()` true, and `ctx.hasPendingMessages()` false. |
+| Busy state | The Firstmate-owned extension's `agent_start` (busy) and `agent_end` (idle). omp has NO `agent_settled`, so idle requires all three of its own settle signals to agree: `event.willContinue` false, `ctx.isIdle()` true, and `ctx.hasPendingMessages()` false. Known failure mode: if `ctx.isIdle()` is present but returns false inside `agent_end`, the handler returns early and no idle record is ever written, and because `bin/fm-busy-lib.sh` has no age expiry the task keeps classifying `busy omp-ext` until `fm-interrupt`, `fm-recovery`, or teardown writes another record. That `agent_end` timing is STATIC EVIDENCE from the bundle and the shipped `.d.ts`, NOT measured, so confirm it on the first supervised omp crewmate. |
 | Turn-end | The same extension's `turn_end`, loaded with `-e` from `state/<id>.omp-ext.ts` outside the worktree. |
 | Exit command | `/exit`, or `/quit` (alias `/q`); both resolve to the same handler. `Ctrl-D` is the `app.exit` keybind. |
 | Interrupt | Single Escape (`app.interrupt`, default key `escape`). |
