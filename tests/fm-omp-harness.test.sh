@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Behavior tests for omp (Oh My Pi) harness IDENTITY: which process shapes
-# resolve to the omp harness, and which must not.
+# Behavior tests for the omp (Oh My Pi) adapter: harness identity, launch
+# template, per-task extension, teardown cleanup, and session-lock holder
+# recognition.
 #
 # omp is a pi fork executed by bun. Only ONE shape has been measured (omp 17.3.4
 # on Linux, recorded in docs/verification/supervision.md): bun renames the
@@ -14,6 +15,8 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+SPAWN="$ROOT/bin/fm-spawn.sh"
+TEARDOWN="$ROOT/bin/fm-teardown.sh"
 HARNESS="$ROOT/bin/fm-harness.sh"
 LOCK="$ROOT/bin/fm-lock.sh"
 BUNDLE='/usr/local/lib/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js'
@@ -93,6 +96,170 @@ test_detect_own_rejects_omp_lookalike_names() {
   pass "fm-harness detect_own: omp-lookalike command names do not resolve omp"
 }
 
+# --- supervision liveness classification --------------------------------------
+
+test_tmux_classifier_attributes_omp_from_its_foreground_name() {
+  local verdict
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/fm-backend.sh"
+  fm_backend_source tmux || fail "fm_backend_source tmux failed"
+
+  # Measured on omp 17.3.4 (docs/verification/runtime-backends.md): a live omp
+  # pane's TITLE reads bun, because bun launches the bundle, and only the
+  # foreground comm reads omp. The title shape must therefore NOT attribute omp
+  # on its own - asserting that is what proves the foreground name is carrying
+  # the verdict, rather than both sources agreeing by accident.
+  verdict=$(fm_backend_tmux_classify_process_name omp)
+  [ "$verdict" = agent ] \
+    || fail "a live omp pane's foreground name must classify as an agent, got '$verdict'"
+  verdict=$(fm_backend_tmux_classify_process_name bun)
+  [ "$verdict" = agent ] \
+    && fail "the bun launcher name must not attribute omp on its own; the foreground name is the attributing source"
+
+  # Anchored, so the same collisions the session lock rejects stay ambiguous
+  # here: misclassifying one as an agent would make an unrelated pane look like
+  # a supervisable crewmate.
+  for verdict in composer docker-compose; do
+    [ "$(fm_backend_tmux_classify_process_name "$verdict")" = agent ] \
+      && fail "'$verdict' merely contains omp and must not classify as an agent pane"
+  done
+  pass "tmux liveness: an omp pane is attributed by its foreground name, not by bun or lookalikes"
+}
+
+# --- launch template and per-task extension ----------------------------------
+
+make_spawn_fakebin() {
+  local dir=$1 fakebin
+  fakebin=$(fm_fakebin "$dir")
+  # send-keys records each literal payload so a case can assert the launch
+  # command fm-spawn actually typed, not just the files it wrote alongside it.
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+esac
+case "${1:-}" in
+  display-message) printf 'firstmate\n'; exit 0 ;;
+  list-windows) exit 0 ;;
+  has-session|new-session|new-window|kill-window) exit 0 ;;
+  send-keys)
+    if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
+      prev=
+      for a in "$@"; do
+        [ "$prev" = -l ] && printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG"
+        prev=$a
+      done
+    fi
+    exit 0
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  fm_fake_exit0 "$fakebin" treehouse gh-axi gh
+  printf '%s\n' "$fakebin"
+}
+
+make_spawn_case() {
+  local name=$1 case_dir home proj wt fakebin launchlog id
+  case_dir="$TMP_ROOT/$name"
+  home="$case_dir/home"
+  proj="$case_dir/project"
+  wt="$case_dir/wt"
+  launchlog="$case_dir/launch.log"
+  fakebin=$(make_spawn_fakebin "$case_dir/fake")
+  id="omp-$name-x1"
+  mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
+  printf 'brief\n' > "$home/data/$id/brief.md"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  touch "$home/state/.last-watcher-beat"
+  printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin|$launchlog|$id"
+}
+
+run_omp_spawn() {
+  local home=$1 proj=$2 wt=$3 fakebin=$4 launchlog=$5 id=$6
+  shift 6
+  : > "$launchlog"
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
+    "$SPAWN" "$id" "$proj" omp --mode no-mistakes --yolo off "$@" 2>&1
+}
+
+test_omp_spawn_writes_extension_and_autonomy_flag() {
+  local rec case_dir home proj wt fakebin launchlog id out status ext launch expected
+  rec=$(make_spawn_case spawn)
+  IFS='|' read -r case_dir home proj wt fakebin launchlog id <<EOF
+$rec
+EOF
+  out=$(run_omp_spawn "$home" "$proj" "$wt" "$fakebin" "$launchlog" "$id")
+  status=$?
+  expect_code 0 "$status" "omp spawn should succeed"
+  assert_contains "$out" "spawned $id harness=omp" "omp spawn did not report success"
+
+  ext="$home/state/$id.omp-ext.ts"
+  # The whole typed command, not a substring, so a dropped autonomy flag or a
+  # brief delivered by some other route cannot pass unnoticed.
+  launch=$(cat "$launchlog")
+  expected="unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS omp --auto-approve -e '$ext' \"\$('$ROOT/bin/fm-operational-input.sh' encode launch-brief < '$home/data/$id/brief.md')\""
+  [ "$launch" = "$expected" ] || fail "omp launch command is not the verified template"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+
+  assert_present "$ext" "omp per-task turn-end extension was not written"
+  # Outside the worktree on purpose, so no project-local extension file is left
+  # in the crewmate's checkout.
+  assert_absent "$wt/$id.omp-ext.ts" "omp extension leaked into the worktree"
+  assert_grep 'harness=omp' "$home/state/$id.meta" "omp spawn did not record the harness"
+  pass "fm-spawn: an omp crewmate gets an autonomy flag and its own turn-end extension"
+}
+
+test_omp_spawn_is_refused_for_a_secondmate() {
+  local case_dir home proj fakebin out status
+  case_dir="$TMP_ROOT/secondmate"
+  home="$case_dir/home"
+  proj="$case_dir/secondmate-home"
+  fakebin=$(make_spawn_fakebin "$case_dir/fake")
+  mkdir -p "$home/data/omp-sm-x1" "$home/projects" "$home/state" "$home/config" "$proj"
+  printf 'charter\n' > "$home/data/omp-sm-x1/brief.md"
+  touch "$home/state/.last-watcher-beat"
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" PATH="$fakebin:$PATH" \
+    "$SPAWN" --secondmate omp-sm-x1 "$proj" omp 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "omp was accepted as a secondmate harness"
+  assert_contains "$out" "crewmate/scout adapter only" \
+    "omp secondmate refusal did not name the missing supervision support"
+  pass "fm-spawn: omp is refused as a secondmate harness"
+}
+
+# --- teardown ----------------------------------------------------------------
+
+test_teardown_removes_omp_extension() {
+  local rec case_dir home proj wt fakebin launchlog id out status ext
+  rec=$(make_spawn_case teardown)
+  IFS='|' read -r case_dir home proj wt fakebin launchlog id <<EOF
+$rec
+EOF
+  # Tear down the extension a real spawn actually wrote, not a hand-placed
+  # stand-in, so the case cannot pass against a path fm-spawn never uses.
+  out=$(run_omp_spawn "$home" "$proj" "$wt" "$fakebin" "$launchlog" "$id")
+  status=$?
+  expect_code 0 "$status" "omp spawn should succeed before teardown"
+  ext="$home/state/$id.omp-ext.ts"
+  assert_present "$ext" "omp extension was not written before teardown"
+
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    PATH="$fakebin:$PATH" "$TEARDOWN" "$id" --force >/dev/null 2>&1 \
+    || fail "omp teardown failed"
+
+  assert_absent "$ext" "teardown left the omp extension behind"
+  pass "fm-teardown: removes state/<id>.omp-ext.ts"
+}
+
 # --- session-lock holder recognition -----------------------------------------
 
 test_fm_lock_recognizes_omp_holder() {
@@ -143,6 +310,10 @@ test_detect_own_env_marker
 test_detect_own_env_marker_wins_over_inherited_claudecode
 test_detect_own_bun_bundle_path
 test_detect_own_rejects_omp_lookalike_names
+test_tmux_classifier_attributes_omp_from_its_foreground_name
+test_omp_spawn_writes_extension_and_autonomy_flag
+test_omp_spawn_is_refused_for_a_secondmate
+test_teardown_removes_omp_extension
 test_fm_lock_recognizes_omp_holder
 test_fm_lock_recognizes_omp_bundle_holder
 test_fm_lock_rejects_omp_lookalike_holder

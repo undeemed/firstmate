@@ -35,7 +35,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse pi opencode claude codex
+  fm_fake_exit0 "$fakebin" treehouse pi omp opencode claude codex
   printf '%s\n' "$fakebin"
 }
 
@@ -201,6 +201,83 @@ oc_idle() {  # <sessionID>
   printf '{"type":"session.idle","properties":{"sessionID":"%s"}}' "$1"
 }
 
+# drive_omp_ext <ext-path> <mode>: load the generated omp extension in a plain
+# Node host and fire one lifecycle handler. omp's settle edge reads THREE
+# independent signals, so each mode blinds exactly one of them and the rest stay
+# settled - that is what proves no single signal is carrying the verdict alone.
+# Modes: agent-start, settle-idle, settle-continuing, settle-streaming,
+# settle-pending, turn-end.
+drive_omp_ext() {
+  EXT_PATH="$1" MODE="$2" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.env.EXT_PATH).href);
+const handlers = {};
+mod.default({ on: (name, fn) => { handlers[name] = fn; } });
+const mode = process.env.MODE;
+const ctx = {
+  isIdle: () => mode !== "settle-streaming",
+  hasPendingMessages: () => mode === "settle-pending",
+};
+const endEvent = { willContinue: mode === "settle-continuing" };
+switch (mode) {
+  case "agent-start": await handlers["agent_start"]({}, ctx); break;
+  case "settle-idle":
+  case "settle-continuing":
+  case "settle-streaming":
+  case "settle-pending":
+    await handlers["agent_end"](endEvent, ctx);
+    break;
+  case "turn-end": await handlers["turn_end"]({}, ctx); break;
+  default: throw new Error("unknown mode " + mode);
+}
+if (mode === "turn-end") {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
+EOF
+}
+
+test_omp_extension_semantic_lifecycle() {
+  local rec id=busy-omp-1 out state ext mode
+  rec=$(make_spawn_case omp-lifecycle omp "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "omp spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  ext="$state/$id.omp-ext.ts"
+  assert_present "$ext" "omp spawn did not write the per-task extension"
+
+  out=$(classify omp "$id" "$state")
+  [ "$out" = "busy fm-spawn" ] || fail "seed after spawn must be 'busy fm-spawn', got '$out'"
+
+  rm -f "$state/$id.turn-ended"
+  out=$(drive_omp_ext "$ext" turn-end) || fail "turn_end drive failed: $out"
+  [ -f "$state/$id.turn-ended" ] || fail "turn_end no longer touches the notification marker"
+  out=$(classify omp "$id" "$state")
+  [ "$out" = "busy fm-spawn" ] || fail "turn_end must stay a notification, not a state edge, got '$out'"
+
+  out=$(drive_omp_ext "$ext" settle-idle) || fail "agent_end drive failed: $out"
+  out=$(classify omp "$id" "$state")
+  [ "$out" = "idle omp-ext" ] || fail "a fully settled agent_end must classify 'idle omp-ext', got '$out'"
+
+  # Each of the three signals must be able to hold the state busy ON ITS OWN.
+  # Re-open the run before each one so the previous idle cannot mask a signal
+  # that is being ignored.
+  for mode in settle-continuing settle-streaming settle-pending; do
+    out=$(drive_omp_ext "$ext" agent-start) || fail "agent_start drive failed: $out"
+    out=$(classify omp "$id" "$state")
+    [ "$out" = "busy omp-ext" ] || fail "agent_start must classify 'busy omp-ext', got '$out'"
+
+    out=$(drive_omp_ext "$ext" "$mode") || fail "$mode drive failed: $out"
+    out=$(classify omp "$id" "$state")
+    [ "$out" = "busy omp-ext" ] || fail "$mode must keep the run busy, got '$out'"
+  done
+
+  out=$(drive_omp_ext "$ext" settle-idle) || fail "final settle drive failed: $out"
+  out=$(classify omp "$id" "$state")
+  [ "$out" = "idle omp-ext" ] || fail "the final settle must classify idle, got '$out'"
+  pass "omp extension settles idle only when willContinue, isIdle(), and hasPendingMessages() all agree"
+}
+
 test_opencode_plugin_semantic_lifecycle() {
   local rec id=busy-oc-1 out state plugin
   rec=$(make_spawn_case oc-lifecycle opencode "$id")
@@ -346,6 +423,7 @@ test_pi_extension_semantic_lifecycle
 test_pi_extension_serializes_settle_before_next_start
 test_pi_extension_stale_incarnation_rejected
 test_kimi_and_grok_install_no_unverified_wiring
+test_omp_extension_semantic_lifecycle
 test_opencode_plugin_semantic_lifecycle
 test_claude_hooks_semantic_lifecycle
 test_claude_hooks_stale_incarnation_harmless

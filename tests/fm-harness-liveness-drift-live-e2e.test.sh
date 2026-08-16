@@ -100,7 +100,11 @@ SKIPPED=
 # cursor matters for the same reason muse does, from the other direction: it
 # runs as a bundled node script, so its pane title is a bare `node` that no name
 # pattern can own, and identity has to come from its install path or argv[0].
-for harness in claude codex opencode pi pi-signed grok kimi cursor muse; do
+# omp matters for the same reason from the other direction: bun RENAMES its
+# launcher, so the live name is produced by bun rather than by omp's own
+# install layout, and only a real omp release can prove that rename still
+# happens.
+for harness in claude codex opencode pi pi-signed omp grok kimi cursor muse; do
   if ! bin_path=$(resolve_harness_binary "$harness"); then
     SKIPPED="$SKIPPED $harness"
     note "skip: $harness is not installed on this machine, so its classification is unverified here"
