@@ -443,7 +443,7 @@ spawn_remote_secondmate() {
     *)
       fm_lock_release "$registry_lock" || true
       fm_lock_release "$SPAWN_TASK_LOCK" || true
-      echo "error: remote secondmate spawn requires a verified harness adapter, not a raw launch command: $harness" >&2
+      echo "error: remote secondmate spawn requires a verified harness adapter, not a raw launch command: $harness; set config/secondmate-harness or config/crew-harness to a verified adapter" >&2
       return 1
       ;;
   esac
@@ -1174,7 +1174,8 @@ launch_template() {
     # plugin engine is off in the default build, so firstmate folds muse's own
     # session event log instead (bin/fm-busy-lib.sh), bound by the sidecar
     # written below. Nothing to place in the template for it.
-    # codex, opencode, and kimi are also markerless and share this inherited-marker hazard; changing their verified launch boundaries belongs in follow-up work.
+    # codex, opencode, and kimi are also markerless and share this inherited-marker hazard, and the shared launch scrub applied to every launch command below now owns it for every adapter: it clears OMPCODE, CLAUDECODE, PI_CODING_AGENT, FM_PI_HARNESS, and GROK_AGENT before any harness starts.
+    # This template keeps its own env -u list because docs/verification/muse.md records clearing those markers as muse's verified launch property.
     muse) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS XDG_CONFIG_HOME=__MUSECONFIG__ XDG_DATA_HOME=__MUSEDATA__ MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=on __MUSEBIN__ --yolo __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     *) return 1 ;;
   esac
@@ -1208,7 +1209,7 @@ case "$ARG3" in
       HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
       harness_src='config/crew-harness'
     fi
-    LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2; exit 1; }
+    LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); write a verified adapter name into $harness_src, or pass a raw launch command to use an unverified one" >&2; exit 1; }
     ;;
   *)
     HARNESS=$ARG3
@@ -2784,6 +2785,7 @@ spawn_record_traceparent() {
   return "$status"
 }
 
+LAUNCH="unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; $LAUNCH"
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
