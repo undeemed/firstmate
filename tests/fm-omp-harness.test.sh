@@ -204,7 +204,7 @@ EOF
   # The whole typed command, not a substring, so a dropped autonomy flag or a
   # brief delivered by some other route cannot pass unnoticed.
   launch=$(cat "$launchlog")
-  expected="omp --auto-approve -e '$ext' \"\$('$ROOT/bin/fm-operational-input.sh' encode launch-brief < '$home/data/$id/brief.md')\""
+  expected="unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; omp --auto-approve -e '$ext' \"\$('$ROOT/bin/fm-operational-input.sh' encode launch-brief < '$home/data/$id/brief.md')\""
   [ "$launch" = "$expected" ] || fail "omp launch command is not the verified template"$'\n'"expected: $expected"$'\n'"actual:   $launch"
 
   assert_present "$ext" "omp per-task turn-end extension was not written"
