@@ -42,6 +42,8 @@ If the captain asks for a new harness, propose verifying it first: spawn a trivi
 `bin/fm-harness.sh` prints firstmate's own harness, using verified env markers first and then process ancestry.
 Within the Pi family, only the exact launch-boundary marker `FM_PI_HARNESS=pi-signed` alongside `PI_CODING_AGENT=true` selects the signed identity; unmarked shared launcher ancestry remains `pi`.
 `omp` exports `OMPCODE=1` and `CLAUDECODE=1` together into every child it spawns, so its own marker is tested before claude's; reordering those two checks makes every omp session read as claude.
+Because every such marker is an inherited environment variable, `bin/fm-spawn.sh` prepends `unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT;` to every locally sent launch command, for every adapter and for a raw launch command, so a primary's own marker can never outrank a spawned worker's real ancestry.
+Any marker added to `bin/fm-harness.sh` belongs in that scrub list too, or the adapter that reads it inherits the hazard.
 `bin/fm-harness.sh crew` resolves the effective crewmate harness from `config/crew-harness` (absent or `default` -> own).
 `bin/fm-harness.sh secondmate` resolves the secondmate-launch harness through the chain `config/secondmate-harness` -> `config/crew-harness` -> own, so an unset `config/secondmate-harness` matches the crew harness.
 `bin/fm-spawn.sh` uses `crew` mode for a crewmate/scout launch and `secondmate` mode for a `--secondmate` launch, re-resolving on every spawn so the split is durable across respawns; an explicit per-spawn harness arg overrides either.
