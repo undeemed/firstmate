@@ -294,7 +294,22 @@ Harness identity is read from the executable path and `argv[0]` as well as the c
 An omp (Oh My Pi) session is identified through that same evidence chain: procps reports the renamed exec name `omp` while `argv[0]` still names `bun`, and the ancestry walk starts at the session's own pid because omp runs its tool commands in-process.
 Its `FM_HARNESS_RE` alternative is anchored as `^omp$` on purpose, because that expression is matched as a substring rather than as a whole name, so an unanchored `omp` would also claim `composer` and `docker-compose`; the matching `FM_HARNESS_NAMES` entry stays a bare `omp` because that list is matched component-exact by `fm_harness_path_name`.
 Normalizing the two forms for visual consistency would reintroduce the lookalike bug.
+The omp process shapes were measured on Linux with omp 17.3.4:
+
+```text
+pid 471188 comm=omp                argv="bun /home/ubuntu/.bun/bin/omp"
+pid 480036 comm=omp                argv="/home/ubuntu/.bun/bin/bun cli.js __omp_worker_mnemopi_embed"
+pid 484749 comm="omp daemon brok"  argv="/home/ubuntu/.bun/bin/bun cli.js __omp_worker_daemon_broker"
+pid 573372 comm="omp lsp mux"      argv="/home/ubuntu/.bun/bin/bun cli.js __omp_worker_lsp_mux"
+```
+
+No measured omp process carries the `@oh-my-pi/pi-coding-agent` bundle path in argv, so the bundle-path arms in `bin/fm-session-lock-lib.sh` and `bin/fm-harness.sh` are defensive insurance rather than the signal a live Linux session is identified by.
+Identification on Linux rests on the renamed exec name that procps reports in `ps -o comm=`.
+macOS reports `argv[0]` in `ps -o comm=` instead, so a renamed omp session there would report `comm=bun`, and the measured argv carries no bundle path to fall back on.
+That macOS behaviour is UNVERIFIED: no macOS host was available for this measurement, so omp identity is recorded as proven on Linux only and is NOT claimed cross-platform.
+One command on a live macOS omp session closes it: `ps -o comm=,args= -p <omp pid>`.
 `tests/fm-session-lock-ancestry.test.sh` pins both platforms' reporting semantics behind a deterministic process table, covers omp identification together with the rejection of an omp-lookalike command name, and runs the real Stop auto-arm in version-named, daemon-parented, and combined real process trees.
+`tests/fm-omp-harness.test.sh` pins the rest of omp identity: omp's own `OMPCODE` marker is tested before the `CLAUDECODE` it exports alongside it, the bundle-path arms in both files resolve the unmeasured `comm=bun` shape, and an omp-lookalike command name reaches neither the detection verdict nor the lock holder.
 `tests/fm-watch-arm.test.sh` runs real watcher and arm cycles against durable on-disk state to verify that a delivered reason survives until post-handling acknowledgement and stops replaying after acknowledgement, while an unrelated queue append cannot make a watcher cycle that delivered nothing look successful.
 The same suite ingests a keyed remote-secondmate parent reply through the real adapter, establishes the incremental OPEN DECISIONS cursor, interrupts supervision, and proves re-arm replays every unacknowledged queue row plus the still-open decision through the ordinary drain path.
 It also covers decision-only recovery, interrupted handling, handling-window generation reuse, non-fatal moved-generation acknowledgement with sequence-bounded consumption, and a persistent successor remaining live after recovery is acknowledged.

@@ -71,6 +71,19 @@ fm_harness_process_matches() {  # <comm> <args>
     case "$name" in claude) FM_HARNESS_IS_CLAUDE=1 ;; esac
     return 0
   fi
+  # omp (Oh My Pi) ships as a bun-executed bundle. bun renames the process to
+  # omp, and on the one platform measured (Linux, omp 17.3.4, recorded in
+  # docs/verification/supervision.md) a live session reports the renamed
+  # comm=omp and no measured process carries the package bundle path in argv,
+  # so identity there does rest on the rename alone and the name evidence above
+  # already catches it. This arm is defensive insurance only, for a comm=bun
+  # shape carrying the bundle path that no measurement has produced. The
+  # interpreter arm below could not cover that shape anyway because bun is
+  # neither node nor python, and the package path is exact enough that no other
+  # harness can carry it.
+  case "$args" in
+    *@oh-my-pi/pi-coding-agent*) return 0 ;;
+  esac
   # Bare interpreter (e.g. node): match the harness name in its script path.
   case "$comm" in
     *node*|*python*)

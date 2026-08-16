@@ -206,7 +206,7 @@ test_spawn_clears_inherited_foreign_harness_markers() {
 $rec
 EOF
   result="$case_dir/harness-result"
-  out=$(CLAUDECODE=1 PI_CODING_AGENT=true GROK_AGENT=1 FM_PI_HARNESS=pi-signed \
+  out=$(CLAUDECODE=1 OMPCODE=1 PI_CODING_AGENT=true GROK_AGENT=1 FM_PI_HARNESS=pi-signed \
     CURSOR_AGENT=1 CURSOR_INVOKED_AS=cursor-agent \
     FM_FAKE_EXECUTE_MUSE_LAUNCH=1 FM_FAKE_HARNESS_RESULT="$result" \
     run_muse_spawn "$home" "$proj" "$wt" "$fakebin" "$id" --mode no-mistakes --yolo off)
