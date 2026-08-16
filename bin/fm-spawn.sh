@@ -875,7 +875,8 @@ launch_template() {
     # plugin engine is off in the default build, so firstmate folds muse's own
     # session event log instead (bin/fm-busy-lib.sh), bound by the sidecar
     # written below. Nothing to place in the template for it.
-    # codex, opencode, and kimi are also markerless and share this inherited-marker hazard; changing their verified launch boundaries belongs in follow-up work.
+    # codex, opencode, and kimi are also markerless and share this inherited-marker hazard, and the shared launch scrub applied to every launch command below now owns it for every adapter: it clears OMPCODE, CLAUDECODE, PI_CODING_AGENT, FM_PI_HARNESS, and GROK_AGENT before any harness starts.
+    # This template keeps its own env -u list because docs/verification/muse.md records clearing those markers as muse's verified launch property.
     muse) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS XDG_CONFIG_HOME=__MUSECONFIG__ XDG_DATA_HOME=__MUSEDATA__ MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=on __MUSEBIN__ --yolo __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     *) return 1 ;;
   esac

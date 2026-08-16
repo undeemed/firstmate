@@ -2,10 +2,12 @@
 # Behavior tests for omp (Oh My Pi) harness IDENTITY: which process shapes
 # resolve to the omp harness, and which must not.
 #
-# omp is a pi fork executed by bun. The two process shapes below are the ones a
-# real fleet sees: bun renames the process, so a running session reports
-# comm=omp while argv[0] still says bun, and the PRE-rename shape reports
-# comm=bun with the package bundle in argv. Both must resolve, and neither may
+# omp is a pi fork executed by bun. Only ONE shape has been measured (omp 17.3.4
+# on Linux, recorded in docs/verification/supervision.md): bun renames the
+# process, so a live session reports comm=omp while argv[0] still says bun, and
+# no omp process carries the package bundle path in argv. The bun-plus-bundle
+# shape below is therefore defensive coverage for a shape no measurement has
+# produced, not an observed fleet reality. Both must resolve, and neither may
 # be reached by a name that merely contains "omp".
 set -u
 
@@ -68,9 +70,10 @@ test_detect_own_env_marker_wins_over_inherited_claudecode() {
 test_detect_own_bun_bundle_path() {
   local fakebin out
   fakebin=$(fm_fakebin "$TMP_ROOT/detect-bun")
-  # Pre-rename shape: the kernel exec name is still bun and only argv carries
-  # the package bundle. Every harness env marker is cleared so the verdict can
-  # only come from ancestry.
+  # Defensive shape, not an observed one: the kernel exec name is still bun and
+  # only argv carries the package bundle. No measured omp process reports this,
+  # so the case pins the bundle arm's contract rather than a fleet reality.
+  # Every harness env marker is cleared so the verdict can only come from ancestry.
   fake_ps_single_frame "$fakebin" '/root/.bun/bin/bun' "bun $BUNDLE"
   out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u OMPCODE \
     PATH="$fakebin:$PATH" "$HARNESS")
@@ -112,8 +115,9 @@ test_fm_lock_recognizes_omp_bundle_holder() {
   fakebin=$(fm_fakebin "$TMP_ROOT/lock-bundle-fake")
   mkdir -p "$home/state"
   printf '%s\n' "$$" > "$home/state/.lock"
-  # Pre-rename shape: comm is the bun interpreter, which is neither node nor
-  # python, so only the package bundle in argv can identify this process.
+  # Defensive shape, not an observed one: comm is the bun interpreter, which is
+  # neither node nor python, so only the package bundle in argv can identify
+  # this process. No measured omp process reports this shape.
   fake_ps_single_frame "$fakebin" '/root/.bun/bin/bun' "bun $BUNDLE"
   out=$(FM_HOME="$home" PATH="$fakebin:$PATH" "$LOCK" status)
   assert_contains "$out" "lock: held by live harness pid" \
