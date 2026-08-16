@@ -86,7 +86,11 @@ SKIPPED=
 # so the live process name changes on every auto-update and its install path
 # carries no `muse` component to fall back on. That is precisely the drift this
 # guard exists to catch, and only a real muse release can produce it.
-for harness in claude codex opencode pi pi-signed grok kimi muse; do
+# omp matters for the same reason from the other direction: bun RENAMES its
+# launcher, so the live name is produced by bun rather than by omp's own
+# install layout, and only a real omp release can prove that rename still
+# happens.
+for harness in claude codex opencode pi pi-signed omp grok kimi muse; do
   if ! bin_path=$(resolve_harness_binary "$harness"); then
     SKIPPED="$SKIPPED $harness"
     note "skip: $harness is not installed on this machine, so its classification is unverified here"

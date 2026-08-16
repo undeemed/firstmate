@@ -55,7 +55,7 @@ Observed identities, and the resulting verdict:
 | grok | 0.2.118 | `grok-0.2.118-ma` | `grok` | alive |
 | kimi | 0.31.1 | `kimi` | `kimi` | alive |
 
-Claude Code is the harness whose title no longer attributes it at all; every other adapter is currently attributed by both sources.
+Claude Code is the harness in that table whose title no longer attributes it at all; every other adapter in it is currently attributed by both sources.
 Codex reported `codex-aarch64-a` at 0.145.0 and `codex` at 0.146.0, and Kimi Code reported `kimi-code` as its foreground `comm` at 0.29.1 and `kimi` at 0.31.1, so these identities move between ordinary patch releases in both directions.
 That is the evidence for treating any single process name as a surface under vendor control rather than a stable contract.
 
@@ -74,6 +74,16 @@ classify each:
   muse-bin-0.1.0-R708.1          -> agent
 fm_backend_agent_state tmux museliv:zsh
 alive
+```
+
+The crewmate-only omp (Oh My Pi) 17.3.4 adapter was verified on 2026-08-15 against tmux 3.6 on Linux x86_64, through the same live drift guard.
+omp is the second harness after Claude Code whose title does not attribute it at all: bun launches the bundle, so `#{pane_current_command}` reads `bun` and only the foreground `comm` carries `omp`.
+Nothing in the classifier names omp directly; the verdict comes from the exact harness path component owned by `bin/fm-session-lock-lib.sh`, which is why `composer` and `docker-compose` stay ambiguous.
+This liveness result is Linux-only; [`supervision.md`](supervision.md) owns the measured omp process shapes and records omp identity on macOS as unverified pending measurement.
+
+```text
+# omp omp/17.3.4: title='bun' foreground=[omp ]
+ok - harness liveness: omp omp/17.3.4 classifies alive
 ```
 
 `#{pane_current_command}` and foreground `ps -o comm=` read different name fields, but which one preserves executable identity is platform-dependent.
