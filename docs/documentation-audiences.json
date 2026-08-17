@@ -269,6 +269,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/pxpipe-chain.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },
