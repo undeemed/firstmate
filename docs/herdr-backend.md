@@ -245,6 +245,18 @@ U+2063 survives Herdr terminal input as text, unlike the legacy ASCII control se
 `bin/fm-operational-input.sh` owns current operational construction and parsing, and the AFK skill owns legacy away-input compatibility.
 No Herdr-specific copy of that protocol exists.
 
+### Known gap: submit-confirmation false negatives on busy panes (2026-08-19)
+
+`bin/fm-send.sh` against a Herdr pane whose agent is mid-turn can report
+`error: text not submitted ... (delivery unconfirmed; verdict=pending)` even though the
+text WAS accepted and queued by the agent's busy-queue.
+Observed on `tetanus-mate-t1` (`default:w82:p2`, claude backend): a 40-attempt retry loop
+believed every attempt failed while all 40 landed; the mate deduped and acked each resend.
+Until the herdr adapter grows a positive queued-submit acknowledgement, callers MUST NOT
+build blind retry loops on the `verdict=pending` failure verdict alone.
+Before resending, check the endpoint's durable status log (`state/<task>.status`) for an ack
+of the prior send; treat a matching ack as delivered.
+
 ## Restart and liveness behavior
 
 Stopping and restarting a named Herdr server preserves workspace, tab, pane, and label ids, but the underlying harness processes and live agent registrations do not survive.
