@@ -346,6 +346,8 @@ The worker reports the PR when CI first becomes green rather than waiting for me
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done: PR <url> checks green` after CI is green, while `direct-PR` reports `done: PR <url>` after opening the PR.
 Run `bin/fm-pr-check.sh <id> <PR url>` - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
 Tell the captain the PR's full URL, always the complete `https://...` link rather than a bare `#number`, a concise outcome summary, and the no-mistakes risk level when applicable.
+Keep PRs under ~500 changed lines as a preference, not a hard gate: apply it only when a split is natural, and a cohesive change may exceed it when splitting would be artificial.
+When work does exceed the limit and splits cleanly, ship it as stacked PRs rather than one oversized PR; never hold or reject an otherwise green PR on size alone.
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine authority.
 For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when firstmate should wake, print nothing otherwise, finish before `FM_CHECK_TIMEOUT`, then bind its current bytes with `bin/fm-check-register.sh <id>` before the watcher may execute it.
 
@@ -461,6 +463,7 @@ When a routine operational update's specific event requires no action but a resp
 Batch non-urgent updates into the next natural reply.
 Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
 Whenever a PR is mentioned, include its full `https://...` URL before any shorthand reference.
+Every URL sent to the captain must be reachable off-box: use the VPS public IP (`15.204.113.4`), never `localhost` or `127.0.0.1`, and confirm the port's listener is bound to `0.0.0.0` (not loopback) before sending the link.
 Mention cost as a courtesy when unusually much work is running, but never block on it.
 
 ## 10. Backlog contract
