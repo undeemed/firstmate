@@ -118,6 +118,17 @@ if (!prompt.includes("TURN WOULD END BLIND")) {
   process.exit(1);
 }
 
+// 4b. The settle triple is checked BEFORE the armed latch: a non-settle
+// agent_end (a scheduled continuation) while the latch is armed must neither
+// run the guard nor consume the latch. A latch-first ordering would consume it
+// here and the next idle settle would wrongly re-run the guard.
+prompt = "";
+await agentEnd({ willContinue: true }, idleCtx);
+if (runs() !== 1) {
+  console.error("non-settle agent_end ran the guard while latched");
+  process.exit(1);
+}
+
 // 5. The follow-up itself settles the agent; that re-entrant settle consumes the
 // latch and must NOT re-run the guard.
 prompt = "";
