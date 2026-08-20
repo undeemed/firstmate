@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Lavish adapter for the generic process-to-event runner.
+# Opulent adapter for the generic process-to-event runner.
 #
 # Usage:
-#   fm-procevent-lavish.sh arm <artifact.html>
-#   fm-procevent-lavish.sh classify <result-file>
-#   fm-procevent-lavish.sh terminal <result-file>
-#   fm-procevent-lavish.sh source-id <artifact.html>
-#   fm-procevent-lavish.sh retire <artifact.html>
+#   fm-procevent-opulent.sh arm <artifact.html>
+#   fm-procevent-opulent.sh classify <result-file>
+#   fm-procevent-opulent.sh terminal <result-file>
+#   fm-procevent-opulent.sh source-id <artifact.html>
+#   fm-procevent-opulent.sh retire <artifact.html>
 #
 # classify   Print the lifecycle state a handler should act on: feedback, ended,
 #            waiting, missing, or unknown.
-# terminal   Exit 0 when the captured result means this Lavish source will never
+# terminal   Exit 0 when the captured result means this Opulent source will never
 #            produce another result, so the runner may retire it; any other exit
 #            keeps it armed. This is the generic adapter contract bin/fm-procevent.sh
-#            calls, and the only place Lavish's notion of "ended" is decided.
+#            calls, and the only place Opulent's notion of "ended" is decided.
 #
-# This adapter is deliberately thin. It owns only what is specific to Lavish:
+# This adapter is deliberately thin. It owns only what is specific to Opulent:
 # canonical source identity, the argv for the currently published poll command,
 # and how to read a completed result. Ownership, durable capture, publication,
 # and restart recovery all belong to bin/fm-procevent.sh.
@@ -49,7 +49,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 
-# Canonical identity is physical, not the path string: Lavish itself keys a
+# Canonical identity is physical, not the path string: Opulent itself keys a
 # session on the realpath of the artifact, so two names for one file are one
 # source and must never become two owners.
 cmd_source_id() {
@@ -60,9 +60,9 @@ cmd_source_id() {
     || die "cannot resolve the artifact path: $artifact"
   [ -f "$real" ] || die "artifact does not exist: $artifact"
   if command -v shasum >/dev/null 2>&1; then
-    printf 'lavish-%s\n' "$(printf '%s' "$real" | shasum -a 256 | awk '{print substr($1,1,16)}')"
+    printf 'opulent-%s\n' "$(printf '%s' "$real" | shasum -a 256 | awk '{print substr($1,1,16)}')"
   else
-    printf 'lavish-%s\n' "$(printf '%s' "$real" | sha256sum | awk '{print substr($1,1,16)}')"
+    printf 'opulent-%s\n' "$(printf '%s' "$real" | sha256sum | awk '{print substr($1,1,16)}')"
   fi
 }
 
@@ -74,7 +74,7 @@ cmd_arm() {
   real=$(perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$artifact" 2>/dev/null) \
     || die "cannot resolve the artifact path: $artifact"
   # The plain blocking form: no --timeout-ms, so completion is a server event.
-  "$SCRIPT_DIR/fm-procevent.sh" register lavish "$id" -- lavish-axi poll "$real" || exit 1
+  "$SCRIPT_DIR/fm-procevent.sh" register opulent "$id" -- lavish-axi poll "$real" || exit 1
   printf 'armed: %s\n' "$id"
   printf 'artifact: %s\n' "$real"
 }
@@ -127,7 +127,7 @@ cmd_classify() {
 }
 
 # Whether a captured result ends this source, for the generic runner's automatic
-# retirement. Lavish's notion of "ended" lives here and nowhere else: an ended
+# retirement. Opulent's notion of "ended" lives here and nowhere else: an ended
 # session produces nothing further, a missing session has nothing left to
 # produce, and the published poll delivers the final feedback of a `Send & End`
 # review marked with session_ended and returns only empty ended sessions after
