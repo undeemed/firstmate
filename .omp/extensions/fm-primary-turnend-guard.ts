@@ -228,9 +228,9 @@ export default function (pi: OmpExtensionApi) {
   });
 
   pi.on("agent_end", async (event, ctx) => {
-    if (event.willContinue) return;
-    if (typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
-    if (typeof ctx.hasPendingMessages === "function" && ctx.hasPendingMessages()) return;
+    if (event && event.willContinue) return;
+    if (ctx && typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
+    if (ctx && typeof ctx.hasPendingMessages === "function" && ctx.hasPendingMessages()) return;
 
     if (guardFollowupActive) {
       guardFollowupActive = false;
