@@ -76,7 +76,7 @@ fm_backend_agent_state tmux museliv:zsh
 alive
 ```
 
-The crewmate-only omp (Oh My Pi) 17.3.4 adapter was verified on 2026-08-15 against tmux 3.6 on Linux x86_64, through the same live drift guard.
+The omp (Oh My Pi) 17.3.4 adapter was verified on 2026-08-15 against tmux 3.6 on Linux x86_64, through the same live drift guard.
 omp is the second harness after Claude Code whose title does not attribute it at all: bun launches the bundle, so `#{pane_current_command}` reads `bun` and only the foreground `comm` carries `omp`.
 Nothing in the classifier names omp directly; the verdict comes from the exact harness path component owned by `bin/fm-session-lock-lib.sh`, which is why `composer` and `docker-compose` stay ambiguous.
 This liveness result is Linux-only; [`supervision.md`](supervision.md) owns the measured omp process shapes and records omp identity on macOS as unverified pending measurement.
