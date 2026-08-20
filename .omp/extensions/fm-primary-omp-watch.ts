@@ -1,26 +1,30 @@
-// Firstmate primary watcher bridge for Pi.
+// Firstmate primary watcher bridge for omp (Oh My Pi).
+//
+// This is the omp port of .pi/extensions/fm-primary-pi-watch.ts. omp is a pi
+// fork loaded by bun. Unlike the pi watcher it registers no custom TUI shell for
+// its tool, so it needs neither the TUI nor the schema package and does not
+// depend on the calm-presentation lib; the extension API surface it uses is
+// declared locally as OmpExtensionApi. The arm machinery is unchanged: it drives
+// bin/fm-watch-arm.sh exactly as the pi watcher does.
+//
+// new Promise (rather than Promise.withResolvers) matches the tracked pi
+// extensions and the ES2022 typecheck target in tests/fm-pi-primary-types.test.sh;
+// withResolvers is ES2024 and would fail that strict no-emit check.
 //
 // Session-generation ownership (stated once here):
-// Pi emits session_shutdown for ordinary same-process replacements (/new, /resume,
-// /fork, reload) as well as terminal quit. This extension binds one generation per
-// session activation. Only the active live generation may start, stop, rearm, or
-// clear the arm child. Replacement session_start (or a fresh factory bind) activates
-// a new live generation so monitoring can arm again without restarting Pi. Terminal
-// quit leaves the final generation stopped so late callbacks cannot rearm. Stale
-// callbacks from a prior generation are no-ops against the active replacement.
+// omp emits session_shutdown for ordinary same-process replacements (/new,
+// /resume, /fork, reload) as well as terminal quit. This extension binds one
+// generation per session activation. Only the active live generation may start,
+// stop, rearm, or clear the arm child. Replacement session_start (or a fresh
+// factory bind) activates a new live generation so monitoring can arm again
+// without restarting omp. Terminal quit leaves the final generation stopped so
+// late callbacks cannot rearm. Stale callbacks from a prior generation are
+// no-ops against the active replacement.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import {
-  type CalmPresentationState,
-  calmTranscriptClassIsVisible,
-  FIRSTMATE_CALM_PRESENTATION_EVENT,
-} from "./lib/fm-calm-visibility.ts";
 import { encodeFirstmateOperationalInput } from "../../extensions/lib/fm-operational-input.ts";
 
 type ArmResult = {
@@ -35,44 +39,45 @@ type CloseClassification = {
   message: string;
 };
 
-type WatchToolShellState = {
-  shell?: Box;
-  call?: Component;
-  result?: Component;
-};
-
-type WatchToolRenderContext = {
-  isError: boolean;
-  isPartial: boolean;
-};
-
 type SessionGeneration = {
   id: number;
   stopping: boolean;
   child: ChildProcess | null;
-  retryTimer: ReturnType<typeof setTimeout> | null;
+  retryTimer: NodeJS.Timeout | null;
   retryFailures: number;
   restoring: boolean;
   seq: number;
 };
 
-function refreshWatchToolShell(
-  state: WatchToolShellState,
-  theme: Theme,
-  context: WatchToolRenderContext,
-): Box {
-  const background = context.isPartial
-    ? (text: string) => theme.bg("toolPendingBg", text)
-    : context.isError
-      ? (text: string) => theme.bg("toolErrorBg", text)
-      : (text: string) => theme.bg("toolSuccessBg", text);
-  const shell = state.shell ?? new Box(1, 1, background);
-  state.shell = shell;
-  shell.setBgFn(background);
-  shell.clear();
-  if (state.call) shell.addChild(state.call);
-  if (state.result) shell.addChild(state.result);
-  return shell;
+interface OmpToolSpec {
+  name: string;
+  label: string;
+  description: string;
+  promptSnippet: string;
+  promptGuidelines: string[];
+  // omp accepts a plain JSON-schema object for tool parameters; this tool takes
+  // none. The pi watcher used typebox Type.Object({}) here, which is not needed
+  // once the custom TUI rendering is dropped.
+  parameters: { type: "object"; properties: Record<string, unknown> };
+  execute: () => Promise<{
+    content: Array<{ type: "text"; text: string }>;
+    details: ArmResult;
+  }>;
+}
+
+interface OmpCommandSpec {
+  description: string;
+  handler: (
+    args: unknown,
+    ctx: { ui: { notify: (message: string, level: "info" | "warning") => void } },
+  ) => void | Promise<void>;
+}
+
+interface OmpExtensionApi {
+  on(event: "session_start" | "session_shutdown", handler: () => void): void;
+  registerCommand(name: string, spec: OmpCommandSpec): void;
+  registerTool(spec: OmpToolSpec): void;
+  sendUserMessage(content: string, options: { deliverAs: "followUp" }): Promise<void>;
 }
 
 const extensionFile = fileURLToPath(import.meta.url);
@@ -83,7 +88,7 @@ const fmRoot = process.env.FM_ROOT_OVERRIDE || root;
 const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
 const config = process.env.FM_CONFIG_OVERRIDE || `${fmHome}/config`;
 const armScript = `${fmRoot}/bin/fm-watch-arm.sh`;
-const marker = `${state}/.pi-watch-extension-loaded`;
+const marker = `${state}/.omp-watch-extension-loaded`;
 const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(extensionFile)).digest("hex")}`;
 const retryBaseMs = positiveInteger("FM_WATCH_REARM_RETRY_BASE_MS", 250);
 const retryMaxMs = positiveInteger("FM_WATCH_REARM_RETRY_MAX_MS", 4000);
@@ -92,12 +97,12 @@ const retryLimit = positiveInteger("FM_WATCH_REARM_RETRY_LIMIT", 5);
 // bin/fm-watch-arm.sh): a slow but successful Git Bash cold start must not be
 // SIGTERMed mid-confirmation. Conditioned on win32 so other platforms keep 12s.
 const armReadyTimeoutMs = positiveInteger(
-  "FM_PI_ARM_READY_TIMEOUT_MS",
+  "FM_OMP_ARM_READY_TIMEOUT_MS",
   process.platform === "win32" ? 35000 : 12000,
 );
 const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
-const repairOnlyHint = "call fm_watch_arm_pi again only after a later notification says the cycle is missing, failed, or unhealthy";
-const shuttingDownMessage = "watcher: not armed - Pi session is shutting down";
+const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
+const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 
 let nextGenerationId = 0;
 let activeGeneration: SessionGeneration | null = null;
@@ -161,7 +166,7 @@ function classifyClose(stdout: string, stderr: string, code: number | null, sign
   if (healthy) {
     return {
       kind: "failure",
-      message: `watcher: FAILED - Pi extension arm child found an external healthy watcher instead of owning wake delivery\n${healthy}`,
+      message: `watcher: FAILED - omp extension arm child found an external healthy watcher instead of owning wake delivery\n${healthy}`,
     };
   }
   const failed = combined.split(/\r?\n/).find((line) => /^watcher: FAILED/.test(line));
@@ -169,7 +174,7 @@ function classifyClose(stdout: string, stderr: string, code: number | null, sign
   if (signal) {
     return {
       kind: "failure",
-      message: `watcher: FAILED - Pi extension arm child ended from ${signal}${combined ? `\n${combined}` : ""}`,
+      message: `watcher: FAILED - omp extension arm child ended from ${signal}${combined ? `\n${combined}` : ""}`,
     };
   }
   if (code && code !== 0) {
@@ -180,7 +185,7 @@ function classifyClose(stdout: string, stderr: string, code: number | null, sign
   }
   return {
     kind: "failure",
-    message: "watcher: FAILED - Pi extension arm cycle ended without an actionable reason",
+    message: "watcher: FAILED - omp extension arm cycle ended without an actionable reason",
   };
 }
 
@@ -196,18 +201,16 @@ function createGeneration(): SessionGeneration {
   };
 }
 
-function activateGeneration(generation: SessionGeneration): void {
-  activeGeneration = generation;
-}
-
 function generationIsLive(generation: SessionGeneration): boolean {
   return activeGeneration === generation && !generation.stopping;
 }
 
 function stopGeneration(generation: SessionGeneration): void {
   generation.stopping = true;
-  if (generation.retryTimer) clearTimeout(generation.retryTimer);
-  generation.retryTimer = null;
+  if (generation.retryTimer) {
+    clearTimeout(generation.retryTimer);
+    generation.retryTimer = null;
+  }
   if (generation.child) generation.child.kill("SIGTERM");
   generation.child = null;
 }
@@ -217,25 +220,9 @@ const cleanupOnProcessExit = () => {
 };
 process.once("exit", cleanupOnProcessExit);
 
-export default function (pi: ExtensionAPI) {
+export default function (pi: OmpExtensionApi) {
   let generation = createGeneration();
-  activateGeneration(generation);
-
-  let calmPresentation: CalmPresentationState = {
-    active: false,
-    stockExportRendering: false,
-  };
-  pi.events?.on?.(FIRSTMATE_CALM_PRESENTATION_EVENT, (data) => {
-    const next = data as Partial<CalmPresentationState>;
-    calmPresentation = {
-      active: next.active === true,
-      stockExportRendering: next.stockExportRendering === true,
-    };
-  });
-  const calmHides = (itemClass: Parameters<typeof calmTranscriptClassIsVisible>[0]): boolean =>
-    calmPresentation.active &&
-    !calmPresentation.stockExportRendering &&
-    !calmTranscriptClassIsVisible(itemClass);
+  activeGeneration = generation;
 
   async function sendWake(owner: SessionGeneration, message: string): Promise<void> {
     if (!generationIsLive(owner)) return;
@@ -248,7 +235,7 @@ export default function (pi: ExtensionAPI) {
 
   function surfaceFailure(owner: SessionGeneration, message: string): void {
     void sendWake(owner, message).catch(() => {
-      // Pi owns delivery errors; continuity restoration never waits on prompting.
+      // omp owns delivery errors; continuity restoration never waits on prompting.
     });
   }
 
@@ -299,32 +286,32 @@ export default function (pi: ExtensionAPI) {
       const successorChild = owner.child;
       if (replacement.ok && successorChild && await waitForReadiness(successorChild)) return "";
       if (replacement.ok) {
-        failure = "watcher: FAILED - Pi extension could not verify a ready successor watcher";
+        failure = "watcher: FAILED - omp extension could not verify a ready successor watcher";
         if (!(await retireArm(successorChild))) {
-          return `${failure}\nwatcher: FAILED - Pi extension could not restore watcher continuity because the unready successor arm did not exit within ${armRetireTimeoutMs}ms`;
+          return `${failure}\nwatcher: FAILED - omp extension could not restore watcher continuity because the unready successor arm did not exit within ${armRetireTimeoutMs}ms`;
         }
       } else {
         failure = /(?:read-only|no live session)/.test(replacement.message)
-          ? `watcher: FAILED - Pi extension cannot restore continuity because this session no longer owns the lock\n${replacement.message}`
-          : `watcher: FAILED - Pi extension could not start the successor watcher cycle\n${replacement.message}`;
+          ? `watcher: FAILED - omp extension cannot restore continuity because this session no longer owns the lock\n${replacement.message}`
+          : `watcher: FAILED - omp extension could not start the successor watcher cycle\n${replacement.message}`;
         if (/(?:read-only|no live session)/.test(replacement.message)) break;
       }
       if (attempt === retryLimit) break;
       await waitForRetry(attempt + 1);
     }
-    return `${failure}\nwatcher: FAILED - Pi extension could not restore watcher continuity after ${retryLimit} retries`;
+    return `${failure}\nwatcher: FAILED - omp extension could not restore watcher continuity after ${retryLimit} retries`;
   }
 
   function scheduleRetry(owner: SessionGeneration, message: string, predecessorArmPid: string): void {
     if (!generationIsLive(owner) || owner.child || owner.retryTimer) return;
     const ownership = lockOwnership();
     if (ownership !== "owned") {
-      surfaceFailure(owner, `watcher: FAILED - Pi extension cannot restore continuity because this session no longer owns the lock\n${message}`);
+      surfaceFailure(owner, `watcher: FAILED - omp extension cannot restore continuity because this session no longer owns the lock\n${message}`);
       return;
     }
     owner.retryFailures += 1;
     if (owner.retryFailures > retryLimit) {
-      surfaceFailure(owner, `watcher: FAILED - Pi extension could not restore watcher continuity after ${retryLimit} retries\n${message}`);
+      surfaceFailure(owner, `watcher: FAILED - omp extension could not restore watcher continuity after ${retryLimit} retries\n${message}`);
       return;
     }
     const timer = setTimeout(() => {
@@ -332,7 +319,7 @@ export default function (pi: ExtensionAPI) {
       if (!generationIsLive(owner)) return;
       const result = startArm(owner, predecessorArmPid);
       if (!result.ok) {
-        surfaceFailure(owner, `watcher: FAILED - Pi extension could not launch a continuity retry\n${result.message}`);
+        surfaceFailure(owner, `watcher: FAILED - omp extension could not launch a continuity retry\n${result.message}`);
       }
     }, retryDelay(owner.retryFailures));
     timer.unref();
@@ -346,20 +333,20 @@ export default function (pi: ExtensionAPI) {
     if (ownership === "missing") {
       return {
         ok: false,
-        message: "watcher: not armed - no live session holds the lock; run bin/fm-session-start.sh to reclaim it, then call fm_watch_arm_pi to re-arm",
+        message: "watcher: not armed - no live session holds the lock; run bin/fm-session-start.sh to reclaim it, then call fm_watch_arm_omp to re-arm",
       };
     }
     markLoaded();
     if (owner.child) {
       return {
         ok: true,
-        message: `watcher: unchanged - Pi extension already owns an arm child; no manual re-arm needed; ${repairOnlyHint}`,
+        message: `watcher: unchanged - omp extension already owns an arm child; no manual re-arm needed; ${repairOnlyHint}`,
       };
     }
     if (owner.retryTimer) {
       return {
         ok: true,
-        message: `watcher: unchanged - Pi extension already owns a scheduled continuity retry; no manual re-arm needed; ${repairOnlyHint}`,
+        message: `watcher: unchanged - omp extension already owns a scheduled continuity retry; no manual re-arm needed; ${repairOnlyHint}`,
       };
     }
     const id = ++owner.seq;
@@ -445,66 +432,40 @@ export default function (pi: ExtensionAPI) {
       releaseChild();
       if (!generationIsLive(owner)) return;
       if (owner.restoring) return;
-      scheduleRetry(owner, `watcher: FAILED - Pi extension arm child ${id} failed: ${error.message}`, String(armChild.pid ?? ""));
+      scheduleRetry(owner, `watcher: FAILED - omp extension arm child ${id} failed: ${error.message}`, String(armChild.pid ?? ""));
     });
     return {
       ok: true,
-      message: `watcher: started Pi extension arm child ${id}; future ordinary re-arms are automatic; ${repairOnlyHint}`,
+      message: `watcher: started omp extension arm child ${id}; future ordinary re-arms are automatic; ${repairOnlyHint}`,
     };
   }
 
   pi.on?.("session_start", () => {
     if (generation.stopping) generation = createGeneration();
-    activateGeneration(generation);
+    activeGeneration = generation;
     markLoaded();
   });
   pi.on?.("session_shutdown", () => {
     stopGeneration(generation);
   });
 
-  pi.registerCommand?.("fm-watch-arm-pi", {
-    description: "Arm firstmate watcher supervision through the Pi extension instead of foreground bash.",
-    handler: async (_args, ctx) => {
+  pi.registerCommand?.("fm-watch-arm-omp", {
+    description: "Arm firstmate watcher supervision through the omp extension instead of foreground bash.",
+    handler: (_args, ctx) => {
       const result = startArm(generation);
       ctx.ui.notify(result.message, result.ok ? "info" : "warning");
     },
   });
 
   pi.registerTool?.({
-    name: "fm_watch_arm_pi",
+    name: "fm_watch_arm_omp",
     label: "Arm firstmate watcher",
-    description: "Start the first required Pi watcher cycle, or repair one only after a notification says the cycle is missing, failed, or unhealthy. Do not call after ordinary work or ordinary notifications; the Pi extension re-arms automatically. Never run bin/fm-watch-arm.sh through bash.",
-    promptSnippet: "Start the first required Pi watcher cycle or repair a cycle reported missing, failed, or unhealthy; ordinary re-arming is automatic.",
+    description: "Start the first required omp watcher cycle, or repair one only after a notification says the cycle is missing, failed, or unhealthy. Do not call after ordinary work or ordinary notifications; the omp extension re-arms automatically. Never run bin/fm-watch-arm.sh through bash.",
+    promptSnippet: "Start the first required omp watcher cycle or repair a cycle reported missing, failed, or unhealthy; ordinary re-arming is automatic.",
     promptGuidelines: [
-      "Call fm_watch_arm_pi only for the first required cycle or after a notification says the cycle is missing, failed, or unhealthy. Do not call it after ordinary work, turn completion, or ordinary signal, stale, check, or heartbeat handling because the Pi extension owns re-arming. Never run bin/fm-watch-arm.sh through bash.",
+      "Call fm_watch_arm_omp only for the first required cycle or after a notification says the cycle is missing, failed, or unhealthy. Do not call it after ordinary work, turn completion, or ordinary signal, stale, check, or heartbeat handling because the omp extension owns re-arming. Never run bin/fm-watch-arm.sh through bash.",
     ],
-    parameters: Type.Object({}),
-    renderShell: "self",
-    renderCall: (_args, theme, context) => {
-      if (calmHides("assistant-tool-call")) return new Container();
-      if (calmPresentation.stockExportRendering) {
-        return new Text(theme.fg("toolTitle", theme.bold("fm_watch_arm_pi")), 0, 0);
-      }
-      const state = context.state as WatchToolShellState;
-      state.call = new Text(theme.fg("toolTitle", theme.bold("fm_watch_arm_pi")), 0, 0);
-      return refreshWatchToolShell(state, theme, context);
-    },
-    renderResult: (result, _options, theme, context) => {
-      if (calmHides("tool-result")) return new Container();
-      const output = result.content
-        .filter((item) => item.type === "text")
-        .map((item) => item.text)
-        .join("\n");
-      if (calmPresentation.stockExportRendering) {
-        return new Text(theme.fg("toolOutput", output), 0, 0);
-      }
-      const state = context.state as WatchToolShellState;
-      state.result = output
-        ? new Text(theme.fg("toolOutput", output), 0, 0)
-        : new Container();
-      refreshWatchToolShell(state, theme, context);
-      return new Container();
-    },
+    parameters: { type: "object", properties: {} },
     execute: async () => {
       const result = startArm(generation);
       return {
