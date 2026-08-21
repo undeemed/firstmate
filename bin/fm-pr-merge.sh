@@ -23,6 +23,8 @@
 # Merge method defaults to --squash when the caller passes none of --squash,
 # --merge, --rebase, or --method after the optional -- separator. Extra args
 # must not include --repo or -R because the repository comes only from the URL.
+# Pipeline-class extra args must not include --match-head-commit either, because
+# the head pin comes only from the gate.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,8 +59,31 @@ reject_repo_overrides() {
   done
 }
 
+reject_pipeline_pin_overrides() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+    --match-head-commit | --match-head-commit=*)
+      echo "error: extra merge arguments must not override the gated head pin" >&2
+      return 1
+      ;;
+    esac
+  done
+}
+
 pipeline_refuse() {
   echo "error: pipeline merge refused - $1" >&2
+}
+
+# Extract a count from a JSON payload, failing closed: non-zero unless jq
+# succeeds and the result is a non-negative integer.
+jq_count() {
+  local json=$1 filter=$2 value
+  value=$(printf '%s' "$json" | jq "$filter" 2>/dev/null) || return 1
+  case "$value" in
+  '' | *[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$value"
 }
 
 # Enforce the pipeline-class green gate against the live forge. Every gate and
@@ -66,12 +91,17 @@ pipeline_refuse() {
 # an audit line and exports PIPELINE_HEAD (the exact gated head SHA) so the
 # merge can pin to it with --match-head-commit.
 pipeline_merge_gate() {
-  local pull default_branch state base mstate head checks total returned pending red reviews changes_requested
+  local pull repo_json default_branch state base mstate head checks total returned pending red reviews review_count changes_requested
   if ! pull=$(gh api "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" 2>/dev/null); then
     pipeline_refuse "PR #$PR_NUMBER could not be read from $PR_OWNER/$PR_REPO"
     return 1
   fi
-  if ! default_branch=$(gh api "repos/$PR_OWNER/$PR_REPO" 2>/dev/null | jq -r '.default_branch'); then
+  if ! repo_json=$(gh api "repos/$PR_OWNER/$PR_REPO" 2>/dev/null); then
+    pipeline_refuse "could not resolve $PR_OWNER/$PR_REPO default branch"
+    return 1
+  fi
+  default_branch=$(printf '%s' "$repo_json" | jq -r '.default_branch' 2>/dev/null)
+  if [ -z "$default_branch" ] || [ "$default_branch" = null ]; then
     pipeline_refuse "could not resolve $PR_OWNER/$PR_REPO default branch"
     return 1
   fi
@@ -83,7 +113,7 @@ pipeline_merge_gate() {
     pipeline_refuse "PR #$PR_NUMBER is not open (state=$state)"
     return 1
   fi
-  if [ -z "$default_branch" ] || [ "$default_branch" = null ] || [ "$base" != "$default_branch" ]; then
+  if [ "$base" != "$default_branch" ]; then
     pipeline_refuse "PR #$PR_NUMBER does not target the default branch (base=$base, default=$default_branch)"
     return 1
   fi
@@ -101,9 +131,12 @@ pipeline_merge_gate() {
     pipeline_refuse "PR #$PR_NUMBER checks could not be read"
     return 1
   fi
-  total=$(printf '%s' "$checks" | jq '.total_count // (.check_runs | length)')
-  returned=$(printf '%s' "$checks" | jq '.check_runs | length')
-  if [ "${total:-0}" -eq 0 ]; then
+  if ! total=$(jq_count "$checks" '.total_count // (.check_runs | length)') ||
+    ! returned=$(jq_count "$checks" '.check_runs | length'); then
+    pipeline_refuse "PR #$PR_NUMBER checks payload is malformed"
+    return 1
+  fi
+  if [ "$total" -eq 0 ]; then
     pipeline_refuse "PR #$PR_NUMBER has no checks to verify"
     return 1
   fi
@@ -111,13 +144,16 @@ pipeline_merge_gate() {
     pipeline_refuse "PR #$PR_NUMBER reports $total checks exceeding one verifiable page ($returned read)"
     return 1
   fi
-  pending=$(printf '%s' "$checks" | jq '[.check_runs[] | select(.status != "completed")] | length')
-  red=$(printf '%s' "$checks" | jq '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure" or .conclusion == "stale")] | length')
-  if [ "${pending:-0}" -ne 0 ]; then
+  if ! pending=$(jq_count "$checks" '[.check_runs[] | select(.status != "completed")] | length') ||
+    ! red=$(jq_count "$checks" '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure" or .conclusion == "stale")] | length'); then
+    pipeline_refuse "PR #$PR_NUMBER checks payload is malformed"
+    return 1
+  fi
+  if [ "$pending" -ne 0 ]; then
     pipeline_refuse "PR #$PR_NUMBER has $pending check(s) still running"
     return 1
   fi
-  if [ "${red:-0}" -ne 0 ]; then
+  if [ "$red" -ne 0 ]; then
     pipeline_refuse "PR #$PR_NUMBER has $red non-green check(s)"
     return 1
   fi
@@ -128,8 +164,21 @@ pipeline_merge_gate() {
     pipeline_refuse "PR #$PR_NUMBER reviews could not be read"
     return 1
   fi
-  changes_requested=$(printf '%s' "$reviews" | jq '[.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | group_by(.user.login) | map(last) | [.[] | select(.state == "CHANGES_REQUESTED")] | length')
-  if [ "${changes_requested:-0}" -ne 0 ]; then
+  if ! review_count=$(jq_count "$reviews" 'if type == "array" then length else error end'); then
+    pipeline_refuse "PR #$PR_NUMBER reviews payload is malformed"
+    return 1
+  fi
+  # The reviews endpoint reports no total_count, so a full page means a later
+  # review could hide on page two: refuse rather than trust an unverifiable page.
+  if [ "$review_count" -ge 100 ]; then
+    pipeline_refuse "PR #$PR_NUMBER has $review_count reviews exceeding one verifiable page"
+    return 1
+  fi
+  if ! changes_requested=$(jq_count "$reviews" '[.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | group_by(.user.login) | map(last) | [.[] | select(.state == "CHANGES_REQUESTED")] | length'); then
+    pipeline_refuse "PR #$PR_NUMBER reviews payload is malformed"
+    return 1
+  fi
+  if [ "$changes_requested" -ne 0 ]; then
     pipeline_refuse "PR #$PR_NUMBER has $changes_requested outstanding requested-changes review(s)"
     return 1
   fi
@@ -188,6 +237,7 @@ PR_NUMBER=$FM_PR_NUMBER
 reject_repo_overrides "$@" || exit 1
 
 if [ "$CLASS" = pipeline ]; then
+  reject_pipeline_pin_overrides "$@" || exit 1
   pipeline_merge_gate || exit 1
 else
   # Task-derived paths are constructed only after the canonical ID validation.
