@@ -447,6 +447,62 @@ test_pipeline_refuses_reviews_read_failure() {
   pass "fm-pr-merge --pipeline fails closed when the reviews API read fails"
 }
 
+test_pipeline_refuses_paginated_reviews() {
+  local case_dir
+  case_dir=$(make_case pipeline-reviews-paginated)
+  add_pipeline_mocks "$case_dir"
+  # A full returned page: the reviews endpoint reports no total_count, so a
+  # later CHANGES_REQUESTED could hide on page two.
+  jq -n '[range(100) | {"user":{"login":"rev\(.)"},"state":"APPROVED","submitted_at":"2026-01-01T00:00:00Z"}]' \
+    > "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-reviews-paginated
+  pass "fm-pr-merge --pipeline refuses when reviews fill one verifiable page"
+}
+
+test_pipeline_refuses_malformed_checks_payload() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-malformed)
+  add_pipeline_mocks "$case_dir"
+  # Valid JSON of the wrong shape: the total==returned guard passes, so only a
+  # fail-closed count extraction stands between this payload and a merge.
+  printf '%s\n' '{"total_count":2,"check_runs":[1,2]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-malformed
+  pass "fm-pr-merge --pipeline refuses a malformed checks payload instead of merging"
+}
+
+test_pipeline_refuses_malformed_reviews_payload() {
+  local case_dir
+  case_dir=$(make_case pipeline-reviews-malformed)
+  add_pipeline_mocks "$case_dir"
+  # A non-array reviews payload (e.g. an error object served with exit 0).
+  printf '%s\n' '{"message":"Server Error"}' > "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-reviews-malformed
+  pass "fm-pr-merge --pipeline refuses a non-array reviews payload instead of merging"
+}
+
+test_pipeline_refuses_match_head_commit_override() {
+  local case_dir rc
+  case_dir=$(make_case pipeline-pin-override)
+  add_pipeline_mocks "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 -- \
+    --match-head-commit 0000000000000000000000000000000000000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "pipeline-pin-override: fm-pr-merge should refuse a caller-supplied --match-head-commit"
+  assert_grep 'must not override the gated head pin' "$case_dir/stderr" \
+    "pipeline-pin-override: refusal did not explain the head pin override"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "pipeline-pin-override: gh-axi pr merge was invoked despite the pin override"
+  assert_absent "$case_dir/state/pr-merge-audit.log" \
+    "pipeline-pin-override: audit line was written despite the pin override"
+  pass "fm-pr-merge --pipeline refuses caller-supplied --match-head-commit overrides"
+}
+
 test_pipeline_merges_green_pr
 test_pipeline_refuses_non_clean
 test_pipeline_refuses_red_check
@@ -454,3 +510,7 @@ test_pipeline_refuses_pending_check
 test_pipeline_refuses_paginated_checks
 test_pipeline_refuses_changes_requested_then_commented
 test_pipeline_refuses_reviews_read_failure
+test_pipeline_refuses_paginated_reviews
+test_pipeline_refuses_malformed_checks_payload
+test_pipeline_refuses_malformed_reviews_payload
+test_pipeline_refuses_match_head_commit_override
