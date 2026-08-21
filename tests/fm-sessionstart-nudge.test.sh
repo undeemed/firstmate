@@ -416,7 +416,8 @@ test_pi_large_sessionstart_digest_is_delivered_loudly() {
   git -C "$fixture" commit -q --allow-empty -m init
   : > "$fixture/AGENTS.md"
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
-  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/"
+  mkdir -p "$fixture/extensions/lib"
+  cp "$ROOT/extensions/lib/fm-operational-input.ts" "$fixture/extensions/lib/"
   cp "$ROOT/bin/fm-sessionstart-run.sh" "$ROOT/bin/fm-sessionstart-nudge.sh" \
     "$ROOT/bin/fm-primary-scope-lib.sh" "$ROOT/bin/fm-gate-refuse-lib.sh" \
     "$ROOT/bin/fm-hook-host-lib.sh" \
