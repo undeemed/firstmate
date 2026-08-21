@@ -127,3 +127,14 @@ Run:
 ```sh
 bash tests/fm-codegraph-pretool-check.test.sh
 ```
+
+## User-level guard extension and the installed checker
+
+`extensions/fm-codegraph-guard.ts` is the canonical source of the user-level guard that gives every raw pi and omp session the same check the primary guards already run.
+It is one portable file: omp discovers it from `~/.omp/agent/extensions/`, and pi loads it as an installed package pointing at that same path, so the two runtimes never drift into separate copies.
+
+Install it by copying this file to `~/.omp/agent/extensions/fm-codegraph-guard.ts` and registering that path with `pi install`.
+
+The guard resolves the checker from `~/.local/bin/fm-codegraph-pretool-check.sh` first and falls back to `$FM_HOME/bin/fm-codegraph-pretool-check.sh`.
+That order exists because of a real failure: an earlier version resolved only the repository path, so checking out a branch without the script made the spawn fail, and the guard's deliberate fail-open behavior then allowed every raw search with nothing logged.
+Install the checker to the stable path with `install -m 0755 bin/fm-codegraph-pretool-check.sh ~/.local/bin/fm-codegraph-pretool-check.sh`, and re-run that command whenever this repository's copy changes.
