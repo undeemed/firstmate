@@ -311,3 +311,261 @@ test_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
+
+# --- pipeline-raised PR class (fm-pr-merge.sh --pipeline <url>) --------------
+# The pipeline class has no task meta; it gates on live forge state read through
+# `gh api`. These cases mock `gh api` per endpoint from fixture files and assert
+# the green gate merges (pinned to head) while every failed gate refuses loudly
+# and never invokes `gh-axi pr merge`.
+
+PIPELINE_HEAD_SHA=1111111111111111111111111111111111111111
+
+# Write the gh (api) + gh-axi (merge) mocks and green default fixtures. Tests
+# override individual fixtures, or delete one to simulate a forge read failure.
+add_pipeline_mocks() {
+  local case_dir=$1 fx="$1/fx"
+  mkdir -p "$fx"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = "api" ]; then
+  case "\${2:-}" in
+    */pulls/*/reviews*)     f="$fx/reviews.json" ;;
+    */commits/*/check-runs*) f="$fx/checks.json" ;;
+    */pulls/*)              f="$fx/pull.json" ;;
+    repos/*/*)              f="$fx/repo.json" ;;
+    *) printf '{}\n'; exit 0 ;;
+  esac
+  [ -f "\$f" ] && { cat "\$f"; exit 0; } || exit 1
+fi
+exit 0
+SH
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh" "$case_dir/fakebin/gh-axi"
+  printf '%s\n' '{"default_branch":"main"}' > "$fx/repo.json"
+  printf '%s\n' "{\"state\":\"open\",\"base\":{\"ref\":\"main\"},\"mergeable_state\":\"clean\",\"head\":{\"sha\":\"$PIPELINE_HEAD_SHA\"}}" > "$fx/pull.json"
+  printf '%s\n' '{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"success"}]}' > "$fx/checks.json"
+  printf '%s\n' '[]' > "$fx/reviews.json"
+}
+
+test_pipeline_merges_green_pr() {
+  local case_dir rc
+  case_dir=$(make_case pipeline-green)
+  add_pipeline_mocks "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "pipeline-green: fm-pr-merge --pipeline should succeed on a green PR"
+  grep -qxF "pr merge 9 --repo example/repo --match-head-commit $PIPELINE_HEAD_SHA --squash" "$case_dir/gh-axi.log" \
+    || fail "pipeline-green: gh-axi pr merge was not invoked with --match-head-commit <head> and default --squash"
+  assert_grep "class=pipeline" "$case_dir/state/pr-merge-audit.log" \
+    "pipeline-green: audit line was not recorded"
+  assert_grep "head=$PIPELINE_HEAD_SHA" "$case_dir/state/pr-merge-audit.log" \
+    "pipeline-green: audit line did not record the gated head"
+  pass "fm-pr-merge --pipeline merges a green PR pinned to head and writes an audit line"
+}
+
+# Shared refusal driver: run --pipeline and assert non-zero + no merge invoked.
+expect_pipeline_refusal() {
+  local case_dir=$1 label=$2 rc
+  : > "$case_dir/gh-axi.log"
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "$label: expected refusal, got exit 0"
+  if grep -q 'pr merge' "$case_dir/gh-axi.log" 2>/dev/null; then
+    fail "$label: gh-axi pr merge was invoked despite a failed gate"
+  fi
+}
+
+test_pipeline_refuses_non_clean() {
+  local case_dir
+  case_dir=$(make_case pipeline-dirty)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' "{\"state\":\"open\",\"base\":{\"ref\":\"main\"},\"mergeable_state\":\"dirty\",\"head\":{\"sha\":\"$PIPELINE_HEAD_SHA\"}}" > "$case_dir/fx/pull.json"
+  expect_pipeline_refusal "$case_dir" pipeline-dirty
+  pass "fm-pr-merge --pipeline refuses a PR whose mergeable_state is not clean"
+}
+
+test_pipeline_refuses_red_check() {
+  local case_dir
+  case_dir=$(make_case pipeline-red)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"failure"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-red
+  pass "fm-pr-merge --pipeline refuses a PR with a non-green check"
+}
+
+test_pipeline_refuses_pending_check() {
+  local case_dir
+  case_dir=$(make_case pipeline-pending)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success"},{"status":"in_progress","conclusion":null}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-pending
+  pass "fm-pr-merge --pipeline refuses a PR with a still-running check"
+}
+
+test_pipeline_refuses_paginated_checks() {
+  local case_dir
+  case_dir=$(make_case pipeline-paginated)
+  add_pipeline_mocks "$case_dir"
+  # total_count exceeds the returned page: a red check could hide on page two.
+  printf '%s\n' '{"total_count":101,"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"success"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-paginated
+  pass "fm-pr-merge --pipeline refuses when checks exceed one verifiable page"
+}
+
+test_pipeline_refuses_changes_requested_then_commented() {
+  local case_dir
+  case_dir=$(make_case pipeline-changes-requested)
+  add_pipeline_mocks "$case_dir"
+  # A later COMMENTED review from the same reviewer must NOT clear the earlier
+  # CHANGES_REQUESTED - the outstanding request still blocks the merge.
+  printf '%s\n' '[{"user":{"login":"rev1"},"state":"CHANGES_REQUESTED","submitted_at":"2026-01-01T00:00:00Z"},{"user":{"login":"rev1"},"state":"COMMENTED","submitted_at":"2026-01-02T00:00:00Z"}]' > "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-changes-requested
+  pass "fm-pr-merge --pipeline refuses when a reviewer's CHANGES_REQUESTED is only followed by a COMMENTED review"
+}
+
+test_pipeline_refuses_reviews_read_failure() {
+  local case_dir
+  case_dir=$(make_case pipeline-reviews-fail)
+  add_pipeline_mocks "$case_dir"
+  # Delete the reviews fixture so the mocked `gh api .../reviews` exits non-zero:
+  # a forge read failure must fail closed, never merge.
+  rm -f "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-reviews-fail
+  pass "fm-pr-merge --pipeline fails closed when the reviews API read fails"
+}
+
+test_pipeline_refuses_paginated_reviews() {
+  local case_dir
+  case_dir=$(make_case pipeline-reviews-paginated)
+  add_pipeline_mocks "$case_dir"
+  # A full returned page: the reviews endpoint reports no total_count, so a
+  # later CHANGES_REQUESTED could hide on page two.
+  jq -n '[range(100) | {"user":{"login":"rev\(.)"},"state":"APPROVED","submitted_at":"2026-01-01T00:00:00Z"}]' \
+    > "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-reviews-paginated
+  pass "fm-pr-merge --pipeline refuses when reviews fill one verifiable page"
+}
+
+test_pipeline_refuses_malformed_checks_payload() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-malformed)
+  add_pipeline_mocks "$case_dir"
+  # Valid JSON of the wrong shape: the total==returned guard passes, so only a
+  # fail-closed count extraction stands between this payload and a merge.
+  printf '%s\n' '{"total_count":2,"check_runs":[1,2]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-malformed
+  pass "fm-pr-merge --pipeline refuses a malformed checks payload instead of merging"
+}
+
+test_pipeline_refuses_missing_total_count() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-no-total)
+  add_pipeline_mocks "$case_dir"
+  # Green check_runs but no total_count: page consistency is unverifiable, so
+  # a red check could hide on page two.
+  printf '%s\n' '{"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"success"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-no-total
+  pass "fm-pr-merge --pipeline refuses a checks payload without total_count instead of merging"
+}
+
+test_pipeline_refuses_null_conclusion() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-null-conclusion)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":1,"check_runs":[{"status":"completed","conclusion":null}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-null-conclusion
+  pass "fm-pr-merge --pipeline refuses a completed check with a null conclusion"
+}
+
+test_pipeline_refuses_unknown_conclusion() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-unknown-conclusion)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":1,"check_runs":[{"status":"completed","conclusion":"mystery_state"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-unknown-conclusion
+  pass "fm-pr-merge --pipeline refuses a completed check with an unrecognized conclusion"
+}
+
+test_pipeline_refuses_malformed_reviews_payload() {
+  local case_dir
+  case_dir=$(make_case pipeline-reviews-malformed)
+  add_pipeline_mocks "$case_dir"
+  # A non-array reviews payload (e.g. an error object served with exit 0).
+  printf '%s\n' '{"message":"Server Error"}' > "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-reviews-malformed
+  pass "fm-pr-merge --pipeline refuses a non-array reviews payload instead of merging"
+}
+
+test_pipeline_refuses_match_head_commit_override() {
+  local case_dir rc
+  case_dir=$(make_case pipeline-pin-override)
+  add_pipeline_mocks "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 -- \
+    --match-head-commit 0000000000000000000000000000000000000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "pipeline-pin-override: fm-pr-merge should refuse a caller-supplied --match-head-commit"
+  assert_grep 'must not override the gated head pin' "$case_dir/stderr" \
+    "pipeline-pin-override: refusal did not explain the head pin override"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "pipeline-pin-override: gh-axi pr merge was invoked despite the pin override"
+  assert_absent "$case_dir/state/pr-merge-audit.log" \
+    "pipeline-pin-override: audit line was written despite the pin override"
+  pass "fm-pr-merge --pipeline refuses caller-supplied --match-head-commit overrides"
+}
+
+test_pipeline_refuses_auto_extra_arg() {
+  local case_dir rc
+  case_dir=$(make_case pipeline-auto-override)
+  add_pipeline_mocks "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 -- --auto \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "pipeline-auto-override: fm-pr-merge should refuse a caller-supplied --auto"
+  assert_grep 'must not enable auto-merge' "$case_dir/stderr" \
+    "pipeline-auto-override: refusal did not explain the auto-merge rejection"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "pipeline-auto-override: gh-axi pr merge was invoked despite --auto"
+  assert_absent "$case_dir/state/pr-merge-audit.log" \
+    "pipeline-auto-override: audit line was written despite --auto"
+  pass "fm-pr-merge --pipeline refuses caller-supplied --auto in extra args"
+}
+
+test_pipeline_merges_green_pr
+test_pipeline_refuses_non_clean
+test_pipeline_refuses_red_check
+test_pipeline_refuses_pending_check
+test_pipeline_refuses_paginated_checks
+test_pipeline_refuses_changes_requested_then_commented
+test_pipeline_refuses_reviews_read_failure
+test_pipeline_refuses_paginated_reviews
+test_pipeline_refuses_malformed_checks_payload
+test_pipeline_refuses_missing_total_count
+test_pipeline_refuses_null_conclusion
+test_pipeline_refuses_unknown_conclusion
+test_pipeline_refuses_malformed_reviews_payload
+test_pipeline_refuses_match_head_commit_override
+test_pipeline_refuses_auto_extra_arg
