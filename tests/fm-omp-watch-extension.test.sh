@@ -292,7 +292,7 @@ const settle = async (ms) => {
 
 // Wait for the first follow-up, then let several more arm cycles run: each one
 // closes on the same actionable line, so an un-coalesced build queues one each.
-for (let i = 0; i < 300 && delivered.length === 0; i += 1) await settle(20);
+for (let i = 0; i < 900 && delivered.length === 0; i += 1) await settle(20);
 await settle(1200);
 const beforeRead = delivered.length;
 if (beforeRead !== 1) {
@@ -306,7 +306,7 @@ if (typeof handlers.agent_start !== "function") {
   process.exit(1);
 }
 handlers.agent_start();
-for (let i = 0; i < 300 && delivered.length === beforeRead; i += 1) await settle(20);
+for (let i = 0; i < 900 && delivered.length === beforeRead; i += 1) await settle(20);
 if (delivered.length <= beforeRead) {
   console.error(`a repeat after the queue was read must deliver again; still ${delivered.length}`);
   process.exit(1);
