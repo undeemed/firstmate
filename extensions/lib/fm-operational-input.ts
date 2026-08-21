@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const operationalInputScript =
   process.env.FM_OPERATIONAL_INPUT_SCRIPT ||
-  resolve(dirname(fileURLToPath(import.meta.url)), "../../../bin/fm-operational-input.sh");
+  resolve(dirname(fileURLToPath(import.meta.url)), "../../bin/fm-operational-input.sh");
 
 export const FIRSTMATE_CURRENT_OPERATIONAL_KINDS = [
   "session-start",

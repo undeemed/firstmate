@@ -160,6 +160,8 @@
 #                  written by this script; outside the worktree for the same reason as __PIEXT__)
 #     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
 #     __PIWATCH__   absolute path to .pi/extensions/fm-primary-pi-watch.ts in a pi secondmate home
+#     __OMPTURNEND__ absolute path to .omp/extensions/fm-primary-turnend-guard.ts in an omp secondmate home
+#     __OMPWATCH__   absolute path to .omp/extensions/fm-primary-omp-watch.ts in an omp secondmate home
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
 #     __WORKTREE__  absolute path to the task worktree
 #     __CURSORBIN__ resolved, cursor-verified executable for a cursor launch
@@ -1122,12 +1124,20 @@ launch_template() {
       fi
       ;;
     opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode __MODELFLAG__--prompt "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
-    # omp (Oh My Pi): a pi fork, so the shape matches pi's crewmate arm.
-    # --auto-approve skips every tool-approval prompt (omp 17.3.4), which is what
-    # an unattended crewmate needs; -e loads the busy-state/turn-end extension
-    # written below. There is no secondmate arm: omp is refused for that kind
-    # further down, so this template is only ever reached for a crewmate/scout.
-    omp) printf '%s' 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    # omp (Oh My Pi): a pi fork, so the shape matches pi's arm. --auto-approve
+    # skips every tool-approval prompt (omp 17.3.4), which an unattended crewmate
+    # or secondmate needs. A crewmate/scout loads the single busy-state/turn-end
+    # extension (-e __OMPEXT__, written below). A secondmate is a firstmate
+    # instance and needs the primary supervision pair instead: the turn-end guard
+    # and the watcher bridge, both tracked .omp/extensions/*.ts files in the
+    # secondmate home, loaded via -e (the trust-free path).
+    omp)
+      if [ "$kind" = secondmate ]; then
+        printf '%s' 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPTURNEND__ -e __OMPWATCH__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      else
+        printf '%s' 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      fi
+      ;;
     pi|pi-signed)
       printf '%s' '__PIBIN____PITUIMODE__'
       if [ "$kind" = secondmate ]; then
@@ -1233,17 +1243,6 @@ esac
 # secondmate whose supervision cycle could never be armed.
 if [ "$KIND" = secondmate ] && [ "$HARNESS" = muse ]; then
   echo "error: muse is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
-  exit 1
-fi
-
-# omp is verified as a CREWMATE/SCOUT adapter only, for the same structural
-# reason. A pi secondmate is supervised by .pi/extensions/fm-primary-turnend-guard.ts,
-# which re-arms the primary cycle from pi's "agent_settled" event; omp 17.3.4
-# emits no such event (its loop ends on "agent_end" with a different contract),
-# so that guard would load and never fire. Refusing here keeps the gap loud
-# instead of standing up a secondmate whose supervision cycle could never re-arm.
-if [ "$KIND" = secondmate ] && [ "$HARNESS" = omp ]; then
-  echo "error: omp is a verified crewmate/scout adapter only and cannot run a secondmate; its primary turn-end guard is not ported. Select a harness verified for secondmates." >&2
   exit 1
 fi
 
@@ -2767,6 +2766,8 @@ sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
+sq_ompturnend=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-turnend-guard.ts")
+sq_ompwatch=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-omp-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
@@ -2779,6 +2780,8 @@ LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
+LAUNCH=${LAUNCH//__OMPTURNEND__/$sq_ompturnend}
+LAUNCH=${LAUNCH//__OMPWATCH__/$sq_ompwatch}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
 case "$HARNESS" in
   pi|pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;

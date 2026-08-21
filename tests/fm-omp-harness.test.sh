@@ -215,25 +215,66 @@ EOF
   pass "fm-spawn: an omp crewmate gets an autonomy flag and its own turn-end extension"
 }
 
-test_omp_spawn_is_refused_for_a_secondmate() {
-  local case_dir home proj fakebin out status
+test_omp_secondmate_launch_uses_the_supervision_pair() {
+  local case_dir home proj fakebin launchlog id out status launch
   case_dir="$TMP_ROOT/secondmate"
   home="$case_dir/home"
   proj="$case_dir/secondmate-home"
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
-  mkdir -p "$home/data/omp-sm-x1" "$home/projects" "$home/state" "$home/config" "$proj"
-  printf 'charter\n' > "$home/data/omp-sm-x1/brief.md"
+  launchlog="$case_dir/launch.log"
+  id="omp-sm-x1"
+  mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
+  printf 'charter\n' > "$home/data/$id/brief.md"
   touch "$home/state/.last-watcher-beat"
+  # A genuine seeded secondmate home: AGENTS.md + bin/ + the .fm-secondmate-home
+  # marker naming this id + operational dirs that resolve inside the home.
+  mkdir -p "$proj/bin" "$proj/data" "$proj/state" "$proj/config" "$proj/projects"
+  printf '# Firstmate\n' > "$proj/AGENTS.md"
+  printf '%s\n' "$id" > "$proj/.fm-secondmate-home"
+  : > "$launchlog"
   out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
-    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" PATH="$fakebin:$PATH" \
-    "$SPAWN" --secondmate omp-sm-x1 "$proj" omp 2>&1)
+    FM_SPAWN_NO_GUARD=1 FM_SKIP_SECONDMATE_INHERIT=1 FM_FAKE_PANE_PATH="$proj" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
+    "$SPAWN" --secondmate "$id" "$proj" omp 2>&1)
   status=$?
-  [ "$status" -ne 0 ] || fail "omp was accepted as a secondmate harness"
-  assert_contains "$out" "crewmate/scout adapter only" \
-    "omp secondmate refusal did not name the missing supervision support"
-  pass "fm-spawn: omp is refused as a secondmate harness"
+  expect_code 0 "$status" "omp secondmate spawn should succeed now that supervision is ported"$'\n'"$out"
+  # The refusal is gone AND the launch loads BOTH primary supervision extensions
+  # with their placeholders resolved to the real tracked paths in the home.
+  launch=$(cat "$launchlog")
+  assert_contains "$launch" \
+    "-e '$proj/.omp/extensions/fm-primary-turnend-guard.ts' -e '$proj/.omp/extensions/fm-primary-omp-watch.ts'" \
+    "omp secondmate launch did not load the ported turn-end guard + watcher with resolved paths"
+  assert_contains "$launch" 'omp --auto-approve' "omp secondmate launch lost its autonomy flag"
+  assert_grep 'kind=secondmate' "$home/state/$id.meta" "omp secondmate spawn did not record kind=secondmate"
+  pass "fm-spawn: an omp secondmate loads the ported turn-end guard + watcher extensions"
+}
+
+test_unknown_harness_secondmate_is_still_refused() {
+  local case_dir home proj fakebin out status
+  case_dir="$TMP_ROOT/unknown-sm"
+  home="$case_dir/home"
+  proj="$case_dir/secondmate-home"
+  fakebin=$(make_spawn_fakebin "$case_dir/fake")
+  mkdir -p "$home/data/unknown-sm-x1" "$home/projects" "$home/state" "$home/config"
+  printf 'charter\n' > "$home/data/unknown-sm-x1/brief.md"
+  touch "$home/state/.last-watcher-beat"
+  mkdir -p "$proj/bin" "$proj/data" "$proj/state" "$proj/config" "$proj/projects"
+  printf '# Firstmate\n' > "$proj/AGENTS.md"
+  printf '%s\n' unknown-sm-x1 > "$proj/.fm-secondmate-home"
+  # Lifting the omp refusal must not open the door to an arbitrary adapter: an
+  # unrecognized bare harness name still has no verified launch template.
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_SKIP_SECONDMATE_INHERIT=1 TMUX="fake,1,0" PATH="$fakebin:$PATH" \
+    "$SPAWN" --secondmate unknown-sm-x1 "$proj" bogusharness 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "an unknown secondmate harness was accepted"
+  assert_contains "$out" "unknown harness 'bogusharness'" \
+    "unknown secondmate harness was not refused with the unverified-adapter error"
+  pass "fm-spawn: an unknown harness is still refused as a secondmate"
 }
 
 # --- teardown ----------------------------------------------------------------
@@ -312,7 +353,8 @@ test_detect_own_bun_bundle_path
 test_detect_own_rejects_omp_lookalike_names
 test_tmux_classifier_attributes_omp_from_its_foreground_name
 test_omp_spawn_writes_extension_and_autonomy_flag
-test_omp_spawn_is_refused_for_a_secondmate
+test_omp_secondmate_launch_uses_the_supervision_pair
+test_unknown_harness_secondmate_is_still_refused
 test_teardown_removes_omp_extension
 test_fm_lock_recognizes_omp_holder
 test_fm_lock_recognizes_omp_bundle_holder
