@@ -511,6 +511,9 @@ Real captures verified these active distinctions:
 - Pi uses content between complete separator rows and requires exact native Pi identity.
 - Dim or faint suggestion text is ghost content, while normally styled text is pending input.
 - Grok dark truecolor placeholders are ghost content, while bright truecolor typed input remains pending.
+- omp uses a half-open rounded box whose content row opens with `│` and never closes it, with no placeholder and no prompt glyph; captured live on 2026-08-21 against omp 17.3.5 on Herdr 0.8.0, as `ESC[0m ESC[38;2;224;193;255m │ + 2 spaces ESC[0m` when empty and the same prefix followed by default-colored text when typed.
+  Before the shape was owned, every live omp pane classified `unknown` and every `bin/fm-send.sh` to one exited non-zero with `verdict=pending` while the text had in fact been submitted.
+  After it, the four live second-mate panes classify `empty` and a real send exits 0.
 - A bare shell prompt has no safe agent-composer container and is unknown.
 
 `tests/fm-composer-ghost.test.sh`, `tests/fm-composer-lib.test.sh`, and the Herdr composer cases pin the exact captured ANSI bytes.

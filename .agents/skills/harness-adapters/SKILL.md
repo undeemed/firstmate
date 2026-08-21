@@ -306,7 +306,7 @@ The model arms through `fm_watch_arm_pi`, never a foreground bash arm; the watch
 `bin/fm-session-start.sh` reports when the live Pi-family session has not loaded both the turn-end guard and watcher extensions, and points at the selected executable after project trust as the fix, with `-e` as a trust-free fallback.
 When a secondmate is launched on Pi or pi-signed, `fm-spawn.sh --secondmate` launches the selected executable with both `-e .pi/extensions/fm-primary-turnend-guard.ts` and `-e .pi/extensions/fm-primary-pi-watch.ts`, both already present in the secondmate home's git worktree.
 
-## omp (Oh My Pi) (omp 17.3.4; liveness VERIFIED 2026-08-15, remaining rows STATIC EVIDENCE and live TUI facts NOT yet verified)
+## omp (Oh My Pi) (omp 17.3.4; liveness VERIFIED 2026-08-15, herdr composer read and send acknowledgement VERIFIED 2026-08-21 on omp 17.3.5, remaining rows STATIC EVIDENCE and remaining live TUI facts NOT yet verified)
 
 omp is a pi fork distributed as the npm package `@oh-my-pi/pi-coding-agent` and executed by bun.
 It is a CREWMATE, SCOUT, and SECONDMATE adapter.
@@ -316,7 +316,8 @@ The ported pair is covered by `tests/fm-omp-turnend-guard.test.sh`, `tests/fm-om
 
 Liveness is the one row measured against a real omp process, through the opt-in drift guard.
 Every other row below is read from the installed binary's `--help`, its shipped TypeScript declarations, and its bundle, not from a live supervised session.
-Treat the composer, dialog, and submission rows as UNVERIFIED until a real omp crewmate has been supervised end to end, and re-read this section's date before trusting them.
+Exception: omp's half-open composer box and herdr's send acknowledgement for it are live-verified (2026-08-21, omp 17.3.5, Herdr 0.8.0) - `docs/herdr-backend.md` "Composer and injection safety" owns the mechanism and `docs/verification/runtime-backends.md` the captures.
+Treat the dialog rows, and composer and submission behavior on any backend other than herdr, as UNVERIFIED until a real omp crewmate has been supervised end to end, and re-read this section's date before trusting them.
 
 | Fact | Value |
 |---|---|
