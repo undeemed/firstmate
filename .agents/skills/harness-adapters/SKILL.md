@@ -60,6 +60,7 @@ The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, a
 `claude` and `codex` block directly through Stop hooks that preserve exit status 2 and stderr from `bin/fm-turnend-guard.sh`.
 `opencode`, `pi`, and `pi-signed` expose passive lifecycle callbacks and force one bounded follow-up when the shared predicate blocks.
 Grok selects native blocking or its pre-native bounded resume fallback from the exact running Stop payload; [`docs/turnend-guard.md`](../../../docs/turnend-guard.md) owns that contract.
+omp carries the ported pi guard in tracked `.omp/extensions/fm-primary-turnend-guard.ts`; omp emits no `agent_settled`, so the guard fires on `agent_end` only when omp's settle triple agrees the run is idle, and that port is STATIC EVIDENCE, not yet live-validated (see the omp section below).
 Kimi is outside the primary turn-end guard scope, while `docs/turnend-guard.md` owns its separate guarded global hook for crew wake signals.
 muse is CREWMATE/SCOUT ONLY and has no primary integration at all: its plugin engine (its only hook surface) is disabled in the default build, and its Claude-compatible hook dialect names `asyncRewake` and model reawakening as explicitly unsupported, which is exactly what a firstmate primary's turn-end supervision needs.
 `bin/fm-spawn.sh` refuses a `--secondmate` launch on muse for that reason.
@@ -72,6 +73,7 @@ When changing any primary turn-end hook, validate the real harness behavior in a
 The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, and `grok` also have wired PreToolUse-equivalent hooks that deny a watcher-arm anti-pattern (shell `&`, truncating pipe, bundling, broad `pkill -f fm-watch`) before it runs.
 `claude` and `codex` block directly through PreToolUse hooks; `grok` blocks the same way but requires every `$VAR` reference in its hook `command` string to carry an inline `:-default` or it fails to launch the hook entirely.
 `opencode`, `pi`, and `pi-signed` block by throwing from `tool.execute.before` / returning `{block: true}` from `tool_call`.
+omp blocks the pi way - `{block: true}` from the ported turn-end guard extension's `tool_call` handler - as STATIC EVIDENCE, not yet live-validated.
 The exact hook files, commands, output-shaping quirks (Claude Code only honors the deny when stdout is empty), and validation transcripts are owned by `docs/arm-pretool-check.md`.
 When changing any watcher-arm PreToolUse hook, validate the real harness behavior in a scratch project before trusting it, then update that doc.
 ## Primary delegation-shape guard
@@ -100,6 +102,7 @@ Claude's Stop `asyncRewake` hook (`bin/fm-claude-stop-autoarm.sh`) owns tokenles
 Codex uses bounded foreground checkpoints through `bin/fm-watch-checkpoint.sh` because Codex cannot reason while a foreground tool call is running.
 OpenCode uses `.opencode/plugins/fm-primary-watch-arm.js`, which coordinates with the turn-end guard plugin and wakes the TUI with `client.session.promptAsync`.
 Pi and pi-signed use the tracked `.pi/extensions/fm-primary-turnend-guard.ts` plus the tracked `.pi/extensions/fm-primary-pi-watch.ts`, both project-local extensions the Pi engine auto-discovers once trusted.
+omp uses the ported pair, the tracked `.omp/extensions/fm-primary-turnend-guard.ts` plus `.omp/extensions/fm-primary-omp-watch.ts`, and the model arms through `fm_watch_arm_omp`; the tool result and clean-exit fallback are owned by `docs/supervision-protocols/omp.md`.
 When changing any primary watcher adapter, update `docs/supervision-protocols/`, `docs/turnend-guard.md` if a shared idle or turn-end hook changed, and the relevant concise fact below.
 
 ## Launch profile axes
@@ -306,9 +309,10 @@ When a secondmate is launched on Pi or pi-signed, `fm-spawn.sh --secondmate` lau
 ## omp (Oh My Pi) (omp 17.3.4; liveness VERIFIED 2026-08-15, remaining rows STATIC EVIDENCE and live TUI facts NOT yet verified)
 
 omp is a pi fork distributed as the npm package `@oh-my-pi/pi-coding-agent` and executed by bun.
-It is a CREWMATE and SCOUT adapter only.
-`bin/fm-spawn.sh` refuses `--secondmate` on omp because the tracked primary turn-end guard re-arms from pi's `agent_settled`, which omp does not emit; porting that guard is what would make omp a secondmate adapter.
-omp is absent from the "Primary turn-end guard" and "Primary pre-arm (PreToolUse) seatbelt" lists above, so `bin/fm-supervision-instructions.sh` maps it to `docs/supervision-protocols/unknown.md` and a firstmate primary detected as omp renders the unknown protocol with no wired turn-end or pre-arm hook.
+It is a CREWMATE, SCOUT, and SECONDMATE adapter.
+The pi primary supervision pair is ported as the tracked `.omp/extensions/fm-primary-turnend-guard.ts` and `.omp/extensions/fm-primary-omp-watch.ts`; because omp emits no `agent_settled`, the ported guard fires on `agent_end` only when omp's settle triple agrees the run is idle (`event.willContinue` false, `ctx.isIdle()` true, `ctx.hasPendingMessages()` false), the same triple the crewmate busy-state row below uses.
+`bin/fm-spawn.sh --secondmate` on omp launches with both extensions via `-e`, `bin/fm-supervision-instructions.sh` maps omp to `docs/supervision-protocols/omp.md`, and `bin/fm-session-start.sh` reports when a live omp primary has not loaded both.
+The ported pair is covered by `tests/fm-omp-turnend-guard.test.sh`, `tests/fm-omp-watch-extension.test.sh`, and `tests/fm-omp-harness.test.sh`, but no live supervised omp secondmate has run yet, so treat the supervision port as STATIC EVIDENCE under this section's date rule.
 
 Liveness is the one row measured against a real omp process, through the opt-in drift guard.
 Every other row below is read from the installed binary's `--help`, its shipped TypeScript declarations, and its bundle, not from a live supervised session.

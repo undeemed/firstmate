@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Strict no-emit contract check for the tracked Firstmate Pi extensions.
+# Strict no-emit contract check for the tracked Firstmate Pi and omp extensions.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,15 +25,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$TMP_ROOT/lib" "$TMP_ROOT/node_modules/@earendil-works" "$TMP_ROOT/node_modules/@types"
-cp "$ROOT/.pi/extensions/fm-calm.ts" "$TMP_ROOT/fm-calm.ts"
-cp "$ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$TMP_ROOT/fm-primary-pi-watch.ts"
-cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$TMP_ROOT/fm-primary-turnend-guard.ts"
-cp "$ROOT/.pi/extensions/lib/fm-calm-assistant-layout.ts" "$TMP_ROOT/lib/fm-calm-assistant-layout.ts"
-cp "$ROOT/.pi/extensions/lib/fm-calm-operational-user-layout.ts" "$TMP_ROOT/lib/fm-calm-operational-user-layout.ts"
-cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$TMP_ROOT/lib/fm-calm-visibility.ts"
-cp "$ROOT/.pi/extensions/lib/fm-calm-working-ship.ts" "$TMP_ROOT/lib/fm-calm-working-ship.ts"
-cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$TMP_ROOT/lib/fm-operational-input.ts"
+mkdir -p "$TMP_ROOT/.pi/extensions/lib" "$TMP_ROOT/.omp/extensions" \
+  "$TMP_ROOT/extensions/lib" "$TMP_ROOT/node_modules/@earendil-works" "$TMP_ROOT/node_modules/@types"
+cp "$ROOT/.pi/extensions/fm-calm.ts" "$TMP_ROOT/.pi/extensions/fm-calm.ts"
+cp "$ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$TMP_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
+cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$TMP_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
+cp "$ROOT/.pi/extensions/lib/fm-calm-assistant-layout.ts" "$TMP_ROOT/.pi/extensions/lib/fm-calm-assistant-layout.ts"
+cp "$ROOT/.pi/extensions/lib/fm-calm-operational-user-layout.ts" "$TMP_ROOT/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
+cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$TMP_ROOT/.pi/extensions/lib/fm-calm-visibility.ts"
+cp "$ROOT/.pi/extensions/lib/fm-calm-working-ship.ts" "$TMP_ROOT/.pi/extensions/lib/fm-calm-working-ship.ts"
+# The shared operational-input adapter is one owner, imported by both harnesses'
+# tracked extensions from the neutral extensions/lib/ (../../extensions/lib/).
+cp "$ROOT/extensions/lib/fm-operational-input.ts" "$TMP_ROOT/extensions/lib/fm-operational-input.ts"
+cp "$ROOT/.omp/extensions/fm-primary-turnend-guard.ts" "$TMP_ROOT/.omp/extensions/fm-primary-turnend-guard.ts"
+cp "$ROOT/.omp/extensions/fm-primary-omp-watch.ts" "$TMP_ROOT/.omp/extensions/fm-primary-omp-watch.ts"
 ln -s "$PI_PACKAGE_DIR" "$TMP_ROOT/node_modules/@earendil-works/pi-coding-agent"
 ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$TMP_ROOT/node_modules/@earendil-works/pi-tui"
 ln -s "$PI_PACKAGE_DIR/node_modules/typebox" "$TMP_ROOT/node_modules/typebox"
@@ -54,10 +59,10 @@ cat > "$TMP_ROOT/tsconfig.json" <<'JSON'
     "target": "ES2022",
     "types": ["node"]
   },
-  "include": ["*.ts", "lib/*.ts"]
+  "include": [".pi/extensions/*.ts", ".pi/extensions/lib/*.ts", ".omp/extensions/*.ts", "extensions/lib/*.ts"]
 }
 JSON
 
 tsc -p "$TMP_ROOT/tsconfig.json" || exit 1
 version=$(jq -r '.version' "$PI_PACKAGE_DIR/package.json" 2>/dev/null || printf 'unknown')
-printf 'ok - tracked Pi extensions pass strict no-emit typecheck against Pi %s\n' "$version"
+printf 'ok - tracked Pi and omp extensions pass strict no-emit typecheck against Pi %s\n' "$version"
