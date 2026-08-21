@@ -263,6 +263,8 @@ The helper requires a full canonical URL and rejects malformed URLs or repo over
 A `https://github.com/<owner>/<repo>/pull/<n>` URL invokes `gh-axi pr merge <n> --repo <owner>/<repo>`, defaults to `--squash`, and preserves explicit merge-method flags.
 A `https://<host>/<path>/-/merge_requests/<n>` URL (see [docs/gitlab-merge-watch.md](gitlab-merge-watch.md)) invokes `glab mr merge <n> -R https://<host>/<path>`, so the instance comes from the URL, and adds no merge-method flag because the project's own merge method applies.
 That path merges only after one live read of the merge request confirms it is open, mergeable, conflict-free, with blocking discussions resolved and a successful pipeline at the current head, and it binds the merge to that verified head; recorded metadata is never the authority for those conditions because a rebase leaves it stale.
+Pipeline-raised PRs (for example no-mistakes-raised) that have no owning task meta merge through the same guard as `bin/fm-pr-merge.sh --pipeline <pr-url>`.
+That class replaces task-meta recording with a fail-closed green gate against the live forge, merges pinned to the exact gated head with `--match-head-commit`, and records each gate pass to `state/pr-merge-audit.log`; the script's header owns the exact gate list.
 Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed before the worktree is returned.
 [`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns the landed-work proofs, PR-discovery fallback, and stale-lock recovery procedure.
 
