@@ -42,7 +42,7 @@ toast.success('Uploaded', { id });
 
 **Persist** — `{ duration: Infinity }`. **Dismiss** — `toast.dismiss(id)`, or `toast.dismiss()` for all. **Read active toasts** — `useSonner()` in React, `toast.getActiveToasts()` outside it.
 
-**Links or components in the text** — pass a function for the title or description: `toast(() => <a href="…">View</a>)`.
+**Links or components in the text** — pass a function for the title or description: `toast(() => <a>View</a>)`.
 
 **Multiple toasters** — give each an `id` and target with `toast('…', { toasterId: 'canvas' })`. Without `toasterId`, every toaster renders the toast.
 
