@@ -23,8 +23,8 @@
 # Merge method defaults to --squash when the caller passes none of --squash,
 # --merge, --rebase, or --method after the optional -- separator. Extra args
 # must not include --repo or -R because the repository comes only from the URL.
-# Pipeline-class extra args must not include --match-head-commit either, because
-# the head pin comes only from the gate.
+# Pipeline-class extra args must not include --match-head-commit or --auto,
+# because the head pin comes only from the gate and auto-merge drops it.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,6 +65,10 @@ reject_pipeline_pin_overrides() {
     case "$arg" in
     --match-head-commit | --match-head-commit=*)
       echo "error: extra merge arguments must not override the gated head pin" >&2
+      return 1
+      ;;
+    --auto | --auto=*)
+      echo "error: extra merge arguments must not enable auto-merge, which drops the gated head pin" >&2
       return 1
       ;;
     esac
@@ -145,7 +149,7 @@ pipeline_merge_gate() {
     return 1
   fi
   if ! pending=$(jq_count "$checks" '[.check_runs[] | select(.status != "completed")] | length') ||
-    ! red=$(jq_count "$checks" '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure" or .conclusion == "stale")] | length'); then
+    ! red=$(jq_count "$checks" '[.check_runs[] | select(.status == "completed" and ((.conclusion == "success" or .conclusion == "neutral" or .conclusion == "skipped") | not))] | length'); then
     pipeline_refuse "PR #$PR_NUMBER checks payload is malformed"
     return 1
   fi

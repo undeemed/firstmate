@@ -481,6 +481,24 @@ test_pipeline_refuses_missing_total_count() {
   pass "fm-pr-merge --pipeline refuses a checks payload without total_count instead of merging"
 }
 
+test_pipeline_refuses_null_conclusion() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-null-conclusion)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":1,"check_runs":[{"status":"completed","conclusion":null}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-null-conclusion
+  pass "fm-pr-merge --pipeline refuses a completed check with a null conclusion"
+}
+
+test_pipeline_refuses_unknown_conclusion() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-unknown-conclusion)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":1,"check_runs":[{"status":"completed","conclusion":"mystery_state"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-unknown-conclusion
+  pass "fm-pr-merge --pipeline refuses a completed check with an unrecognized conclusion"
+}
+
 test_pipeline_refuses_malformed_reviews_payload() {
   local case_dir
   case_dir=$(make_case pipeline-reviews-malformed)
@@ -514,6 +532,28 @@ test_pipeline_refuses_match_head_commit_override() {
   pass "fm-pr-merge --pipeline refuses caller-supplied --match-head-commit overrides"
 }
 
+test_pipeline_refuses_auto_extra_arg() {
+  local case_dir rc
+  case_dir=$(make_case pipeline-auto-override)
+  add_pipeline_mocks "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 -- --auto \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "pipeline-auto-override: fm-pr-merge should refuse a caller-supplied --auto"
+  assert_grep 'must not enable auto-merge' "$case_dir/stderr" \
+    "pipeline-auto-override: refusal did not explain the auto-merge rejection"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "pipeline-auto-override: gh-axi pr merge was invoked despite --auto"
+  assert_absent "$case_dir/state/pr-merge-audit.log" \
+    "pipeline-auto-override: audit line was written despite --auto"
+  pass "fm-pr-merge --pipeline refuses caller-supplied --auto in extra args"
+}
+
 test_pipeline_merges_green_pr
 test_pipeline_refuses_non_clean
 test_pipeline_refuses_red_check
@@ -524,5 +564,8 @@ test_pipeline_refuses_reviews_read_failure
 test_pipeline_refuses_paginated_reviews
 test_pipeline_refuses_malformed_checks_payload
 test_pipeline_refuses_missing_total_count
+test_pipeline_refuses_null_conclusion
+test_pipeline_refuses_unknown_conclusion
 test_pipeline_refuses_malformed_reviews_payload
 test_pipeline_refuses_match_head_commit_override
+test_pipeline_refuses_auto_extra_arg
