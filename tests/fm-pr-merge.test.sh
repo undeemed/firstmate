@@ -470,6 +470,17 @@ test_pipeline_refuses_malformed_checks_payload() {
   pass "fm-pr-merge --pipeline refuses a malformed checks payload instead of merging"
 }
 
+test_pipeline_refuses_missing_total_count() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-no-total)
+  add_pipeline_mocks "$case_dir"
+  # Green check_runs but no total_count: page consistency is unverifiable, so
+  # a red check could hide on page two.
+  printf '%s\n' '{"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"success"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-no-total
+  pass "fm-pr-merge --pipeline refuses a checks payload without total_count instead of merging"
+}
+
 test_pipeline_refuses_malformed_reviews_payload() {
   local case_dir
   case_dir=$(make_case pipeline-reviews-malformed)
@@ -512,5 +523,6 @@ test_pipeline_refuses_changes_requested_then_commented
 test_pipeline_refuses_reviews_read_failure
 test_pipeline_refuses_paginated_reviews
 test_pipeline_refuses_malformed_checks_payload
+test_pipeline_refuses_missing_total_count
 test_pipeline_refuses_malformed_reviews_payload
 test_pipeline_refuses_match_head_commit_override

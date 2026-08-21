@@ -131,7 +131,7 @@ pipeline_merge_gate() {
     pipeline_refuse "PR #$PR_NUMBER checks could not be read"
     return 1
   fi
-  if ! total=$(jq_count "$checks" '.total_count // (.check_runs | length)') ||
+  if ! total=$(jq_count "$checks" '.total_count') ||
     ! returned=$(jq_count "$checks" '.check_runs | length'); then
     pipeline_refuse "PR #$PR_NUMBER checks payload is malformed"
     return 1
