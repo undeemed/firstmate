@@ -117,6 +117,38 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/animate-expo/RECIPES.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/animate-expo/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/animate/RECIPES.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/animate/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/animation-vocabulary/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/apple-design/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/ask-sonner/API.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/ask-sonner/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/ask-user-authority/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -137,6 +169,14 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/emil-design-eng/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/find-animation-opportunities/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/firstmate-codexapp/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -153,7 +193,27 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/gnhf/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/harness-adapters/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/improve-animations/AUDIT.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/improve-animations/PLAN-TEMPLATE.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/improve-animations/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pick-ui-library/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -165,7 +225,23 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/prototype/PICKER.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/prototype/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/quota-array-dispatch/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/review-animations/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/review-animations/STANDARDS.md",
       "audience": "agent-runtime"
     },
     {
