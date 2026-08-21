@@ -231,6 +231,17 @@ Herdr has no direct cursor-row primitive.
 The adapter locates the bottom-most recognized bordered row, Claude `❯` row, Codex `›` row, or a Pi separator region admitted only when native identity is exactly Pi and state is idle, done, or blocked.
 A working Pi, pending middle row, missing identity, incomplete separator pair, or over-tall candidate remains pending or unknown.
 
+omp draws a HALF-OPEN box that no other fleet harness uses.
+Its rounded top border is `╭──<chrome>──╮`, its content row OPENS with `│` and simply ends with no closing border on the right, and its bottom border is `╰──…──╯`.
+The live in-session composer carries no placeholder and no prompt glyph inside that row, so the generic closed-border shape and the bare agent-glyph shape both miss it entirely.
+`bin/fm-composer-lib.sh` owns that shape through `fm_composer_rounded_top_row`, `fm_composer_rounded_bottom_row`, and `fm_composer_open_box_row`, and the adapter promotes a half-open row only when Herdr's native identity for the pane is exactly `omp`, so no other harness's classification can move.
+Once promoted the row is an ordinary bordered composer and its leading `│` strips like any other border glyph.
+
+Herdr's native `agent_status` for an omp pane is racy around Enter: it can report `idle` with `screen_detection_skipped` set while the turn has already started.
+A legible `idle` there is therefore not proof that the text was never submitted.
+`fm_backend_herdr_send_text_submit` treats an explicitly empty composer after Enter as positive submission evidence for an omp pane only, which can add a confirmation but never removes one and never suppresses an Enter retry.
+That ordering matches `bin/fm-busy-lib.sh`, which already ranks the omp extension's own records above Herdr's native status.
+
 ANSI capture preserves de-emphasized placeholder style.
 `bin/fm-composer-lib.sh` is the fleet-wide owner that strips dim or faint runs and dark truecolor placeholders while retaining bright typed input.
 If a future Herdr version strips ANSI style, ghost suggestions become pending rather than empty, which safely defers injection and eventually raises the wedge alarm.

@@ -169,6 +169,38 @@ fm_composer_strip_ghost() {
   '
 }
 
+# HALF-OPEN COMPOSER BOX (verified omp; see docs/verification/runtime-backends.md):
+# omp draws a rounded top border `╭──…──╮`, then a content row that OPENS with
+# `│` and simply ends - no closing border on the right, and no prompt glyph or
+# placeholder inside the live in-session composer - then a rounded bottom border
+# `╰──…──╯`. Every other fleet harness closes a bordered row with the glyph it
+# opened with, so the generic `│ … │` shape and the agent-glyph bare shape both
+# missed omp's row entirely and the whole composer read `unknown`, which the send
+# path treats as an unconfirmed submit. These three predicates are the shared
+# owner of that shape so the adapters cannot drift into private copies of it.
+# Each takes an ANSI-STRIPPED, whitespace-TRIMMED row. An adapter must accept
+# fm_composer_open_box_row only after fm_composer_rounded_top_row matched with no
+# fm_composer_rounded_bottom_row since, and only for a harness whose composer is
+# known to render this shape, so neither a stray `│`-leading transcript line nor
+# another harness's panel can be promoted into a composer.
+fm_composer_rounded_top_row() {  # <plain-trimmed-row>
+  case "$1" in '╭'*'╮') return 0 ;; esac
+  return 1
+}
+
+fm_composer_rounded_bottom_row() {  # <plain-trimmed-row>
+  case "$1" in '╰'*'╯') return 0 ;; esac
+  return 1
+}
+
+fm_composer_open_box_row() {  # <plain-trimmed-row>
+  case "$1" in
+    '│'*'│') return 1 ;;  # a closed row is the generic bordered shape, not this
+    '│'*) return 0 ;;
+  esac
+  return 1
+}
+
 # fm_composer_classify_content: the single shared composer-content verdict.
 #   <bordered> 1 when <content> came from a genuine agent-composer container (a
 #              bordered composer box, or a structurally-identified bare AGENT

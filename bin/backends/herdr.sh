@@ -2647,6 +2647,13 @@ fm_backend_herdr_strip_ansi() {  # <text>
 #              deliberately narrower than the bordered content classifier so a
 #              no-agent shell fallback prompt (`>`, `$`, `%`, or `#`) falls
 #              through to `unknown` instead of being misread as delivered.
+#   half-open - omp's box (verified; bin/fm-composer-lib.sh owns the shape):
+#              a rounded `╭─…─╮` top border, a content row that OPENS with
+#              `│` and never closes it, and a rounded `╰─…─╯` bottom border.
+#              omp draws no placeholder and no prompt glyph inside the live
+#              in-session composer, so the row matches neither shape above.
+#              Promoted only for a pane whose native identity is omp, and then
+#              treated as an ordinary bordered composer.
 #   separated - Pi's composer is one or more content rows between two solid
 #              horizontal `─` separator rows, with no prompt glyph or side
 #              borders. This shape is accepted ONLY when Herdr's native
@@ -2767,6 +2774,7 @@ fm_backend_herdr_agent_identity_raw() {  # <session> <pane> -> <agent>\t<status>
 fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
   local target=$1 session pane cap line trimmed found=0 shape="" raw_match="" bordered=0 stripped
   local identity agent agent_status row=0 generic_line=0
+  local box_open=0 open_line=0 open_raw=""
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   session=$FM_BACKEND_HERDR_SESSION
   pane=$FM_BACKEND_HERDR_PANE
@@ -2790,7 +2798,20 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
         found=1
         ;;
       *)
-        if printf '%s' "$trimmed" | grep -qE "$FM_BACKEND_HERDR_BARE_PROMPT_RE"; then
+        # Track a rounded box so omp's HALF-OPEN content row (a row that opens
+        # with │ and never closes it, the shape owned by
+        # bin/fm-composer-lib.sh) can be recognized. It is only a CANDIDATE
+        # here: promotion is gated on the native identity below, so no other
+        # harness's classification can move. A row that closes its border was
+        # already taken by the generic bordered branch above.
+        if fm_composer_rounded_top_row "$trimmed"; then
+          box_open=1
+        elif fm_composer_rounded_bottom_row "$trimmed"; then
+          box_open=0
+        elif [ "$box_open" -eq 1 ] && fm_composer_open_box_row "$trimmed"; then
+          open_line=$row
+          open_raw=$line
+        elif printf '%s' "$trimmed" | grep -qE "$FM_BACKEND_HERDR_BARE_PROMPT_RE"; then
           shape=bare
           raw_match=$line
           generic_line=$row
@@ -2799,6 +2820,25 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
         ;;
     esac
   done < <(printf '%s\n' "$cap")
+  # omp's half-open composer box. Exactly like the Pi block below, the native
+  # identity is consulted ONLY when a lower candidate could change the verdict,
+  # and only an omp pane authorizes this shape - every other harness closes its
+  # bordered row and was matched by the generic branch above, so this promotion
+  # cannot move any other harness's classification. Once promoted the row is an
+  # ordinary bordered composer for content extraction: the leading │ strips
+  # like any other border glyph.
+  if [ "$open_line" -gt "$generic_line" ]; then
+    identity=$(fm_backend_herdr_agent_identity_raw "$session" "$pane" 2>/dev/null || true)
+    IFS=$'\t' read -r agent agent_status <<EOF
+$identity
+EOF
+    if [ "$agent" = omp ]; then
+      shape=bordered
+      raw_match=$open_raw
+      generic_line=$open_line
+      found=1
+    fi
+  fi
   # Pi has no prompt glyph or side border. Compare its bottom-most complete
   # separator pair with the last generic match so an earlier bordered transcript
   # row can never suppress the live Pi composer. Identity is consulted only when
@@ -2928,18 +2968,39 @@ EOF
 # each backend confirms it is an internal decision, and herdr's is no longer
 # literally "the composer read empty".
 fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle>
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 i=0 verdict baseline confirm_sleep
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 i=0 verdict baseline confirm_sleep identity agent
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   fm_backend_herdr_send_literal "$target" "$text" || { printf 'send-failed'; return 0; }
   sleep "$settle"
-  baseline=$(fm_backend_herdr_classify_submit_agent_status \
-    "$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")")
+  # One `agent get` yields BOTH the pre-Enter baseline and the pane's agent
+  # name, so the omp arm below costs no extra round trip and every other
+  # harness makes exactly the same calls it always did.
+  identity=$(fm_backend_herdr_agent_identity_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE") || identity=
+  agent=${identity%%$'\t'*}
+  baseline=$(fm_backend_herdr_classify_submit_agent_status "${identity#*$'\t'}")
   confirm_sleep=$(fm_backend_herdr_submit_confirm_budget "$sleep_s")
   while :; do
     fm_backend_herdr_send_key "$target" Enter || true
     if [ "$baseline" = idle ]; then
       verdict=$(fm_backend_herdr_wait_for_working "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
         "$confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
+      if [ "$verdict" = idle ] && [ "$agent" = omp ]; then
+        # omp only: herdr's agent_status for an omp pane is racy around Enter -
+        # it can still read "idle" with screen_detection_skipped set while the
+        # turn has in fact started, so a legible "idle" here is NOT proof the
+        # text is unsubmitted. Firstmate does not treat herdr's native status as
+        # authoritative for omp anywhere else either: bin/fm-busy-lib.sh's
+        # source-attribution contract puts the omp extension's own omp-ext
+        # records above it and accepts a native herdr verdict only for BUSY.
+        # Fall back to the same positive evidence the non-idle-baseline branch
+        # below already uses: a composer cleared after Enter means the text left
+        # the composer. ONLY an explicitly empty composer overrides; any other
+        # read leaves the idle verdict exactly as it was, so this can add a
+        # confirmation but never remove one and never suppress an Enter retry.
+        if [ "$(fm_backend_herdr_composer_state "$target")" = empty ]; then
+          verdict=empty
+        fi
+      fi
     else
       sleep "$sleep_s"
       verdict=$(fm_backend_herdr_composer_state "$target")
