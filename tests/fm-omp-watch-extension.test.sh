@@ -240,6 +240,93 @@ EOF
   pass "omp watch retires its session generation on shutdown and refuses a late arm"
 }
 
+
+# A watcher cycle that keeps reporting the SAME actionable line must queue ONE
+# follow-up, not one per cycle: omp holds queued follow-ups until the run reads
+# them, so an un-coalesced repeat pile grew to 19-24 identical notices in one
+# pane. Consuming the queue (agent_start) must let the same line through again,
+# because a repeat AFTER a read is genuinely new information.
+test_omp_watch_coalesces_unread_duplicate_wakes() {
+  local repo home out status
+  repo="$TMP_ROOT/coalesce-root"
+  home="$TMP_ROOT/coalesce-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_omp_watch_fixture "$repo"
+  cat >"$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+# Every cycle reports the identical actionable line, which is exactly the
+# repeating-wake shape this test pins.
+echo "stale: default:w9S:p3"
+exit 0
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(
+    PLUGIN="$repo/.omp/extensions/fm-primary-omp-watch.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
+    FM_WATCH_REARM_RETRY_BASE_MS=25 FM_WATCH_REARM_RETRY_MAX_MS=25 FM_WATCH_REARM_RETRY_LIMIT=50 node --input-type=module 2>&1 <<'EOF'
+import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const handlers = {};
+let armHandler = null;
+const delivered = [];
+const pi = {
+  on(name, fn) {
+    handlers[name] = fn;
+  },
+  registerCommand(name, options) {
+    if (name === "fm-watch-arm-omp") armHandler = options.handler;
+  },
+  registerTool() {},
+  sendUserMessage: async (content) => {
+    delivered.push(content);
+  },
+};
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+await armHandler("", { ui: { notify() {} } });
+
+const settle = async (ms) => {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+};
+
+// Wait for the first follow-up, then let several more arm cycles run: each one
+// closes on the same actionable line, so an un-coalesced build queues one each.
+for (let i = 0; i < 300 && delivered.length === 0; i += 1) await settle(20);
+await settle(1200);
+const beforeRead = delivered.length;
+if (beforeRead !== 1) {
+  console.error(`expected exactly 1 queued follow-up while unread, got ${beforeRead}`);
+  process.exit(1);
+}
+
+// The run consumed its queue: the same line is now new information again.
+if (typeof handlers.agent_start !== "function") {
+  console.error("omp watch did not register an agent_start handler");
+  process.exit(1);
+}
+handlers.agent_start();
+for (let i = 0; i < 300 && delivered.length === beforeRead; i += 1) await settle(20);
+if (delivered.length <= beforeRead) {
+  console.error(`a repeat after the queue was read must deliver again; still ${delivered.length}`);
+  process.exit(1);
+}
+if (!delivered[0].includes("stale: default:w9S:p3")) {
+  console.error(`unexpected follow-up body: ${delivered[0]}`);
+  process.exit(1);
+}
+// The extension keeps re-arming by design, so nothing ends this process for us.
+process.exit(0);
+EOF
+  )
+  status=$?
+  [ "$status" = 0 ] || printf 'DIAG: %s\n' "$out"
+  expect_code 0 "$status" "omp watch must queue one follow-up per unread duplicate wake, and deliver again after a read"
+  [ -z "$out" ] || fail "omp coalescing test printed output: $out"
+  pass "omp watch coalesces identical unread wakes and re-delivers after the queue is read"
+}
+
 test_omp_watch_registers_named_tool_and_command
 test_omp_watch_reports_external_healthy_watcher
 test_omp_watch_retires_generation_on_shutdown
+test_omp_watch_coalesces_unread_duplicate_wakes
