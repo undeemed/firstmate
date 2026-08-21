@@ -277,11 +277,11 @@ export default function (pi: OmpExtensionApi) {
   async function sendWake(owner: SessionGeneration, message: string): Promise<void> {
     if (!generationIsLive(owner)) return;
     if (!claimWakeDelivery(owner, message)) return;
-    const content = encodeFirstmateOperationalInput(
-      "watcher",
-      `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.`,
-    );
     try {
+      const content = encodeFirstmateOperationalInput(
+        "watcher",
+        `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.`,
+      );
       await pi.sendUserMessage(content, { deliverAs: "followUp" });
     } catch (error) {
       // Nothing was queued, so the ledger must not claim a pending copy.
