@@ -230,6 +230,174 @@ test_drain_dedupes_obvious_duplicates() {
   pass "drain collapses obvious duplicate heartbeat and signal records"
 }
 
+# --- retired-worker records are dropped at delivery, live ones never are ------
+# The teardown-time purge (bin/fm-retire-lib.sh) removes everything queued for a
+# retiring task, but a watcher cycle racing that teardown can still append one
+# last record. Delivering it alarms a home that has nothing left to clear, so the
+# drain drops it - and drops it ONLY on this home's own retirement tombstone, so
+# a task this home never retired, and a task that is live again, are unaffected.
+test_drain_drops_only_tombstoned_retired_records() {
+  local dir state out
+  dir=$(make_case retired-drop)
+  state="$dir/state"
+  out="$dir/drain.out"
+
+  # Never retired here: exactly today's behavior, delivered untouched.
+  append_wake "$state" stale 'test:fm-never' 'stale: test:fm-never' || fail "append failed"
+  append_wake "$state" signal never.status "signal: $state/never.status" || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed"
+  grep -F 'test:fm-never' "$out" >/dev/null || fail "a stale record for a task this home never retired was dropped"
+  grep -F 'never.status' "$out" >/dev/null || fail "a signal record for a task this home never retired was dropped"
+
+  # Retired here, records gone: dropped, both kinds.
+  retire_task_state "$state" gone 'test:fm-gone' || fail "retirement sweep failed"
+  append_wake "$state" stale 'test:fm-gone' 'stale: test:fm-gone' || fail "append failed"
+  append_wake "$state" signal gone.status "signal: $state/gone.status" || fail "append failed"
+  append_wake "$state" signal gone.turn-ended "signal: $state/gone.turn-ended" || fail "append failed"
+  append_wake "$state" heartbeat heartbeat heartbeat || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after retirement failed"
+  grep -F 'gone' "$out" >/dev/null && fail "a retired worker's record was delivered: $(cat "$out")"
+  grep "$(printf '\theartbeat\t')" "$out" >/dev/null || fail "a heartbeat record was dropped as task-scoped"
+
+  # Retired, then live again under the same id: its wakes are live wakes.
+  printf 'window=test:fm-gone\nkind=ship\n' > "$state/gone.meta"
+  printf 'working: back in service\n' > "$state/gone.status"
+  append_wake "$state" stale 'test:fm-gone' 'stale: test:fm-gone' || fail "append failed"
+  append_wake "$state" signal gone.status "signal: $state/gone.status" || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after respawn failed"
+  grep -F $'\tstale\ttest:fm-gone\t' "$out" >/dev/null || fail "a respawned task's stale wake was suppressed by its old tombstone"
+  grep -F $'\tsignal\tgone.status\t' "$out" >/dev/null || fail "a respawned task's signal wake was suppressed by its old tombstone"
+
+  # A tombstoned PANE reused by a different live task stays live too.
+  rm -f "$state/gone.meta" "$state/gone.status"
+  printf 'window=test:fm-gone\nkind=ship\n' > "$state/reuser.meta"
+  printf 'working: inherited the pane\n' > "$state/reuser.status"
+  append_wake "$state" stale 'test:fm-gone' 'stale: test:fm-gone' || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after pane reuse failed"
+  grep -F $'\tstale\ttest:fm-gone\t' "$out" >/dev/null \
+    || fail "a live task that inherited a retired pane lost its alarm"
+  pass "the drain drops a retired worker's records and never a live worker's"
+}
+
+# --- both orphan marker classes are reaped, live markers are not --------------
+# Retirement leaves two distinct classes behind, both observed in a live main
+# home: PANE-keyed markers (.hash-/.count-/.stale-/.stale-since-/.paused-/
+# .wedge-escalations-) that no file named after the task ever matches, and
+# TASK-ID-keyed markers (.seen-<id>_status, .seen-<id>_turn-ended,
+# .hb-surfaced-<id>, .subsuper-*). A retiring task's own markers go at teardown;
+# this covers the ones earlier retirements already left to rot, including the
+# .stale-<pane> suppressor, which holds the pane hash already classified and can
+# silence the FIRST alarm of whichever task next inherits that pane target.
+test_orphan_marker_sweep_reaps_both_classes() {
+  local dir state sweep old m
+  dir=$(make_case orphan-sweep)
+  state="$dir/state"
+  old=$(( $(date +%s) - 2592000 ))
+
+  # A live worker: its pane-keyed and task-keyed markers must survive.
+  printf 'window=default:wLIVE:p2\nkind=ship\n' > "$state/live.meta"
+  printf 'working: going\n' > "$state/live.status"
+  for m in .hash-default_wLIVE_p2 .count-default_wLIVE_p2 .stale-default_wLIVE_p2 \
+    .seen-live_status .hb-surfaced-live; do
+    printf 'v' > "$state/$m"
+  done
+
+  # The live pane's pause-cadence markers, aged past the gate: their nested
+  # prefixes (.paused-rechecked-, .paused-resurfaced-) must still resolve to the
+  # live pane's key, so the live-pane condition keeps them despite their age.
+  for m in .paused-rechecked-default_wLIVE_p2 .paused-resurfaced-default_wLIVE_p2; do
+    printf 'v' > "$state/$m"
+    touch -d "@$old" "$state/$m" 2>/dev/null || touch -t "$(date -r "$old" +%Y%m%d%H%M.%S)" "$state/$m"
+  done
+
+  # Long-orphaned markers from earlier retirements, both classes.
+  for m in .hash-default_wA0_p2 .count-default_wA0_p2 .stale-default_wA0_p2 \
+    .stale-since-default_wA0_p2 .wedge-escalations-default_wA0_p2 .paused-default_wA0_p2 \
+    .herdr-escalated-default_wA0_p2 .paused-rechecked-default_wA0_p2 \
+    .paused-resurfaced-default_wA0_p2 .seen-scout-s3_status .seen-scout-s3_turn-ended \
+    .hb-surfaced-scout-s3 .subsuper-stale-scout-s3; do
+    printf 'v' > "$state/$m"
+    touch -d "@$old" "$state/$m" 2>/dev/null || touch -t "$(date -r "$old" +%Y%m%d%H%M.%S)" "$state/$m"
+  done
+  # Orphaned but recent: inside the age gate, so it stays.
+  printf 'v' > "$state/.hash-default_wFRESH_p2"
+
+  sweep=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_retire_orphan_markers_sweep "$2"; echo done' \
+    _ "$ROOT/bin/fm-retire-lib.sh" "$state") || fail "orphan sweep failed"
+  [ "$sweep" = "done" ] || fail "orphan sweep did not complete: $sweep"
+
+  for m in .hash-default_wA0_p2 .count-default_wA0_p2 .stale-default_wA0_p2 \
+    .stale-since-default_wA0_p2 .wedge-escalations-default_wA0_p2 .paused-default_wA0_p2 \
+    .herdr-escalated-default_wA0_p2 .paused-rechecked-default_wA0_p2 \
+    .paused-resurfaced-default_wA0_p2 .seen-scout-s3_status .seen-scout-s3_turn-ended \
+    .hb-surfaced-scout-s3 .subsuper-stale-scout-s3; do
+    [ ! -e "$state/$m" ] || fail "the sweep left the long-orphaned marker $m behind"
+  done
+  for m in .hash-default_wLIVE_p2 .count-default_wLIVE_p2 .stale-default_wLIVE_p2 \
+    .paused-rechecked-default_wLIVE_p2 .paused-resurfaced-default_wLIVE_p2 \
+    .seen-live_status .hb-surfaced-live .hash-default_wFRESH_p2; do
+    [ -e "$state/$m" ] || fail "the sweep removed $m, which a live or recent pane still needs"
+  done
+  pass "the orphan sweep reaps both stale marker classes and spares live and recent markers"
+}
+
+# --- purges take whole identities, never prefixes ------------------------------
+# A delivered reason names its window as a whole space-delimited token, so the
+# retirement purge must match that token exactly: retiring pane default:wA0:p2
+# or task w6 must leave a sibling's default:wA0:p20, sess:fm-w63, and w63.status
+# reasons reprintable, or an unobserved live cycle degrades to a generic FAILED.
+test_retirement_delivery_purge_spares_prefix_siblings() {
+  local dir state log
+  dir=$(make_case retired-prefix-siblings)
+  state="$dir/state"
+  log="$state/.watch-deliveries.log"
+  {
+    printf '%s\t%s\t%s\n' 41 idA 'stale: default:wA0:p2 (idle 300s, possible wedge, escalation 1)'
+    printf '%s\t%s\t%s\n' 42 idB 'stale: default:wA0:p20 (idle 300s, possible wedge, escalation 1)'
+    printf '%s\t%s\t%s\n' 43 idC 'stale: sess:fm-w63'
+    printf '%s\t%s\t%s\n' 44 idD "signal: $state/w6.status"
+    printf '%s\t%s\t%s\n' 45 idE "signal: $state/w63.status"
+  } > "$log"
+  retire_task_state "$state" w6 'default:wA0:p2' || fail "retirement sweep failed"
+  grep -F 'default:wA0:p2 ' "$log" >/dev/null && fail "the retired pane's delivered reason survived the purge"
+  grep -F "$state/w6.status" "$log" >/dev/null && fail "the retired task's signal reason survived the purge"
+  grep -F 'default:wA0:p20' "$log" >/dev/null || fail "a sibling pane's reason was purged on a prefix match"
+  grep -F 'sess:fm-w63' "$log" >/dev/null || fail "a sibling task's stale reason was purged on an id prefix match"
+  grep -F "$state/w63.status" "$log" >/dev/null || fail "a sibling task's signal reason was purged on an id prefix match"
+  pass "the delivery-ledger purge takes whole reason tokens and spares prefix siblings"
+}
+
+# A tombstoned id suppresses only tmux ':fm-<id>' shaped panes: a herdr pane
+# whose trailing segment merely spells a retired id names no task, and a home
+# that never retired that pane must deliver its wake exactly as today.
+test_drain_keeps_pane_whose_segment_spells_a_retired_id() {
+  local dir state out
+  dir=$(make_case retired-id-segment)
+  state="$dir/state"
+  out="$dir/drain.out"
+  retire_task_state "$state" p2 'test:fm-p2' || fail "retirement sweep failed"
+  append_wake "$state" stale 'default:wAY:p2' 'stale: default:wAY:p2' || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed"
+  grep -F $'\tstale\tdefault:wAY:p2\t' "$out" >/dev/null \
+    || fail "a wake for a pane this home never retired was dropped on an id-segment collision"
+  pass "a tombstoned id never suppresses a pane that merely ends in it"
+}
+
+# The watcher names a signal suppressor from the whole status filename with dots
+# translated (.seen-scout_v2_status for id scout.v2), so retirement must purge
+# that exact name instead of leaving it to rot until the age gate.
+test_retirement_purges_dotted_id_seen_markers() {
+  local dir state
+  dir=$(make_case retired-dotted-id)
+  state="$dir/state"
+  printf 'sig' > "$state/.seen-scout_v2_status"
+  printf 'sig' > "$state/.seen-scout_v2_turn-ended"
+  retire_task_state "$state" scout.v2 'test:fm-scout.v2' || fail "retirement sweep failed"
+  [ ! -e "$state/.seen-scout_v2_status" ] || fail "the dotted id's status suppressor survived retirement"
+  [ ! -e "$state/.seen-scout_v2_turn-ended" ] || fail "the dotted id's turn-end suppressor survived retirement"
+  pass "retirement purges a dotted id's seen markers under the watcher's own names"
+}
+
 # The drain runs at the top of every wake-handling turn, so it also asserts
 # watcher liveness via fm-guard.sh: a lapsed re-arm chain then surfaces even on a
 # plain drain-and-handle turn that runs no other supervision script. It must warn
@@ -1008,6 +1176,11 @@ test_not_working_stale_enqueue_before_suppressor
 test_check_output_is_queued
 test_atomic_double_drain
 test_drain_dedupes_obvious_duplicates
+test_drain_drops_only_tombstoned_retired_records
+test_orphan_marker_sweep_reaps_both_classes
+test_retirement_delivery_purge_spares_prefix_siblings
+test_drain_keeps_pane_whose_segment_spells_a_retired_id
+test_retirement_purges_dotted_id_seen_markers
 test_drain_asserts_watcher_liveness
 test_structural_signal_enrichment_preserves_raw_rows
 test_enrichment_preserves_all_unread_lines_and_status_file_failures

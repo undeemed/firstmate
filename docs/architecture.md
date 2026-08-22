@@ -39,6 +39,14 @@ Separately from heartbeat backoff and wedge handling, the watcher poll runs `bin
 In each home the scan considers only that home's long-inactive direct ordinary crewmates, excludes captain-held work, and accepts only `done` or `failed` from `bin/fm-crew-state.sh`.
 A secondmate retains a durable receipt for its idempotent report through the established parent route, and main-home captain presentation retains a separate receipt; neither path performs a forge or PR check.
 Absorbed wakes advance their suppression markers, log to `state/.watch-triage.log`, and keep the watcher blocking without a queue record or LLM turn.
+
+Retirement is final for those records.
+Everything the supervision chain derives about a worker outlives the worker's own identity records unless something removes it: its queued wakes, its pane-keyed staleness and wedge counters, its task-keyed signal and heartbeat suppressors, the away-mode daemon's per-task markers, and the arm layer's replayable delivered reason.
+Left behind, a retired worker's alarm can still be delivered to a home that has nothing left to clear, and a reused pane target inherits the retired worker's escalation count and pause cadence.
+`bin/fm-teardown.sh` therefore removes the identity records first, so no watcher can produce another record for that task, then calls `bin/fm-retire-lib.sh` to purge all of the above, reap long-orphaned markers past their age gate, and write one bounded retirement tombstone (`state/.retired-tasks`).
+`bin/fm-wake-drain.sh` drops a consumed record naming a tombstoned task at delivery time, which covers the one record a watcher cycle can still append while that teardown runs.
+Both paths need positive proof and never mere absence of evidence: only this home's own tombstone makes a record droppable, and a tombstoned pane or task that is live again - some meta records that pane, or the task has a meta or status file again - is delivered unchanged, as are check and heartbeat wakes.
+The herdr push fast-path applies the same rule at its own boundary: the event transport is deliberately policy-free and prints every pane edge the session sends, so `handle_push_transition` escalates only a pane some meta records, and absorbs the rest after committing their dedupe marker.
 Each `fm-wake-drain.sh` presentation runs the same liveness guard as the supervision scripts, so a lapsed watcher chain surfaces even on a turn that only handles queued wakes.
 Routine watcher polling, supervision no-ops, elapsed waiting time, and absorbed benign wakes stay silent.
 A declared external wait or verified captain-held transfer trades that silence for one bounded recheck per pause window, naming which human the wait is on, so neither a forgotten pause nor a forgotten hold can remain invisible indefinitely.
