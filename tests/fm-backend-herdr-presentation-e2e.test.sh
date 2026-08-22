@@ -380,16 +380,36 @@ make_project() {  # <dir>
   git -C "$dir" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
 }
 
+# Stand-in worker for a real agent. It must outlive the whole suite, because a
+# pool worktree is freed the moment its holder exits.
+FAKE_WORKER_COMMAND="sh -c 'sleep ${FM_TEST_FAKE_WORKER_SECONDS:-3600}'"
+
+# Per-task-id worktree pool. Several fixtures below stop the entire lab session,
+# which kills every stand-in worker at once and frees each pool worktree while
+# the task that recorded it still exists; one shared pool would then hand a
+# recorded checkout to the next task, which fm-spawn refuses by design. One
+# identical project per task id keeps every fixture in its own pool while
+# preserving each id's own slot reuse across its teardown and respawn.
+task_pool_project() {  # <id>
+  local pool="$TMP_ROOT/pool-$1"
+  if [ ! -d "$pool" ]; then
+    make_project "$pool" || return 1
+  fi
+  printf '%s\n' "$pool"
+}
+
+# <project> gives the fixture's shape; each task id runs in its own pool of it.
 spawn_task() {  # <id> <home> <project>
-  local id=$1 home=$2 project=$3
+  local id=$1 home=$2 pool
+  pool=$(task_pool_project "$id") || return 1
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'sleep 120'" --mode no-mistakes --yolo off --backend herdr
+    "$ROOT/bin/fm-spawn.sh" "$id" "$pool" "$FAKE_WORKER_COMMAND" --mode no-mistakes --yolo off --backend herdr
 }
 
 spawn_secondmate_task() {
   local id=$1 home=$2
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$home" "sh -c 'sleep 120'" --secondmate --backend herdr
+    "$ROOT/bin/fm-spawn.sh" "$id" "$home" "$FAKE_WORKER_COMMAND" --secondmate --backend herdr
 }
 
 teardown_task() {  # <id> <home>
