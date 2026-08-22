@@ -45,16 +45,18 @@ CAT_PROMPT='Run exactly this bash command, once: cat src/user.rs - then reply wi
 # run_harness <harness> <prompt>: one real non-interactive session inside the
 # indexed tree, loading only the tracked guard extension and pinning the repo
 # checker so no shared installed copy is touched. Prints the session output.
+# Each harness gets its own flag set, taken from its own --help: omp rejects
+# pi's short aliases and defines no context-files flag.
 run_harness() {
   local harness=$1 prompt=$2
-  local -a extra=()
-  if [ "$harness" = omp ]; then
-    extra=(--auto-approve)
-  fi
+  local -a flags=()
+  case "$harness" in
+  pi) flags=(-ne -e "$GUARD" --no-session -nc -ns) ;;
+  omp) flags=(--no-extensions -e "$GUARD" --no-session --no-skills --no-rules --auto-approve) ;;
+  esac
   (
     cd "$REPO" &&
-      FM_CODEGRAPH_CHECKER="$CHECKER" "$harness" -ne -e "$GUARD" --no-session -nc -ns \
-        "${extra[@]+"${extra[@]}"}" -p "$prompt" 2>&1
+      FM_CODEGRAPH_CHECKER="$CHECKER" "$harness" "${flags[@]+"${flags[@]}"}" -p "$prompt" 2>&1
   )
 }
 
