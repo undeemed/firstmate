@@ -285,8 +285,21 @@ fm_pr_regular_destination_on_device_or_absent() {
   [ ! -e "$path" ] || [ "$(fm_pr_file_device "$path")" = "$device" ]
 }
 
+# A task's recorded pull request identity is unambiguous when exactly one `pr=`
+# line records a canonical URL and every recorded `pr_head=` is a valid commit
+# id. Consumers read the LAST value of a key (bin/fm-backend.sh's
+# fm_meta_get), so a second `pr=` or a malformed head is genuine ambiguity -
+# the poll would watch one pull request while a merge or diff used another -
+# and is refused here.
+# Position is deliberately NOT part of that rule. Metadata keeps being written
+# after a poll is armed by owners that have nothing to do with the pull request
+# - re-addressing a restarted worker's window and Herdr pane ids, recording a
+# trace context, correcting a delivery posture - and an armed merge poll that
+# died because an unrelated key landed after `pr=` is a PR that merges with
+# nobody watching. Keys unrelated to the pull request therefore need no
+# allowlist here, whatever their position.
 fm_pr_metadata_identity_parse() {
-  local file=$1 line value pr_count=0 seen_pr=0 post_pr_invalid=0
+  local file=$1 line value pr_count=0 head_invalid=0
   FM_PR_META_PROVIDER=
   FM_PR_META_URL=
   FM_PR_META_HOST=
@@ -307,23 +320,17 @@ fm_pr_metadata_identity_parse() {
           FM_PR_META_PATH=$FM_PR_PATH
           FM_PR_META_NUMBER=$FM_PR_NUMBER
         fi
-        seen_pr=1
         ;;
       pr_head=*)
-        if [ "$seen_pr" -eq 1 ]; then
-          value=${line#pr_head=}
-          fm_pr_head_valid "$value" || post_pr_invalid=1
-        fi
-        ;;
-      x_request=*|x_request_ts=*|x_followups=*|x_platform=*|x_reply_max_chars=*)
+        value=${line#pr_head=}
+        fm_pr_head_valid "$value" || head_invalid=1
         ;;
       *)
-        [ "$seen_pr" -eq 0 ] || post_pr_invalid=1
         ;;
     esac
   done < "$file"
   [ "$pr_count" -eq 1 ] || return 1
-  [ "$post_pr_invalid" -eq 0 ] || return 1
+  [ "$head_invalid" -eq 0 ] || return 1
   [ -n "$FM_PR_META_URL" ]
 }
 
