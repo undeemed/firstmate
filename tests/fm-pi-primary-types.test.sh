@@ -37,6 +37,9 @@ cp "$ROOT/.pi/extensions/lib/fm-calm-working-ship.ts" "$TMP_ROOT/.pi/extensions/
 # The shared operational-input adapter is one owner, imported by both harnesses'
 # tracked extensions from the neutral extensions/lib/ (../../extensions/lib/).
 cp "$ROOT/extensions/lib/fm-operational-input.ts" "$TMP_ROOT/extensions/lib/fm-operational-input.ts"
+# The user-level CodeGraph guard is one portable file loaded by both runtimes, so
+# it is typechecked here with them (docs/codegraph-pretool-check.md).
+cp "$ROOT/extensions/fm-codegraph-guard.ts" "$TMP_ROOT/extensions/fm-codegraph-guard.ts"
 cp "$ROOT/.omp/extensions/fm-primary-turnend-guard.ts" "$TMP_ROOT/.omp/extensions/fm-primary-turnend-guard.ts"
 cp "$ROOT/.omp/extensions/fm-primary-omp-watch.ts" "$TMP_ROOT/.omp/extensions/fm-primary-omp-watch.ts"
 ln -s "$PI_PACKAGE_DIR" "$TMP_ROOT/node_modules/@earendil-works/pi-coding-agent"
@@ -59,7 +62,7 @@ cat > "$TMP_ROOT/tsconfig.json" <<'JSON'
     "target": "ES2022",
     "types": ["node"]
   },
-  "include": [".pi/extensions/*.ts", ".pi/extensions/lib/*.ts", ".omp/extensions/*.ts", "extensions/lib/*.ts"]
+  "include": [".pi/extensions/*.ts", ".pi/extensions/lib/*.ts", ".omp/extensions/*.ts", "extensions/*.ts", "extensions/lib/*.ts"]
 }
 JSON
 
