@@ -435,6 +435,10 @@ apply_cd() {
   idx=$((idx + 1))
   while [ "$idx" -lt "$e" ]; do
     [ "${TOKKIND[$idx]}" = w ] || break
+    if is_fd_before_redirect "$idx" "$e"; then
+      idx=$((idx + 1))
+      continue
+    fi
     tok=${TOKENS[$idx]}
     case "$tok" in
     -[LP] | --) ;;
