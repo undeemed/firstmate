@@ -89,6 +89,7 @@ The matrix below assumes the working directory is inside a repository that carri
 | `ls; rg foo src/` | deny | the second command is a repository search |
 | `git status && rg foo src/` | deny | the chained command is a repository search |
 | `( rg foo src/ )` | deny | the subshell's command is a repository search |
+| `(rg foo src/)` | deny | the unspaced subshell's command is a repository search |
 | `command grep -rn foo src/` | deny | a pure wrapper does not change the command |
 | `grep -rn foo src/ 2>/dev/null` | deny | the redirect is not a search target |
 | `rg -n "a; b" src/` | deny | the `;` is inside the pattern, not a command boundary |
@@ -104,6 +105,7 @@ The matrix below assumes the working directory is inside a repository that carri
 | `rg foo node_modules/pkg` | allow | target is under a vendored directory |
 | `rg foo /etc/hosts` | allow | target resolves outside the repo root |
 | `find /var/log -name '*.log'` | allow | target resolves outside the repo root |
+| `( rg foo /etc )` | allow | the subshell's search target resolves outside the repo root |
 | `cd /tmp && grep -rn foo .` | allow | the search runs outside the indexed repository |
 | `cd $DIR && grep -rn foo src/` | allow | the working directory is unknowable |
 | `echo "one; rg foo src/"` | allow | the search words are quoted text |
