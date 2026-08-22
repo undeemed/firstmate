@@ -381,6 +381,16 @@ tokenize() {
         j=$((j + 1))
         continue
         ;;
+      '(' | ')')
+        # A bare subshell paren stands alone so it never glues to the command
+        # word, but it stays word-kind: the classifier's leading strip and
+        # operand walks only accept word tokens.
+        tok_flush
+        TOKENS[${#TOKENS[@]}]=$ch
+        TOKKIND[${#TOKKIND[@]}]=w
+        j=$((j + 1))
+        continue
+        ;;
       ' ' | "$TAB")
         tok_flush
         j=$((j + 1))
@@ -441,6 +451,11 @@ apply_cd() {
     fi
     tok=${TOKENS[$idx]}
     case "$tok" in
+    ')')
+      # The subshell holding this cd closes here, so the move dies with it and
+      # later segments keep the current directory.
+      return 0
+      ;;
     -[LP] | --) ;;
     *)
       dest=$tok
@@ -532,7 +547,7 @@ classify_segment() {
       tok=${TOKENS[$i]}
       [ "$tok" = "-" ] && return 0
       case "$tok" in
-      -* | '(' | '!') break ;;
+      -* | '(' | '!' | ')') break ;;
       esac
       if ! is_fd_before_redirect "$i" "$n"; then
         targets[${#targets[@]}]=$tok
@@ -549,6 +564,7 @@ classify_segment() {
     while [ "$i" -lt "$n" ]; do
       [ "${TOKKIND[$i]}" = w ] || break
       tok=${TOKENS[$i]}
+      [ "$tok" = ')' ] && break
       if [ "$endopts" -eq 0 ]; then
         [ "$tok" = "-" ] && return 0
         if [ "$tok" = "--" ]; then

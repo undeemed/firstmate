@@ -306,6 +306,41 @@ test_deny_search_in_a_subshell() {
   expect_deny "deny a search inside a subshell"
 }
 
+test_deny_search_in_an_unspaced_subshell() {
+  check_cli "$INDEXED" bash '(rg foo src/)'
+  expect_deny "deny a search inside an unspaced subshell"
+}
+
+test_deny_search_in_a_subshell_with_extra_spaces() {
+  check_cli "$INDEXED" bash '(  rg  foo  src/)'
+  expect_deny "deny a search inside a subshell with extra spaces"
+}
+
+test_deny_search_in_a_subshell_after_a_tab() {
+  check_cli "$INDEXED" bash $'(\trg foo src/)'
+  expect_deny "deny a search inside a subshell after a tab"
+}
+
+test_deny_search_in_a_subshell_after_a_newline() {
+  check_cli "$INDEXED" bash $'(\nrg foo src/)'
+  expect_deny "deny a search inside a subshell after a leading newline"
+}
+
+test_deny_cd_into_the_repo_inside_an_unspaced_subshell() {
+  check_cli "$PLAIN" bash "(cd $INDEXED && grep -rn foo .)"
+  expect_deny "deny a subshell that cds into the indexed repo and searches"
+}
+
+test_allow_subshell_search_targeting_outside_the_repo() {
+  check_cli "$INDEXED" bash '( rg foo /etc )'
+  expect_allow "allow a subshell search whose target is outside the repo"
+}
+
+test_allow_cd_out_of_the_repo_inside_an_unspaced_subshell() {
+  check_cli "$INDEXED" bash "(cd $PLAIN && grep -rn foo .)"
+  expect_allow "allow a subshell that cds out of the indexed repo to search"
+}
+
 test_deny_search_on_a_later_line() {
   check_cli "$INDEXED" bash 'echo starting
 rg foo src/'
@@ -652,6 +687,13 @@ test_deny_search_in_a_command_sequence
 test_deny_search_after_an_unrelated_command
 test_deny_search_behind_a_command_wrapper
 test_deny_search_in_a_subshell
+test_deny_search_in_an_unspaced_subshell
+test_deny_search_in_a_subshell_with_extra_spaces
+test_deny_search_in_a_subshell_after_a_tab
+test_deny_search_in_a_subshell_after_a_newline
+test_deny_cd_into_the_repo_inside_an_unspaced_subshell
+test_allow_subshell_search_targeting_outside_the_repo
+test_allow_cd_out_of_the_repo_inside_an_unspaced_subshell
 test_deny_search_on_a_later_line
 test_deny_search_with_a_redirect
 test_allow_stdin_grep_downstream_of_a_sequence
