@@ -117,6 +117,7 @@ Consistent with the agent-mistake threat model, the check does not chase every o
 
 - A nested command string (`bash -c "rg foo src/"`, `sh -c ...`) is not classified. Its payload is a command inside a single word, which would need a second tokenizer pass; the wrapper set deliberately excludes shells for that reason.
 - A search whose command word is reconstructed by a command substitution or an expanded variable (`$SEARCH foo`) is opaque to a byte tokenizer and is allowed. A substitution used as a path operand (`rg foo $(pwd)/src`) still reads as a path operand and is classified.
+- A search invoked as a `git` subcommand - `git grep`, and the `git log -S` and `git log -G` pickaxe searches - classifies by its command word as `git` and is allowed. Classifying git subcommands would add parsing surface that can itself fail open, and this shape errs toward letting a search through rather than refusing legitimate work.
 - A target path that contains spaces and is split by tokenization may be misread; the verdict then leans toward deny, and the escape hatch remains available.
 - A command line longer than 4000 bytes is allowed without classification. Tokenizing is paid on every tool call, and a 4000-byte line already costs about 0.2s; real search commands are two orders of magnitude shorter, and the long lines agents do write - a file written through a heredoc - stop at the heredoc operator well before the cap.
 - Command bytes that cannot be tokenized at all (unbalanced quoting or substitution) are allowed.
@@ -186,8 +187,10 @@ The refusal is scoped rather than blanket, because this one handler sees every t
 - Outside an indexed repository the guard has nothing to enforce, so its absence changes nothing.
 - The escape hatch still releases the call, so a genuinely needed raw search is never trapped.
 
-The search-shaped test on this path is deliberately broader than the checker's rule: it matches the search tool names and any search binary appearing as a word in the command.
+The search-shaped test on this path is deliberately broader than the checker's rule: it matches the search tool names, and any search binary appearing as a word in a real command string.
 It only has to decide which calls are unsafe to wave through while the real rule is unavailable.
+A structured tool call is judged by its tool name alone, never by its serialized input.
+The bytes of the Edit or Write that would repair a broken checker always contain search words, so scanning serialized input would refuse the guard's own repair - a trap that outweighs the marginal coverage - and the tool-name test mirrors the checker's rule, which likewise classifies only command strings and search tool names.
 
 ## Automated validation
 

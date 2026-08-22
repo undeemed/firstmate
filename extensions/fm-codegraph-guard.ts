@@ -77,6 +77,13 @@ const SEARCH_TOOLS = new Set([
 // cannot-run path. It over-matches on purpose: the exact rule lives in the
 // checker, and this only has to decide which calls are unsafe to wave through
 // while the real rule is unavailable.
+// It reads only a real command string (a bash-shaped call). A structured call
+// is judged by its tool name alone, never by its serialized input: the bytes
+// of the Edit or Write that would repair a broken checker always contain
+// search words, and a guard that refuses its own repair is a trap. That
+// outweighs the marginal coverage of scanning serialized content, and it
+// mirrors the checker's own rule, which likewise classifies only command
+// strings and search tool names.
 const SEARCH_WORD = /(^|[\s;&|(])(rg|grep|egrep|fgrep|ag|ack|fd|find|ast-grep)([\s;&|)]|$)/;
 const INLINE_ESCAPE_HATCH = /(^|\s)FM_ALLOW_RAW_SEARCH=1(\s|$)/;
 
@@ -126,9 +133,9 @@ function indexedRepoRoot(cwd: string): string | null {
   }
 }
 
-function looksLikeSearch(tool: string, command: string): boolean {
+function looksLikeSearch(tool: string, bashCommand: string): boolean {
   if (SEARCH_TOOLS.has(tool.toLowerCase())) return true;
-  return SEARCH_WORD.test(command);
+  return SEARCH_WORD.test(bashCommand);
 }
 
 /**
@@ -146,12 +153,12 @@ function looksLikeSearch(tool: string, command: string): boolean {
  * one step away. Outside an indexed repository the guard has nothing to enforce,
  * so its absence changes nothing and the call proceeds.
  */
-function guardUnavailable(tool: string, command: string, cwd: string, why: string, remedy: string): ToolCallResult {
+function guardUnavailable(tool: string, bashCommand: string, cwd: string, why: string, remedy: string): ToolCallResult {
   if (process.env.FM_ALLOW_RAW_SEARCH === "1") return {};
-  if (INLINE_ESCAPE_HATCH.test(command)) return {};
+  if (INLINE_ESCAPE_HATCH.test(bashCommand)) return {};
   const repo = indexedRepoRoot(cwd);
   if (!repo) return {};
-  if (!looksLikeSearch(tool, command)) return {};
+  if (!looksLikeSearch(tool, bashCommand)) return {};
   return {
     block: true,
     reason: [
@@ -203,11 +210,15 @@ export default function (pi: GuardExtensionApi) {
       }
     }
 
+    // Only a real command string feeds the cannot-run search test; a structured
+    // call is judged there by its tool name alone (see SEARCH_WORD).
+    const bashCommand = typeof rawCommand === "string" ? rawCommand : "";
+
     const cwd = ctx?.cwd || process.cwd();
     if (Buffer.byteLength(command, "utf8") > MAX_SPAWNABLE_COMMAND_BYTES) return {};
     const resolved = resolveChecker();
     if ("unavailable" in resolved) {
-      return guardUnavailable(tool, command, cwd, resolved.unavailable, resolved.remedy);
+      return guardUnavailable(tool, bashCommand, cwd, resolved.unavailable, resolved.remedy);
     }
 
     const result = await runChecker(resolved.checker, tool, command, cwd);
@@ -215,6 +226,6 @@ export default function (pi: GuardExtensionApi) {
     if (result.code === 2) {
       return { block: true, reason: result.stderr.trim() || DEFAULT_BLOCK_REASON };
     }
-    return guardUnavailable(tool, command, cwd, result.error ?? `${resolved.checker} exited ${result.code}`, resolved.remedy);
+    return guardUnavailable(tool, bashCommand, cwd, result.error ?? `${resolved.checker} exited ${result.code}`, resolved.remedy);
   });
 }

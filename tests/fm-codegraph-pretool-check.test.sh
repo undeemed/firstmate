@@ -255,6 +255,11 @@ test_deny_search_after_cd_into_the_repo() {
   expect_deny "deny cd <repo> && grep -rn foo . (the shape a live pi run used)"
 }
 
+test_deny_search_after_cd_with_end_of_options_marker() {
+  check_cli "$INDEXED" bash "cd -- $INDEXED && grep -rn foo ."
+  expect_deny "deny cd -- <repo> && grep -rn foo . (the end-of-options spelling)"
+}
+
 test_deny_search_after_relative_cd() {
   check_cli "$INDEXED" bash 'cd src && rg foo deep'
   expect_deny "deny a search after a relative cd that stays inside the repo"
@@ -348,6 +353,32 @@ test_allow_oversized_command() {
   expect_allow "allow a command line past the tokenizer size cap"
 }
 
+# The size cap is a byte budget: 3000 two-byte characters stay under the cap
+# when counted as locale characters but are 6000 bytes of tokenizer work.
+test_allow_oversized_multibyte_command() {
+  local utf8_locale="" cand
+  for cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | grep -Fxiq "$cand"; then
+      utf8_locale=$cand
+      break
+    fi
+  done
+  if [ -z "$utf8_locale" ]; then
+    pass "no UTF-8 locale available, skipping the multibyte size-cap case"
+    return
+  fi
+  local padding out_file err_file
+  padding=$(printf 'é%.0s' {1..3000})
+  out_file=$(mktemp "$TMP_ROOT/out.XXXXXX")
+  err_file=$(mktemp "$TMP_ROOT/err.XXXXXX")
+  LC_ALL=$utf8_locale "$CHECK" --tool bash --command "rg foo src/ # $padding" \
+    --cwd "$INDEXED" >"$out_file" 2>"$err_file"
+  RC=$?
+  OUT=$(cat "$out_file")
+  ERR=$(cat "$err_file")
+  expect_allow "allow a multibyte line past the byte cap under a UTF-8 locale"
+}
+
 # --- the pi/omp structured tool transport -----------------------------------
 
 test_deny_structured_tool_input_forwarded_as_json() {
@@ -384,7 +415,14 @@ cat >"$GUARD_DRIVER" <<'MJS'
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 const [guardPath, tool, commandArg, cwd] = process.argv.slice(2);
-const command = commandArg && commandArg.startsWith("@") ? readFileSync(commandArg.slice(1), "utf8") : commandArg;
+let input = {};
+if (commandArg && commandArg.startsWith("@")) {
+  input = { command: readFileSync(commandArg.slice(1), "utf8") };
+} else if (commandArg && commandArg.startsWith("json:")) {
+  input = JSON.parse(commandArg.slice(5));
+} else if (commandArg) {
+  input = { command: commandArg };
+}
 const mod = await import(pathToFileURL(guardPath).href);
 let handler = null;
 mod.default({
@@ -397,13 +435,14 @@ if (!handler) {
   process.exit(1);
 }
 const result = await handler(
-  { type: "tool_call", toolName: tool, input: command ? { command } : {} },
+  { type: "tool_call", toolName: tool, input },
   { cwd },
 );
 process.stdout.write(JSON.stringify(result ?? {}));
 MJS
 
-# drive_guard <home> <fm_home> <tool> <command> <cwd>: run the extension handler
+# drive_guard <home> <fm_home> <tool> <command|json:{...}|@file> <cwd>: run the
+# extension handler
 # in a fresh process so its load-time path resolution sees this environment.
 # Sets GUARD_RESULT.
 drive_guard() {
@@ -472,6 +511,12 @@ test_guard_extension_policy() {
   drive_guard "$bare" "$bare" grep '' "$INDEXED"
   expect_guard_block "no checker: a structured search tool is refused by name"
 
+  drive_guard "$bare" "$bare" grep 'json:{"pattern":"createUser","path":"src"}' "$INDEXED"
+  expect_guard_block "no checker: a structured search tool with serialized input is still refused by name"
+
+  drive_guard "$bare" "$bare" write 'json:{"path":"notes.md","content":"then run grep -rn foo . here"}' "$INDEXED"
+  expect_guard_allow "no checker: a structured write whose serialized input mentions a search is allowed"
+
   drive_guard "$bare" "$bare" bash 'FM_ALLOW_RAW_SEARCH=1 rg foo src/' "$INDEXED"
   expect_guard_allow "no checker: the inline escape hatch still releases the call"
 
@@ -513,6 +558,8 @@ test_guard_extension_policy() {
   expect_guard_block "an undefined checker exit code is refused, not read as approval"
   drive_guard "$bare" "$broken" bash 'git status --short' "$INDEXED"
   expect_guard_allow "an undefined checker exit code still leaves non-search calls alone"
+  drive_guard "$bare" "$broken" edit 'json:{"path":"fm-codegraph-pretool-check.sh","oldText":"  grep -rn foo src/","newText":"  rg foo src/"}' "$INDEXED"
+  expect_guard_allow "an undefined checker exit code still allows the edit that would repair the checker"
 
   # An explicitly pinned checker wins over both resolved paths.
   drive_guard_pinned() {
@@ -590,6 +637,7 @@ test_fail_open_malformed_json
 test_allow_nested_repo_without_own_index
 test_allow_repo_under_an_indexed_ancestor
 test_deny_search_after_cd_into_the_repo
+test_deny_search_after_cd_with_end_of_options_marker
 test_deny_search_after_relative_cd
 test_allow_search_after_cd_out_of_the_repo
 test_allow_search_after_unresolvable_cd
@@ -607,6 +655,7 @@ test_allow_search_words_inside_a_heredoc_body
 test_deny_quoted_separator_inside_a_pattern
 test_allow_unbalanced_quoting
 test_allow_oversized_command
+test_allow_oversized_multibyte_command
 test_deny_structured_tool_input_forwarded_as_json
 test_allow_structured_tool_input_pointing_outside_the_repo
 test_deny_pi_find_tool
