@@ -463,6 +463,38 @@ fm_composer_idle_matches() {
   esac
 }
 
+# HALF-OPEN COMPOSER BOX (verified omp; see docs/verification/runtime-backends.md):
+# omp draws a rounded top border `╭──…──╮`, then a content row that OPENS with
+# `│` and simply ends - no closing border on the right, and no prompt glyph or
+# placeholder inside the live in-session composer - then a rounded bottom border
+# `╰──…──╯`. Every other fleet harness closes a bordered row with the glyph it
+# opened with, so the generic `│ … │` shape and the agent-glyph bare shape both
+# missed omp's row entirely and the whole composer read `unknown`, which the send
+# path treats as an unconfirmed submit. These three predicates are the shared
+# owner of that shape so no scanner can drift into a private copy of it.
+# Each takes an ANSI-STRIPPED, whitespace-TRIMMED row. A half-open row is only a
+# CANDIDATE: fm_composer_classify_screen promotes it only between a rounded top
+# and its bottom border, and only for a pane whose native identity is omp, so
+# neither a stray `│`-leading transcript line nor another harness's panel can be
+# promoted into a composer.
+fm_composer_rounded_top_row() {  # <plain-trimmed-row>
+  case "$1" in '╭'*'╮') return 0 ;; esac
+  return 1
+}
+
+fm_composer_rounded_bottom_row() {  # <plain-trimmed-row>
+  case "$1" in '╰'*'╯') return 0 ;; esac
+  return 1
+}
+
+fm_composer_open_box_row() {  # <plain-trimmed-row>
+  case "$1" in
+    '│'*'│') return 1 ;;  # a closed row is the generic bordered shape, not this
+    '│'*) return 0 ;;
+  esac
+  return 1
+}
+
 # fm_composer_classify_content: the single shared composer-content verdict.
 #   <bordered> 1 when <content> came from a genuine agent-composer container (a
 #              bordered composer box, an identity-proven separated composer, or
@@ -604,12 +636,15 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
   FM_COMPOSER_SCAN_SHELL_ROW=-1
   FM_COMPOSER_SCAN_LEFTBAR_START=-1
   FM_COMPOSER_SCAN_LEFTBAR_END=-1
+  FM_COMPOSER_SCAN_OPENBOX_BOTTOM=-1
+  FM_COMPOSER_SCAN_OPENBOX_FIRST=-1
+  FM_COMPOSER_SCAN_OPENBOX_LAST=-1
   FM_COMPOSER_SCAN_PI_PAIR_FOUND=0
   FM_COMPOSER_SCAN_PI_PAIR_VALID=0
   FM_COMPOSER_SCAN_PI_OPEN=-1
   FM_COMPOSER_SCAN_PI_CLOSE=-1
   FM_COMPOSER_SCAN_PI_LAST_SEPARATOR=-1
-  local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max
+  local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max openbox_rows=0 openbox_broken=0
   pi_max=$FM_COMPOSER_PI_MAX_LINES
   case "$pi_max" in ''|*[!0-9]*|0) pi_max=8 ;; esac
   while IFS= read -r line; do
@@ -685,6 +720,8 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
       current_indent=$indent
       valid=1
       content_rows=0
+      openbox_rows=0
+      openbox_broken=0
       geometry_ambiguous=0
       geometry_check=1
       top_inner=$trimmed
@@ -699,6 +736,16 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
         *[![:space:]]*) geometry_check=0; geometry_ambiguous=1 ;;
       esac
     elif [ "$kind" = bottom ] || { [ "$kind" = ascii ] && [ "$top" -ge 0 ]; }; then
+      # omp's HALF-OPEN box closes here too. It is recorded separately from the
+      # generic complete-box result (its content rows never close their border,
+      # so `valid` is 0 by then and the generic arm below correctly refuses it),
+      # and it stays a candidate until an omp identity authorizes it.
+      if [ "$top" -ge 0 ] && [ "$family" = rounded ] && [ "$current_family" = rounded ] \
+         && [ "$openbox_rows" -gt 0 ] && [ "$openbox_broken" -eq 0 ]; then
+        FM_COMPOSER_SCAN_OPENBOX_BOTTOM=$row
+        FM_COMPOSER_SCAN_OPENBOX_FIRST=$((top + 1))
+        FM_COMPOSER_SCAN_OPENBOX_LAST=$((row - 1))
+      fi
       if [ "$top" -ge 0 ] && [ "$family" = "$current_family" ] \
          && [ "$valid" = 1 ] && [ "$content_rows" -gt 0 ]; then
         [ "$indent" = "$current_indent" ] || geometry_ambiguous=1
@@ -776,8 +823,20 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
             fi
           fi
           ;;
-        *) valid=0 ;;
+        *)
+          valid=0
+          # A row that opens `│` and never closes it is omp's half-open shape;
+          # anything else inside this box disqualifies the half-open candidate.
+          if [ "$current_family" = rounded ] && fm_composer_open_box_row "$trimmed"; then
+            openbox_rows=$((openbox_rows + 1))
+          else
+            openbox_broken=1
+          fi
+          ;;
       esac
+      # A CLOSED content row means this is the generic bordered box, not the
+      # half-open one.
+      [ -z "$side_family" ] || openbox_broken=1
     fi
     row=$((row + 1))
   done <<EOF
@@ -1255,6 +1314,21 @@ EOF
     printf 'unknown'
     return 0
   fi
+  # omp's half-open box, when it is the bottom-most shape on screen. Exactly
+  # like the pi separated shape, the native identity is consulted only when a
+  # lower candidate could change the verdict, and only an omp pane authorizes
+  # this shape - every other harness closes its bordered row and was already
+  # matched by the generic scan - so this promotion cannot move any other
+  # harness's classification.
+  if [ "$FM_COMPOSER_SCAN_OPENBOX_BOTTOM" -ge 0 ] \
+     && [ "$FM_COMPOSER_SCAN_OPENBOX_BOTTOM" -gt "$FM_COMPOSER_SCAN_BOX_BOTTOM" ] \
+     && [ "$FM_COMPOSER_SCAN_OPENBOX_BOTTOM" -gt "$FM_COMPOSER_SCAN_BARE_ROW" ] \
+     && [ "$FM_COMPOSER_SCAN_OPENBOX_BOTTOM" -gt "$FM_COMPOSER_SCAN_LEFTBAR_END" ] \
+     && [ "$FM_COMPOSER_SCAN_OPENBOX_BOTTOM" -gt "$FM_COMPOSER_SCAN_SHELL_ROW" ] \
+     && [ "$FM_COMPOSER_SCAN_OPENBOX_BOTTOM" -gt "$FM_COMPOSER_SCAN_PI_CLOSE" ]; then
+    _fm_composer_openbox_verdict "$screen" "$styled" "$has_identity" "$identity"
+    return 0
+  fi
   # No cursor: the bottom-most shape wins, with the pi-separator staleness
   # rules layered on (a live pi composer pair below the generic candidate
   # proves that candidate stale).
@@ -1373,6 +1447,58 @@ _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <i
   else
     _fm_composer_classify_bare_row "$screen" "$styled" "$row"
   fi
+}
+
+# omp's half-open box verdict: the same identity + structure conjunction the pi
+# shape uses. Once an omp identity authorizes the shape, each content row is an
+# ordinary bordered composer row - the single opening `│` strips like any other
+# border glyph.
+_fm_composer_classify_openbox_rows() {  # <screen> <styled> <first-row> <last-row>
+  local screen=$1 styled=$2 row=$3 last=$4 raw content plain state unknown_seen=0
+  while [ "$row" -le "$last" ]; do
+    raw=$(_fm_composer_screen_row "$row" "$screen")
+    content=$(_fm_composer_row_content "$raw" "$styled")
+    plain=$(_fm_composer_row_content "$raw" 0)
+    fm_composer_normalize_trim_var content
+    fm_composer_normalize_trim_var plain
+    case "$content" in '│'*) content=${content#│} ;; esac
+    case "$plain" in '│'*) plain=${plain#│} ;; esac
+    state=$(fm_composer_classify_content 1 "$content" \
+      "${FM_COMPOSER_IDLE_RE:-$FM_COMPOSER_IDLE_RE_DEFAULT}" insensitive "$plain" 1 "$styled")
+    case "$state" in
+      pending) printf 'pending'; return 0 ;;
+      unknown) unknown_seen=1 ;;
+    esac
+    row=$((row + 1))
+  done
+  if [ "$unknown_seen" = 1 ]; then
+    printf 'unknown'
+  else
+    printf 'empty'
+  fi
+}
+
+_fm_composer_openbox_verdict() {  # <screen> <styled> <has_identity> <identity>
+  local screen=$1 styled=$2 has_identity=$3 identity=$4 agent
+  if [ "$has_identity" != 1 ]; then
+    printf 'unknown'
+    return 0
+  fi
+  if [ -z "$identity" ]; then
+    printf 'need-identity'
+    return 0
+  fi
+  if [ "$identity" = probe-absent ]; then
+    printf 'unknown'
+    return 0
+  fi
+  agent=${identity%%$'\t'*}
+  if [ "$agent" != omp ]; then
+    printf 'unknown'
+    return 0
+  fi
+  _fm_composer_classify_openbox_rows "$screen" "$styled" \
+    "$FM_COMPOSER_SCAN_OPENBOX_FIRST" "$FM_COMPOSER_SCAN_OPENBOX_LAST"
 }
 
 # The pi separated-shape verdict: identity + structure conjunction (herdr's
