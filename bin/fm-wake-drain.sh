@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Present durable watcher wake records, optionally acknowledge handled records,
-# annotate every unread line for validated signal status keys, surface unread
-# informational status lines, OPEN DECISIONS, and captain-call record
-# divergence, then assert liveness.
+# Present durable watcher wake records, drop records naming a retired worker,
+# optionally acknowledge handled records, annotate every unread line for validated
+# signal status keys, surface unread informational status lines, OPEN DECISIONS,
+# and captain-call record divergence, then assert liveness.
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
@@ -17,6 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-retire-lib.sh
+. "$SCRIPT_DIR/fm-retire-lib.sh"
 
 DRAIN_TMP=
 DRAIN_LOCK_HELD=false
@@ -264,6 +266,32 @@ print_status_presentation() {  # [<deduped-raw-rows>]
   return "$rc"
 }
 
+# Drop consumed records that name a worker this home has already retired.
+# bin/fm-teardown.sh purges such records at retirement; this is the backstop for
+# the one record a watcher cycle can still append while that teardown runs,
+# which would otherwise be delivered as an alarm the receiving home has no way
+# to clear. bin/fm-retire-lib.sh owns the positive-proof rule that keeps a live
+# worker's alarm untouched; anything it cannot prove retired is printed
+# unchanged. Dropped records are noted in the watcher's absorbed-wake debug log,
+# never on stdout, because naming the retired worker there is the alarm itself.
+drop_retired_rows() {  # <deduped-raw-rows>
+  local rows=$1 line kind key
+  [ -n "$rows" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    kind=$(printf '%s' "$line" | cut -f3)
+    key=$(printf '%s' "$line" | cut -f4)
+    if fm_retire_wake_record_is_retired "$STATE" "$kind" "$key"; then
+      fm_retire_log "$STATE" "dropped wake for a retired task at drain: $line"
+      continue
+    fi
+    printf '%s\n' "$line"
+  done <<EOF
+$rows
+EOF
+  return 0
+}
+
 # shellcheck disable=SC2317,SC2329 # Invoked by trap handlers below.
 cleanup() {
   local status=$?
@@ -384,6 +412,7 @@ RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN
 
 RAW_ROWS=$(fm_wake_print_deduped "$FM_WAKE_QUEUE") || exit "$?"
 ACK_THROUGH=$(awk -F '\t' '$2 ~ /^[0-9]+$/ && $2 > max { max=$2 } END { print max + 0 }' "$FM_WAKE_QUEUE") || exit 1
+RAW_ROWS=$(drop_retired_rows "$RAW_ROWS")
 case "${FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
   0) ;;
   ''|*[!0-9]*) ;;
