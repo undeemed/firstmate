@@ -133,6 +133,31 @@ test_real_text_is_pending() {
   pass "fm_composer_classify_content: real unsubmitted text reads pending (including a popup argument-hint fill)"
 }
 
+# --- omp's half-open composer box shape --------------------------------------
+# omp opens a rounded box, writes a content row that starts with `│` and never
+# closes the border, then closes the box. An adapter promotes such a row only
+# between a rounded top and its bottom border, and only for an omp pane.
+
+test_half_open_box_shape_predicates() {
+  fm_composer_rounded_top_row '╭── omp ──╮' || fail "a rounded top border must be recognized"
+  fm_composer_rounded_bottom_row '╰── ctrl+c quit ──╯' || fail "a rounded bottom border must be recognized"
+  fm_composer_rounded_top_row '┌──┐' && fail "a square top border is not the rounded shape"
+  fm_composer_open_box_row '│' || fail "a lone opening border is a half-open content row"
+  fm_composer_open_box_row '│  hello draft not submitted' || fail "an unclosed content row is a half-open content row"
+  fm_composer_open_box_row '│ grok content │' && fail "a CLOSED bordered row is the generic shape, not the half-open one"
+  fm_composer_open_box_row '❯ ready' && fail "a bare agent-glyph row is not a half-open box row"
+  pass "fm_composer_*_row: the half-open box shape matches omp's rows and never a closed bordered row"
+}
+
+# The content verdict itself is shape-agnostic: once the adapter strips the
+# single opening border the row classifies through the ordinary bordered path.
+test_half_open_box_content_classifies_as_bordered() {
+  local out
+  out=$(classify 1 ''); [ "$out" = empty ] || fail "an emptied omp row should be empty, got '$out'"
+  out=$(classify 1 'hello draft not submitted'); [ "$out" = pending ] || fail "typed omp text should be pending, got '$out'"
+  pass "fm_composer_classify_content: a stripped half-open omp row reads empty when blank and pending when typed"
+}
+
 test_bare_shell_glyphs_are_unknown
 test_stripped_unbordered_content_uses_plain_content
 test_bare_shell_prompt_with_command_is_not_empty
@@ -142,3 +167,5 @@ test_empty_content_is_empty
 test_idle_placeholder_is_empty
 test_idle_placeholder_case_mode_is_explicit
 test_real_text_is_pending
+test_half_open_box_shape_predicates
+test_half_open_box_content_classifies_as_bordered
