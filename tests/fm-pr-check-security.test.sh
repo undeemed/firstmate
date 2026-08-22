@@ -113,12 +113,15 @@ write_poll_meta() {
     "pr=$url"
 }
 
+# Genuine ambiguity is a task record that cannot say which pull request it
+# means: two pr= lines, where every consumer reading the last value would
+# watch, merge, or diff a different PR than the one that armed the poll.
 write_ambiguous_poll() {
   local dir=$1 id=${2:-task-a}
   fm_write_meta "$dir/home/state/$id.meta" \
     "window=fm-$id" \
     'pr=https://github.com/o/r/pull/10' \
-    'window=unexpected-after-pr'
+    'pr=https://github.com/o/r/pull/11'
   printf 'legacy ambiguous bytes\n' > "$dir/home/state/$id.check.sh"
 }
 
@@ -2061,12 +2064,33 @@ test_nonexecuting_migration() {
   snap_after=$(cat "$state/task-x.meta")
   [ "$snap_after" = "$snap_before" ] || fail "X-linked migration changed task metadata"
 
+  # An unrelated key recorded after pr= - a restarted worker's re-addressed
+  # window, a trace context, a corrected posture - says nothing about which PR
+  # the task means, so the legacy poll is rebuilt rather than quarantined.
+  dir=$(make_case migration-unrelated-key-after-pr)
+  state="$dir/home/state"
+  fm_write_meta "$state/task-w.meta" \
+    'window=fm-task-w' \
+    'pr=https://github.com/o/r/pull/10' \
+    'window=readdressed-after-pr' \
+    'traceparent=00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  printf 'legacy readdressed bytes\n' > "$state/task-w.check.sh"
+  snap_before=$(cat "$state/task-w.meta")
+  FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
+    || fail "re-addressed-metadata migration failed"
+  [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
+    || fail "re-addressed metadata did not rebuild an armed canonical poll"
+  fm_pr_poll_artifacts_valid "$state" task-w "$POLL" \
+    || fail "re-addressed metadata did not leave a validated armed poll"
+  [ "$(cat "$state/task-w.meta")" = "$snap_before" ] \
+    || fail "re-addressed-metadata migration changed task metadata"
+
   dir=$(make_case migration-ambiguous)
   state="$dir/home/state"
   fm_write_meta "$state/task-b.meta" \
     'window=fm-task-b' \
     'pr=https://github.com/o/r/pull/10' \
-    'window=injected-after-pr'
+    'pr=https://github.com/o/r/pull/11'
   printf 'legacy ambiguous bytes\n' > "$state/task-b.check.sh"
   FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
     || fail "ambiguous migration failed to quarantine"
@@ -3325,8 +3349,92 @@ test_gitlab_merged_poll_retires() {
   pass "GitHub and GitLab exact merged results share one retirement path"
 }
 
+# An armed merge poll must survive the ordinary metadata writes that follow it:
+# a restarted worker's re-addressed window and pane ids, a recorded trace
+# context, a corrected delivery posture. Before this was fixed, any one of them
+# invalidated the poll's task binding, the watcher then classified the
+# byte-canonical poll as an unregistered custom check (mode 0700 required, the
+# owner path publishes 0600 on purpose because this file is never executed),
+# and the PR merged with nobody watching.
+test_armed_poll_survives_later_metadata_writes() {
+  local dir state url rc
+  url=https://github.com/o/r/pull/41
+
+  dir=$(make_case poll-survives-metadata-writes)
+  state="$dir/home/state"
+  write_task_meta "$dir"
+  FM_TEST_GH_HEAD=0123456789abcdef0123456789abcdef01234567 \
+    run_check_entry "$dir" task-a "$url" > "$dir/arm.out" 2> "$dir/arm.err" \
+    || fail "owner path could not arm the merge poll: $(cat "$dir/arm.err")"
+  assert_grep 'armed: state/task-a.check.sh' "$dir/arm.out" "owner path did not report an armed poll"
+  [ "$(file_mode "$state/task-a.check.sh")" = 600 ] || fail "owner path published a check mode it does not validate"
+
+  # Exactly what a supervisor writes after re-addressing a restarted worker.
+  printf 'window=default:wZZ:p2\nherdr_pane_id=wZZ:p2\ntraceparent=00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\n' \
+    >> "$state/task-a.meta"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "later metadata writes invalidated the armed poll's own validator"
+
+  # The bootstrap migration runs off almost any bin/ call and must not unarm it.
+  FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
+    || fail "migration failed after later metadata writes: $(cat "$dir/migrate.err")"
+  [ -f "$state/task-a.check.sh" ] || fail "migration unarmed a valid poll after later metadata writes"
+  [ ! -f "$state/.pr-check-migration.log" ] \
+    || assert_no_grep 'quarantined' "$state/.pr-check-migration.log" \
+      "migration quarantined a valid poll after later metadata writes"
+
+  set +e
+  FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" \
+    > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "watcher failed on a poll with later metadata writes: $(cat "$dir/watch.err")"
+  assert_no_grep 'rejected unauthenticated state checks' "$dir/watch.out" \
+    "watcher rejected the poll the owner path armed"
+  assert_no_grep 'unverifiable PR merge polls' "$dir/watch.out" \
+    "watcher could not verify the poll the owner path armed"
+  assert_grep "check: $state/task-a.check.sh: merged" "$dir/watch.out" \
+    "watcher did not run the armed poll to its merged result"
+
+  # A record that cannot say which PR it means is still refused, and it is
+  # reported as an unverifiable poll rather than as someone's unauthenticated
+  # check file, so the next operator repairs the record and not the file mode.
+  # The record goes ambiguous mid-sweep, the way a live one does: the startup
+  # migration sees a healthy poll, and an earlier check in the same sweep
+  # writes the second pr= line before the poll itself is reached.
+  dir=$(make_case poll-ambiguous-record)
+  state="$dir/home/state"
+  write_task_meta "$dir"
+  FM_TEST_GH_HEAD=0123456789abcdef0123456789abcdef01234567 \
+    run_check_entry "$dir" task-a "$url" >/dev/null 2>/dev/null \
+    || fail "owner path could not arm the ambiguity fixture"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "pr=https://github.com/o/r/pull/42" >> "%s"\n' \
+    "$state/task-a.meta" > "$state/a-drift.check.sh"
+  chmod 0700 "$state/a-drift.check.sh"
+  FM_HOME="$dir/home" "$REGISTER" a-drift >/dev/null \
+    || fail "could not register the record-drift check"
+  set +e
+  FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" \
+    > "$dir/watch-ambiguous.out" 2> "$dir/watch-ambiguous.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "watcher failed on an ambiguous record: $(cat "$dir/watch-ambiguous.err")"
+  [ "$(grep -c '^pr=' "$state/task-a.meta")" -eq 2 ] \
+    || fail "the record-drift check did not make the task record ambiguous"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    && fail "a second recorded pull request left the poll validated"
+  assert_grep "check: unverifiable PR merge polls: $state/task-a.check.sh" "$dir/watch-ambiguous.out" \
+    "watcher did not name the canonical poll it could not verify"
+  assert_no_grep 'rejected unauthenticated state checks' "$dir/watch-ambiguous.out" \
+    "watcher reported its own canonical poll as an unauthenticated check"
+  assert_no_grep 'merged' "$dir/watch-ambiguous.out" \
+    "watcher ran a poll whose task record was ambiguous"
+  pass "an armed merge poll survives later metadata writes and names real ambiguity distinctly"
+}
+
 test_parser_matrix
 test_gitlab_merge_watch
+test_armed_poll_survives_later_metadata_writes
 test_merged_poll_retires_once
 test_persistent_secondmate_retirement_is_poll_only
 test_retirement_crash_recovery
