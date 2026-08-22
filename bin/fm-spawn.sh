@@ -123,7 +123,13 @@
 #   refuses when another task in this home already records the same worktree=, and
 #   (crewmate/scout only) when the treehouse pool records that worktree leased to a
 #   different holder. Both inputs are durable records, never "is a process visible
-#   right now". The refusal names the conflicting task id or lease holder, writes no
+#   right now". The record check sees only tasks recorded in THIS home, and a
+#   lease is in practice a secondmate home's claim, because firstmate leases only
+#   secondmate homes and never crewmate or scout worktrees. An unleased crewmate
+#   or scout worktree recorded by another firstmate home sharing the pool is
+#   invisible to both checks, so two homes on one pool can still collide until a
+#   durable pool-level claim exists (follow-up work, not part of this change).
+#   The refusal names the conflicting task id or lease holder, writes no
 #   metadata, installs no hook, and returns, prunes, or kills nothing: both
 #   `treehouse return --force` and an ordinary treehouse-subshell exit terminate
 #   every process whose cwd is inside the worktree, which would reap the live
@@ -237,6 +243,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1488,19 +1496,24 @@ worktree_meta_claimant() {  # <worktree-raw> <worktree-real> -> prints the confl
 }
 
 # treehouse's own durable lease record for one worktree, printed as
-# "<status>\t<lease_holder>". Returns 1 when the pool has no entry for the path
+# "<status>\t<lease_holder>". A lease is another holder's durable claim - in
+# practice a secondmate home, because firstmate leases only secondmate homes -
+# so this axis cannot see an unleased crewmate or scout worktree recorded by
+# another firstmate home sharing the pool; a durable pool-level claim is the
+# follow-up that would. Returns 1 when the pool has no entry for the path
 # and 2 when the lease state cannot be read at all (no treehouse, no JSON
 # support, or no available JSON reader) - the caller then relies on the durable
 # meta records alone rather than refusing every spawn.
 worktree_pool_lease_state() {  # <worktree-raw> <worktree-real>
-  local wt_raw=$1 wt_real=$2 json out timeout_cmd=""
+  local wt_raw=$1 wt_real=$2 json out bound
   command -v treehouse >/dev/null 2>&1 || return 2
-  # Bounded: a pool scan walks every worktree's processes, and this call happens
-  # while the claim lock is held. An unreadable or slow pool is not a reason to
-  # block or refuse the spawn - the durable meta records above still stand.
-  command -v timeout >/dev/null 2>&1 && timeout_cmd="timeout ${FM_SPAWN_POOL_STATUS_TIMEOUT:-15}"
-  # shellcheck disable=SC2086 # timeout_cmd is a deliberate empty-or-two-word prefix.
-  json=$( (cd "$PROJ_ABS" 2>/dev/null && $timeout_cmd treehouse status --json 2>/dev/null) ) || return 2
+  # Bounded on every host by bin/fm-timeout-lib.sh: a pool scan walks every
+  # worktree's processes, and this call happens while the claim lock is held. An
+  # unreadable, slow, or timed-out pool is not a reason to block or refuse the
+  # spawn - the durable meta records above still stand.
+  bound=${FM_SPAWN_POOL_STATUS_TIMEOUT:-15}
+  case "$bound" in ''|*[!0-9]*|0) bound=15 ;; esac
+  json=$( (cd "$PROJ_ABS" 2>/dev/null && fm_run_timed "$bound" treehouse status --json 2>/dev/null) ) || return 2
   [ -n "$json" ] || return 2
   if command -v jq >/dev/null 2>&1; then
     out=$(printf '%s' "$json" | jq -r --arg a "$wt_raw" --arg b "$wt_real" '
@@ -1533,18 +1546,23 @@ for entry in entries:
 # Refuse to publish a worktree another task already claims. Called after the
 # isolation assertion and before anything is written into the worktree or the
 # task's meta, so a refusal leaves the co-tenant's checkout byte-identical.
+# The durable-record check covers only tasks recorded in THIS home: two
+# firstmate homes sharing one worktree pool cannot see each other's records and
+# can still collide, until a durable pool-level claim exists (follow-up work).
 assert_worktree_unclaimed() {  # <source> <inspect-target>
   local source=$1 inspect_target=$2 wt_real claimant lease lease_status lease_holder
   wt_real=$(real_path_or_raw "$WT")
   if claimant=$(worktree_meta_claimant "$WT" "$wt_real"); then
     echo "error: $source handed back $WT, which task $claimant already records as its worktree ($STATE/$claimant.meta); refusing to launch $ID into an occupied checkout" >&2
     echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout, including task $claimant's worker" >&2
+    HERDR_PROJECTION_ABORT_CLEANUP=0
+    ORCA_ABORT_CLEANUP=0
     exit 1
   fi
   # A crewmate or scout worktree is never leased by firstmate, so any lease on it
-  # is another holder's durable claim (a secondmate home, or another home sharing
-  # this pool). A secondmate spawn legitimately relaunches into its own leased
-  # home, so the lease axis does not apply to it.
+  # is another holder's durable claim - in practice a secondmate home, because
+  # firstmate leases only secondmate homes. A secondmate spawn legitimately
+  # relaunches into its own leased home, so the lease axis does not apply to it.
   [ "$KIND" != secondmate ] || return 0
   lease=$(worktree_pool_lease_state "$WT" "$wt_real") || return 0
   lease_status=${lease%%	*}
@@ -1554,6 +1572,8 @@ assert_worktree_unclaimed() {  # <source> <inspect-target>
   [ "$lease_holder" != "$ID" ] || return 0
   echo "error: $source handed back $WT, which the treehouse pool records as leased to $lease_holder; refusing to launch $ID into a checkout another holder owns" >&2
   echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout" >&2
+  HERDR_PROJECTION_ABORT_CLEANUP=0
+  ORCA_ABORT_CLEANUP=0
   exit 1
 }
 
