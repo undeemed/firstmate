@@ -2498,6 +2498,79 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
+# Live main-home incident (2026-08): an ordinary clean teardown left every
+# derived supervision record naming the retired worker in place - its queued
+# alarm, the arm layer's replayable delivered reason, and its pane-keyed watcher
+# counters, which are keyed by PANE and so survived removal of every file named
+# after the task. 145 of 158 pane-keyed markers in that home belonged to panes no
+# meta had recorded for weeks. Retirement must reap all of it and leave a
+# tombstone, while touching nothing that belongs to a live sibling task.
+test_teardown_reaps_supervision_records_for_the_retired_task() {
+  local case_dir state key live_key
+  case_dir=$(make_case retire-reaps-supervision-records)
+  state="$case_dir/state"
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  key=firstmate_fm-task-x1
+  live_key=firstmate_fm-live-y2
+
+  printf 'working: implementing\n' > "$state/task-x1.status"
+  : > "$state/task-x1.turn-ended"
+  printf 'h1' > "$state/.hash-$key"
+  printf '4' > "$state/.count-$key"
+  printf 'h1' > "$state/.stale-$key"
+  printf '100' > "$state/.stale-since-$key"
+  printf '2' > "$state/.wedge-escalations-$key"
+  : > "$state/.paused-$key"
+  printf 'sig' > "$state/.seen-task-x1_status"
+  printf 'sig' > "$state/.seen-task-x1_turn-ended"
+  printf 'done: x\n' > "$state/.hb-surfaced-task-x1"
+  printf 'done: x\n' > "$state/.subsuper-seen-status-task-x1"
+  printf '%s\t%s\t%s\n' 4242 'identity' 'stale: firstmate:fm-task-x1' > "$state/.watch-deliveries.log"
+
+  # A live sibling worker whose own records must survive untouched.
+  fm_write_meta "$state/live-y2.meta" "window=firstmate:fm-live-y2" "kind=ship"
+  printf 'working: still going\n' > "$state/live-y2.status"
+  printf 'h2' > "$state/.hash-$live_key"
+  printf '3' > "$state/.count-$live_key"
+  printf 'sig' > "$state/.seen-live-y2_status"
+  printf '%s\t%s\t%s\n' 4243 'identity' 'stale: firstmate:fm-live-y2' >> "$state/.watch-deliveries.log"
+
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_wake_append stale firstmate:fm-task-x1 "stale: firstmate:fm-task-x1"
+    fm_wake_append signal task-x1.status "signal: task-x1.status"
+    fm_wake_append stale firstmate:fm-live-y2 "stale: firstmate:fm-live-y2"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" || fail "retire-reaps: seeding the wake queue failed"
+
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "retire-reaps: teardown failed: $(cat "$case_dir/stderr")"
+
+  local leftover
+  for leftover in ".hash-$key" ".count-$key" ".stale-$key" ".stale-since-$key" \
+    ".wedge-escalations-$key" ".paused-$key" ".seen-task-x1_status" \
+    ".seen-task-x1_turn-ended" ".hb-surfaced-task-x1" ".subsuper-seen-status-task-x1"; do
+    [ ! -e "$state/$leftover" ] || fail "retire-reaps: teardown left $leftover behind"
+  done
+  grep -F 'task-x1' "$state/.wake-queue" >/dev/null \
+    && fail "retire-reaps: a queued wake still names the retired task"
+  grep -F 'fm-task-x1' "$state/.watch-deliveries.log" >/dev/null \
+    && fail "retire-reaps: a replayable delivered reason still names the retired pane"
+  grep -F 'task-x1' "$state/.retired-tasks" >/dev/null \
+    || fail "retire-reaps: no retirement tombstone was recorded"
+
+  for leftover in ".hash-$live_key" ".count-$live_key" ".seen-live-y2_status"; do
+    [ -e "$state/$leftover" ] || fail "retire-reaps: teardown removed the live task's $leftover"
+  done
+  grep -F 'firstmate:fm-live-y2' "$state/.wake-queue" >/dev/null \
+    || fail "retire-reaps: the live task's queued wake was purged"
+  grep -F 'firstmate:fm-live-y2' "$state/.watch-deliveries.log" >/dev/null \
+    || fail "retire-reaps: the live task's delivered reason was purged"
+  pass "teardown reaps every supervision record naming the retired task and leaves a live task's untouched"
+}
+
+test_teardown_reaps_supervision_records_for_the_retired_task
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present

@@ -82,6 +82,34 @@ fi
 grep -q 'absorbed push' "$STATE_DIR/.watch-triage.log" 2>/dev/null || fail "the paused absorb should be logged to the triage log"
 pass "handle_push_transition: a declared-pause crew is absorbed (no fast wake), left to the poll loop's long cadence"
 
+# --- handle_push_transition: a pane no task records is never escalated --------
+# The transport prints every pane.agent_status_changed edge the session sends,
+# including the retiring pane's own last edge, so the policy layer must refuse to
+# alarm on a pane that belongs to no task here. Live incident: an alarm naming a
+# cleanly retired pane, with no meta recording it and no pane left in herdr.
+
+reset_state
+handle_push_transition herdr default "$(mkrec wG:pRetired blocked)"
+if [ -e "$STATE_DIR/.wake-queue" ] && grep -q 'stale' "$STATE_DIR/.wake-queue"; then
+  fail "an edge for a pane no meta records must not enqueue a stale wake: $(cat "$STATE_DIR/.wake-queue")"
+fi
+[ ! -s "$WAKE_LOG" ] || fail "an edge for a pane no meta records must not wake the supervisor"
+grep -q 'no task records this pane' "$STATE_DIR/.watch-triage.log" 2>/dev/null \
+  || fail "the unrecorded-pane absorb should be logged to the triage log"
+[ -e "$STATE_DIR/.herdr-escalated-default_wG_pRetired" ] \
+  || fail "the absorbed edge must still be committed so it cannot re-fire every cycle"
+pass "handle_push_transition: an edge for a pane no task records is absorbed, never escalated"
+
+# The same guard must not touch a live crew whose pane IS recorded, including one
+# recorded under terminal= rather than window=.
+reset_state
+fm_write_meta "$STATE_DIR/tk-live.meta" "terminal=default:wG:pQ" "backend=herdr" "kind=ship"
+handle_push_transition herdr default "$(mkrec wG:pQ blocked)"
+grep -q 'default:wG:pQ' "$STATE_DIR/.wake-queue" 2>/dev/null \
+  || fail "a live crew recorded under terminal= must still fast-escalate its blocked edge"
+[ -s "$WAKE_LOG" ] || fail "a live crew's blocked edge must still wake the supervisor"
+pass "handle_push_transition: a live crew's recorded pane still fast-escalates through the same guard"
+
 # --- event_wait_or_sleep: secondmate windows are excluded from the pane list --
 
 reset_state
