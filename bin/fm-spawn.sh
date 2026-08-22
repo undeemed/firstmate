@@ -112,6 +112,37 @@
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
 #   git worktree root distinct from the primary project checkout.
+# Occupied-checkout refusal: every local spawn also refuses to publish a
+#   worktree that another task already claims. A pool worktree is bound to a task
+#   only by that task's durable state/<id>.meta record: treehouse's occupancy for
+#   a non-leased worktree is process-based, so a slot whose worker has no process
+#   with a cwd inside it - because a sibling teardown returned the path, or because
+#   the worker's own processes live elsewhere - is handed straight back out by the
+#   next `treehouse get`. Two workers in one checkout means one worker's
+#   `git checkout -b` silently rewrites the other's working tree, so the spawn
+#   refuses when another task in this home already records the same worktree=, and
+#   (crewmate/scout only) when the treehouse pool records that worktree leased to a
+#   different holder. Both inputs are durable records, never "is a process visible
+#   right now". The record check runs as early as each spawn path's worktree is
+#   known - for a secondmate home immediately after it resolves, before the
+#   pre-launch ff sync and inheritance propagation write into it; for
+#   crewmate/scout after treehouse get; for orca after worktree create - so a
+#   refusal leaves the contested checkout byte-identical. It runs again with
+#   the lease check just before this task's metadata is published, under a
+#   home-scoped claim lock held from that re-check until the worktree= record
+#   lands, so racing spawns cannot both pass against records that mention
+#   neither worktree.
+#   The record check sees only tasks recorded in THIS home, and a
+#   lease is in practice a secondmate home's claim, because firstmate leases only
+#   secondmate homes and never crewmate or scout worktrees. An unleased crewmate
+#   or scout worktree recorded by another firstmate home sharing the pool is
+#   invisible to both checks, so two homes on one pool can still collide until a
+#   durable pool-level claim exists (follow-up work, not part of this change).
+#   The refusal names the conflicting task id or lease holder, writes no
+#   metadata, installs no hook, and returns, prunes, or kills nothing: both
+#   `treehouse return --force` and an ordinary treehouse-subshell exit terminate
+#   every process whose cwd is inside the worktree, which would reap the live
+#   co-tenant's worker. The window is left exactly as found for inspection.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -221,6 +252,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -634,6 +667,11 @@ SPAWN_TASK_LOCK=
 SPAWN_TASK_LOCK_HELD=0
 CONFIG_INHERIT_LOCK=
 CONFIG_INHERIT_LOCK_HELD=0
+# Serializes the occupied-checkout check against this home's meta publication, so
+# two spawns racing in the same instant cannot both pass the check and then both
+# record the same worktree=.
+WORKTREE_CLAIM_LOCK=
+WORKTREE_CLAIM_LOCK_HELD=0
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -707,6 +745,10 @@ spawn_abort_cleanup() {
   if [ "$CONFIG_INHERIT_LOCK_HELD" = 1 ]; then
     CONFIG_INHERIT_LOCK_HELD=0
     fm_lock_release "$CONFIG_INHERIT_LOCK" || true
+  fi
+  if [ "$WORKTREE_CLAIM_LOCK_HELD" = 1 ]; then
+    WORKTREE_CLAIM_LOCK_HELD=0
+    fm_lock_release "$WORKTREE_CLAIM_LOCK" || true
   fi
   return "$status"
 }
@@ -1278,6 +1320,64 @@ validate_firstmate_operational_dirs() {
   done
 }
 
+real_path_or_raw() {  # <path>
+  local path=$1 real
+  if real=$(cd "$path" 2>/dev/null && pwd -P); then
+    printf '%s\n' "$real"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+# Occupied-checkout refusal (see this script's header for the full contract).
+# The durable record is the other task's own state/<id>.meta worktree= line: a
+# meta exists exactly while its task does, because fm-teardown.sh removes it as
+# part of landing the task. Process visibility is deliberately not consulted -
+# the whole failure mode is a live worker the pool could not see.
+worktree_meta_claimant() {  # <worktree-raw> <worktree-real> -> prints the conflicting task id
+  local wt_raw=$1 wt_real=$2 meta other_id other_wt other_real
+  [ -d "$STATE" ] || return 1
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    other_id=${meta##*/}
+    other_id=${other_id%.meta}
+    [ "$other_id" != "$ID" ] || continue
+    other_wt=$(sed -n 's/^worktree=//p' "$meta" 2>/dev/null | head -n 1)
+    [ -n "$other_wt" ] || continue
+    if [ "$other_wt" = "$wt_raw" ] || [ "$other_wt" = "$wt_real" ]; then
+      printf '%s\n' "$other_id"
+      return 0
+    fi
+    other_real=$(real_path_or_raw "$other_wt")
+    if [ "$other_real" = "$wt_real" ]; then
+      printf '%s\n' "$other_id"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Record axis of the occupied-checkout refusal (see this script's header): the
+# durable state/<id>.meta comparison alone, run the moment a spawn path knows
+# its worktree - immediately after a secondmate home resolves (before the ff
+# sync, state-directory creation, and inheritance propagation write into it),
+# after pool acquisition for crewmate/scout, after worktree creation for orca -
+# so no contested checkout is written to before a refusal. The lease axis and
+# the authoritative locked re-check stay at the single pre-publication point
+# (assert_worktree_unclaimed below), because that is where the claim lock can
+# span check-to-publication.
+assert_worktree_meta_unclaimed() {  # <source> <inspect-target>
+  local source=$1 inspect_target=$2 wt_real claimant
+  wt_real=$(real_path_or_raw "$WT")
+  if claimant=$(worktree_meta_claimant "$WT" "$wt_real"); then
+    echo "error: $source handed back $WT, which task $claimant already records as its worktree ($STATE/$claimant.meta); refusing to launch $ID into an occupied checkout" >&2
+    echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout, including task $claimant's worker" >&2
+    HERDR_PROJECTION_ABORT_CLEANUP=0
+    ORCA_ABORT_CLEANUP=0
+    exit 1
+  fi
+}
+
 if [ "$KIND" = secondmate ]; then
   if [ -z "$FIRSTMATE_HOME" ] && [ -f "$STATE/$ID.meta" ]; then
     FIRSTMATE_HOME=$(grep '^home=' "$STATE/$ID.meta" | cut -d= -f2- || true)
@@ -1298,6 +1398,12 @@ if [ "$KIND" = secondmate ]; then
     SECONDMATE_PROJECTS=$SECONDMATE_REGISTRY_MATCH_PROJECTS
   fi
   WT="$PROJ_ABS"
+  # Record-axis occupied-checkout refusal at the first moment the home path is
+  # known: every step below - the ff sync, the state directory, the inheritance
+  # and trace-context propagation - writes into the home, and a contested home
+  # must refuse before the first write. The authoritative locked re-check still
+  # runs later, before this task's metadata is published.
+  assert_worktree_meta_unclaimed "the secondmate home" "$WT"
   # Local-HEAD sync: before launch, fast-forward this secondmate's worktree to the
   # PRIMARY checkout's current default-branch commit, so a freshly spawned or
   # recovery-respawned secondmate always runs the primary's version (AGENTS.md
@@ -1399,15 +1505,6 @@ BRIEF_REAL="$BRIEF_DIR_REAL/$(basename "$BRIEF")"
 # (docs/herdr-backend.md "Known gaps").
 PROJ_ABS_REAL=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_ABS_REAL="$PROJ_ABS"
 
-real_path_or_raw() {  # <path>
-  local path=$1 real
-  if real=$(cd "$path" 2>/dev/null && pwd -P); then
-    printf '%s\n' "$real"
-  else
-    printf '%s\n' "$path"
-  fi
-}
-
 # Session-provider container-ensure + task creation. tmux stays exactly as P1
 # left it (same session-name / new-window sequence, see bin/backends/tmux.sh);
 # a herdr spawn goes through the version-gated, workspace-per-HOME,
@@ -1432,6 +1529,85 @@ validate_spawn_worktree() {  # <source> <inspect-target>
     echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
     exit 1
   fi
+}
+
+# treehouse's own durable lease record for one worktree, printed as
+# "<status>\t<lease_holder>". A lease is another holder's durable claim - in
+# practice a secondmate home, because firstmate leases only secondmate homes -
+# so this axis cannot see an unleased crewmate or scout worktree recorded by
+# another firstmate home sharing the pool; a durable pool-level claim is the
+# follow-up that would. Returns 1 when the pool has no entry for the path
+# and 2 when the lease state cannot be read at all (no treehouse, no JSON
+# support, or no available JSON reader) - the caller then relies on the durable
+# meta records alone rather than refusing every spawn.
+worktree_pool_lease_state() {  # <worktree-raw> <worktree-real>
+  local wt_raw=$1 wt_real=$2 json out bound
+  command -v treehouse >/dev/null 2>&1 || return 2
+  # Bounded on every host by bin/fm-timeout-lib.sh: a pool scan walks every
+  # worktree's processes, and this call happens while the claim lock is held. An
+  # unreadable, slow, or timed-out pool is not a reason to block or refuse the
+  # spawn - the durable meta records above still stand.
+  bound=${FM_SPAWN_POOL_STATUS_TIMEOUT:-15}
+  case "$bound" in ''|*[!0-9]*|0) bound=15 ;; esac
+  json=$( (cd "$PROJ_ABS" 2>/dev/null && fm_run_timed "$bound" treehouse status --json 2>/dev/null) ) || return 2
+  [ -n "$json" ] || return 2
+  if command -v jq >/dev/null 2>&1; then
+    out=$(printf '%s' "$json" | jq -r --arg a "$wt_raw" --arg b "$wt_real" '
+      .[]? | select((.path // "") == $a or (.path // "") == $b)
+           | ((.status // "") + "\t" + (.lease_holder // ""))' 2>/dev/null) || return 2
+  elif command -v python3 >/dev/null 2>&1; then
+    out=$(printf '%s' "$json" | python3 -c '
+import json, sys
+try:
+    entries = json.load(sys.stdin)
+except Exception:
+    sys.exit(3)
+if not isinstance(entries, list):
+    sys.exit(3)
+wanted = set(sys.argv[1:])
+for entry in entries:
+    if not isinstance(entry, dict):
+        continue
+    if entry.get("path", "") in wanted:
+        print((entry.get("status") or "") + "\t" + (entry.get("lease_holder") or ""))
+' "$wt_raw" "$wt_real" 2>/dev/null) || return 2
+  else
+    return 2
+  fi
+  out=$(printf '%s\n' "$out" | sed '/^$/d' | head -n 1)
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
+# Authoritative pre-publication occupied-checkout check: refuse to publish a
+# worktree another task already claims. The record axis already ran the moment
+# each spawn path's worktree became known, so a refusal lands before the
+# contested checkout is written to; this locked re-check runs both axes at the
+# single point before this task's metadata is published, because only here can
+# the claim lock span check-to-publication.
+# The durable-record check covers only tasks recorded in THIS home: two
+# firstmate homes sharing one worktree pool cannot see each other's records and
+# can still collide, until a durable pool-level claim exists (follow-up work).
+assert_worktree_unclaimed() {  # <source> <inspect-target>
+  local source=$1 inspect_target=$2 wt_real lease lease_status lease_holder
+  assert_worktree_meta_unclaimed "$source" "$inspect_target"
+  # A crewmate or scout worktree is never leased by firstmate, so any lease on it
+  # is another holder's durable claim - in practice a secondmate home, because
+  # firstmate leases only secondmate homes. A secondmate spawn legitimately
+  # relaunches into its own leased home, so the lease axis does not apply to it.
+  [ "$KIND" != secondmate ] || return 0
+  wt_real=$(real_path_or_raw "$WT")
+  lease=$(worktree_pool_lease_state "$WT" "$wt_real") || return 0
+  lease_status=${lease%%	*}
+  lease_holder=${lease#*	}
+  [ "$lease_status" = leased ] || return 0
+  [ -n "$lease_holder" ] || lease_holder="an unnamed holder"
+  [ "$lease_holder" != "$ID" ] || return 0
+  echo "error: $source handed back $WT, which the treehouse pool records as leased to $lease_holder; refusing to launch $ID into a checkout another holder owns" >&2
+  echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout" >&2
+  HERDR_PROJECTION_ABORT_CLEANUP=0
+  ORCA_ABORT_CLEANUP=0
+  exit 1
 }
 
 herdr_projection_meta_field_exact() {  # <meta> <key>
@@ -1889,6 +2065,30 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   validate_spawn_worktree "treehouse get" "$T"
 fi
 
+# Occupied-checkout refusal (see this script's header). The record axis runs as
+# early as each path's worktree is known - immediately after the home resolved
+# for a secondmate (above, before the ff sync and propagation wrote into it),
+# and right here for crewmate/scout (after treehouse get) and orca (after
+# worktree create), whose $WT only exists now - so no contested checkout is
+# written to before a refusal. The lease axis and the authoritative locked
+# re-check run here, at the single point before metadata publication, because
+# only here can the claim lock span check-to-publication: held from this check
+# until this task's own worktree= record is published, so two spawns racing in
+# the same instant cannot both pass against records that do not mention either
+# worktree yet.
+if [ "$KIND" = secondmate ]; then
+  WT_SOURCE="the secondmate home"
+elif [ "$BACKEND" = orca ]; then
+  WT_SOURCE="orca worktree create"
+else
+  WT_SOURCE="treehouse get"
+fi
+mkdir -p "$STATE"
+WORKTREE_CLAIM_LOCK="$STATE/.worktree-claim.lock"
+fm_lock_acquire_wait "$WORKTREE_CLAIM_LOCK"
+WORKTREE_CLAIM_LOCK_HELD=1
+assert_worktree_unclaimed "$WT_SOURCE" "$T"
+
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
 # create GOTMPDIR, so mkdir before it is used; fm-teardown removes the whole root.
 # Nested (not a bare /tmp/fm-<id>/gotmp) so other per-task temp can live alongside
@@ -2283,6 +2483,12 @@ META_WINDOW=$T
   fi
 } > "$STATE/$ID.meta"
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
+# This task's worktree= claim is now durable, so a concurrent spawn's
+# occupied-checkout check can see it.
+if [ "$WORKTREE_CLAIM_LOCK_HELD" = 1 ]; then
+  WORKTREE_CLAIM_LOCK_HELD=0
+  fm_lock_release "$WORKTREE_CLAIM_LOCK" || true
+fi
 
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")

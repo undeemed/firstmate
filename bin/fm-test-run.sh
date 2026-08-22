@@ -195,6 +195,7 @@ family_for_basename() {
     fm-herdr-session-cleanup.test.sh|fm-send-resolve-key.test.sh|fm-send-strict.test.sh|fm-spawn-batch.test.sh|\
     fm-spawn-dispatch-profile.test.sh|\
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
+    fm-spawn-worktree-collision.test.sh|\
     fm-teardown-endpoint-safety.test.sh)
       printf '%s\n' backend-dispatch
       ;;
@@ -912,9 +913,11 @@ families_for_changed_path() {
       ;;
     bin/fm-timeout-lib.sh)
       # The shared hard bound: session start's runtime bound, the fleet/bearings
-      # snapshots, and the vendor auth probe all depend on it.
+      # snapshots, the vendor auth probe, and fm-spawn's pool-status read all
+      # depend on it.
       printf '%s\n' session-bootstrap
       printf '%s\n' snapshot-bearings
+      printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
       ;;
     bin/fm-pr-*|bin/fm-merge-local.sh|bin/fm-teardown.sh|bin/fm-review-diff.sh|\
