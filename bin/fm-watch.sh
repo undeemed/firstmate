@@ -48,6 +48,12 @@
 #                          stays queued and never once it is acknowledged
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
+#   check: unverifiable PR merge polls: <paths>
+#                          a poll whose bytes ARE the canonical merge poll no
+#                          longer verifies against its private sidecar,
+#                          registration, or task metadata; nothing ran and that
+#                          pull request is no longer being watched, so rearm it
+#                          with bin/fm-pr-check.sh after repairing the record
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
 #                          invalid pending retirements were preserved without
 #                          running a check or removing poll artifacts
@@ -803,6 +809,7 @@ while :; do
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
     rejected_checks=
+    unverifiable_polls=
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
       is_pr_poll=0
@@ -834,7 +841,17 @@ while :; do
           fm_custom_check_snapshot_cleanup
         else
           fm_custom_check_snapshot_cleanup
-          rejected_checks="$rejected_checks $c"
+          # A file whose bytes are the canonical merge poll is not an
+          # unauthenticated check someone dropped in state/: it is a poll this
+          # home armed whose binding no longer verifies. Report that separately
+          # so the operator repairs the binding instead of the check file's
+          # mode, which the owner path deliberately publishes as 0600 because
+          # the watcher never executes this file.
+          if cmp -s "$SCRIPT_DIR/fm-pr-poll.sh" "$c"; then
+            unverifiable_polls="$unverifiable_polls $c"
+          else
+            rejected_checks="$rejected_checks $c"
+          fi
           continue
         fi
       fi
@@ -853,11 +870,22 @@ while :; do
         wake "$reason"
       fi
     done
+    # Both buckets reach the durable queue before either wakes, because wake()
+    # exits the cycle and a wake that never queued would be lost.
+    unverifiable_reason=
+    if [ -n "$unverifiable_polls" ]; then
+      unverifiable_reason="check: unverifiable PR merge polls:$unverifiable_polls"
+      fm_wake_append check unverifiable-pr-polls "$unverifiable_reason" || exit 1
+    fi
     if [ -n "$rejected_checks" ]; then
       reason="check: rejected unauthenticated state checks:$rejected_checks"
       fm_wake_append check unauthenticated-state-checks "$reason" || exit 1
       touch "$STATE/.last-check"
       wake "$reason"
+    fi
+    if [ -n "$unverifiable_reason" ]; then
+      touch "$STATE/.last-check"
+      wake "$unverifiable_reason"
     fi
     touch "$STATE/.last-check"
   fi
