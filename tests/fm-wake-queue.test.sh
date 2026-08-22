@@ -284,10 +284,19 @@ test_orphan_marker_sweep_reaps_both_classes() {
     printf 'v' > "$state/$m"
   done
 
+  # The live pane's pause-cadence markers, aged past the gate: their nested
+  # prefixes (.paused-rechecked-, .paused-resurfaced-) must still resolve to the
+  # live pane's key, so the live-pane condition keeps them despite their age.
+  for m in .paused-rechecked-default_wLIVE_p2 .paused-resurfaced-default_wLIVE_p2; do
+    printf 'v' > "$state/$m"
+    touch -d "@$old" "$state/$m" 2>/dev/null || touch -t "$(date -r "$old" +%Y%m%d%H%M.%S)" "$state/$m"
+  done
+
   # Long-orphaned markers from earlier retirements, both classes.
   for m in .hash-default_wA0_p2 .count-default_wA0_p2 .stale-default_wA0_p2 \
     .stale-since-default_wA0_p2 .wedge-escalations-default_wA0_p2 .paused-default_wA0_p2 \
-    .herdr-escalated-default_wA0_p2 .seen-scout-s3_status .seen-scout-s3_turn-ended \
+    .herdr-escalated-default_wA0_p2 .paused-rechecked-default_wA0_p2 \
+    .paused-resurfaced-default_wA0_p2 .seen-scout-s3_status .seen-scout-s3_turn-ended \
     .hb-surfaced-scout-s3 .subsuper-stale-scout-s3; do
     printf 'v' > "$state/$m"
     touch -d "@$old" "$state/$m" 2>/dev/null || touch -t "$(date -r "$old" +%Y%m%d%H%M.%S)" "$state/$m"
@@ -301,15 +310,74 @@ test_orphan_marker_sweep_reaps_both_classes() {
 
   for m in .hash-default_wA0_p2 .count-default_wA0_p2 .stale-default_wA0_p2 \
     .stale-since-default_wA0_p2 .wedge-escalations-default_wA0_p2 .paused-default_wA0_p2 \
-    .herdr-escalated-default_wA0_p2 .seen-scout-s3_status .seen-scout-s3_turn-ended \
+    .herdr-escalated-default_wA0_p2 .paused-rechecked-default_wA0_p2 \
+    .paused-resurfaced-default_wA0_p2 .seen-scout-s3_status .seen-scout-s3_turn-ended \
     .hb-surfaced-scout-s3 .subsuper-stale-scout-s3; do
     [ ! -e "$state/$m" ] || fail "the sweep left the long-orphaned marker $m behind"
   done
   for m in .hash-default_wLIVE_p2 .count-default_wLIVE_p2 .stale-default_wLIVE_p2 \
+    .paused-rechecked-default_wLIVE_p2 .paused-resurfaced-default_wLIVE_p2 \
     .seen-live_status .hb-surfaced-live .hash-default_wFRESH_p2; do
     [ -e "$state/$m" ] || fail "the sweep removed $m, which a live or recent pane still needs"
   done
   pass "the orphan sweep reaps both stale marker classes and spares live and recent markers"
+}
+
+# --- purges take whole identities, never prefixes ------------------------------
+# A delivered reason names its window as a whole space-delimited token, so the
+# retirement purge must match that token exactly: retiring pane default:wA0:p2
+# or task w6 must leave a sibling's default:wA0:p20, sess:fm-w63, and w63.status
+# reasons reprintable, or an unobserved live cycle degrades to a generic FAILED.
+test_retirement_delivery_purge_spares_prefix_siblings() {
+  local dir state log
+  dir=$(make_case retired-prefix-siblings)
+  state="$dir/state"
+  log="$state/.watch-deliveries.log"
+  {
+    printf '%s\t%s\t%s\n' 41 idA 'stale: default:wA0:p2 (idle 300s, possible wedge, escalation 1)'
+    printf '%s\t%s\t%s\n' 42 idB 'stale: default:wA0:p20 (idle 300s, possible wedge, escalation 1)'
+    printf '%s\t%s\t%s\n' 43 idC 'stale: sess:fm-w63'
+    printf '%s\t%s\t%s\n' 44 idD "signal: $state/w6.status"
+    printf '%s\t%s\t%s\n' 45 idE "signal: $state/w63.status"
+  } > "$log"
+  retire_task_state "$state" w6 'default:wA0:p2' || fail "retirement sweep failed"
+  grep -F 'default:wA0:p2 ' "$log" >/dev/null && fail "the retired pane's delivered reason survived the purge"
+  grep -F "$state/w6.status" "$log" >/dev/null && fail "the retired task's signal reason survived the purge"
+  grep -F 'default:wA0:p20' "$log" >/dev/null || fail "a sibling pane's reason was purged on a prefix match"
+  grep -F 'sess:fm-w63' "$log" >/dev/null || fail "a sibling task's stale reason was purged on an id prefix match"
+  grep -F "$state/w63.status" "$log" >/dev/null || fail "a sibling task's signal reason was purged on an id prefix match"
+  pass "the delivery-ledger purge takes whole reason tokens and spares prefix siblings"
+}
+
+# A tombstoned id suppresses only tmux ':fm-<id>' shaped panes: a herdr pane
+# whose trailing segment merely spells a retired id names no task, and a home
+# that never retired that pane must deliver its wake exactly as today.
+test_drain_keeps_pane_whose_segment_spells_a_retired_id() {
+  local dir state out
+  dir=$(make_case retired-id-segment)
+  state="$dir/state"
+  out="$dir/drain.out"
+  retire_task_state "$state" p2 'test:fm-p2' || fail "retirement sweep failed"
+  append_wake "$state" stale 'default:wAY:p2' 'stale: default:wAY:p2' || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed"
+  grep -F $'\tstale\tdefault:wAY:p2\t' "$out" >/dev/null \
+    || fail "a wake for a pane this home never retired was dropped on an id-segment collision"
+  pass "a tombstoned id never suppresses a pane that merely ends in it"
+}
+
+# The watcher names a signal suppressor from the whole status filename with dots
+# translated (.seen-scout_v2_status for id scout.v2), so retirement must purge
+# that exact name instead of leaving it to rot until the age gate.
+test_retirement_purges_dotted_id_seen_markers() {
+  local dir state
+  dir=$(make_case retired-dotted-id)
+  state="$dir/state"
+  printf 'sig' > "$state/.seen-scout_v2_status"
+  printf 'sig' > "$state/.seen-scout_v2_turn-ended"
+  retire_task_state "$state" scout.v2 'test:fm-scout.v2' || fail "retirement sweep failed"
+  [ ! -e "$state/.seen-scout_v2_status" ] || fail "the dotted id's status suppressor survived retirement"
+  [ ! -e "$state/.seen-scout_v2_turn-ended" ] || fail "the dotted id's turn-end suppressor survived retirement"
+  pass "retirement purges a dotted id's seen markers under the watcher's own names"
 }
 
 # The drain runs at the top of every wake-handling turn, so it also asserts
@@ -546,6 +614,9 @@ test_atomic_double_drain
 test_drain_dedupes_obvious_duplicates
 test_drain_drops_only_tombstoned_retired_records
 test_orphan_marker_sweep_reaps_both_classes
+test_retirement_delivery_purge_spares_prefix_siblings
+test_drain_keeps_pane_whose_segment_spells_a_retired_id
+test_retirement_purges_dotted_id_seen_markers
 test_drain_asserts_watcher_liveness
 test_structural_signal_enrichment_preserves_raw_rows
 test_enrichment_caps_and_status_file_failures
