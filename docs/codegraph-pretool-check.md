@@ -120,7 +120,11 @@ Consistent with the agent-mistake threat model, the check does not chase every o
 - A target path that contains spaces and is split by tokenization may be misread; the verdict then leans toward deny, and the escape hatch remains available.
 - A command line longer than 4000 bytes is allowed without classification. Tokenizing is paid on every tool call, and a 4000-byte line already costs about 0.2s; real search commands are two orders of magnitude shorter, and the long lines agents do write - a file written through a heredoc - stop at the heredoc operator well before the cap.
 - Command bytes that cannot be tokenized at all (unbalanced quoting or substitution) are allowed.
+- A trailing comment is not stripped, so `grep foo app.log # check the log` is read as a search with extra targets and denied even though the allow matrix permits `grep foo app.log` alone.
+- A separated option argument such as `-A 5`, `-B 5`, `-C 5`, or `-m 5` is read as the pattern and shifts the real pattern into the targets, so `rg foo -A 5 app.log` and `grep -m 5 foo /var/log/syslog` are denied even though the attached `rg foo -A5 app.log` form is allowed.
+- An unexpanded `~` target is resolved as a relative path under the repository, so `grep foo ~/.bashrc` is denied even though the shell would expand it outside the repository.
 
+The last three shapes stay deny-leaning on purpose: each carve-out would add parsing surface that can itself fail open, over-denying only refuses a raw search, and the `FM_ALLOW_RAW_SEARCH=1` escape hatch named in every deny reason recovers in one step.
 Any unresolved shape allows rather than blocks, so the check never wrongly denies a non-search command.
 
 ## The escape hatch
@@ -197,7 +201,11 @@ Run:
 ```sh
 bash tests/fm-codegraph-pretool-check.test.sh
 bash tests/fm-pi-primary-types.test.sh
+FM_CODEGRAPH_LIVE_E2E=1 bash tests/fm-codegraph-guard-live-e2e.test.sh
 ```
+
+The last one is the opt-in live guard: it drives each installed harness (pi, omp) for real against a throwaway indexed tree, because only a live run can prove the harness enforces the block at tool-execution time.
+Its dated per-harness evidence lives in [`verification/runtime-backends.md`](verification/runtime-backends.md#codegraph-search-seatbelt).
 
 ## User-level guard extension and the installed checker
 
@@ -208,6 +216,8 @@ Install it by copying this file to `~/.omp/agent/extensions/fm-codegraph-guard.t
 
 The guard resolves the checker from `~/.local/bin/fm-codegraph-pretool-check.sh` first and falls back to `$FM_HOME/bin/fm-codegraph-pretool-check.sh`, per call rather than once at load, so installing or removing the checker mid-session takes effect immediately.
 `FM_CODEGRAPH_CHECKER` pins an explicit checker ahead of both, so one session can exercise a candidate script without rewriting the shared installed copy that every other agent on the machine is already running.
+When `FM_CODEGRAPH_CHECKER` is set but nothing exists at that path, the guard treats the checker as unable to run and refuses search-shaped calls inside an indexed repository with a reason naming the missing pinned path, rather than silently falling back to the shared copies.
+When it is unset or empty, resolution is unchanged: the installed path first, then the repository path.
 That order exists because of a real failure: an earlier version resolved only the repository path, so checking out a branch without the script made the spawn fail, and the guard then allowed every raw search with nothing logged.
 Install the checker to the stable path with `install -m 0755 bin/fm-codegraph-pretool-check.sh ~/.local/bin/fm-codegraph-pretool-check.sh`, and re-run that command whenever this repository's copy changes.
 The installed copy is an unversioned artifact: nothing detects it drifting behind the repository copy, so treat the re-install as part of changing the script rather than a later step.

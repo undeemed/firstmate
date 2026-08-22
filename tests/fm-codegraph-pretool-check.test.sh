@@ -18,6 +18,8 @@
 # extension's exported tool_call handler directly.
 set -u
 
+unset FM_ALLOW_RAW_SEARCH FM_CODEGRAPH_CHECKER
+
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -138,6 +140,11 @@ test_allow_env_escape_hatch() {
 test_allow_inline_escape_hatch() {
   check_cli "$INDEXED" bash 'FM_ALLOW_RAW_SEARCH=1 rg foo src/'
   expect_allow "allow with FM_ALLOW_RAW_SEARCH=1 as an inline prefix"
+}
+
+test_deny_search_behind_a_single_char_env_assignment() {
+  check_cli "$INDEXED" bash 'X=1 rg foo src/'
+  expect_deny "deny rg behind a single-character environment assignment"
 }
 
 test_allow_target_outside_repo() {
@@ -374,8 +381,10 @@ test_deny_pi_find_tool() {
 GUARD="$ROOT/extensions/fm-codegraph-guard.ts"
 GUARD_DRIVER="$TMP_ROOT/drive-guard.mjs"
 cat >"$GUARD_DRIVER" <<'MJS'
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-const [guardPath, tool, command, cwd] = process.argv.slice(2);
+const [guardPath, tool, commandArg, cwd] = process.argv.slice(2);
+const command = commandArg && commandArg.startsWith("@") ? readFileSync(commandArg.slice(1), "utf8") : commandArg;
 const mod = await import(pathToFileURL(guardPath).href);
 let handler = null;
 mod.default({
@@ -482,6 +491,14 @@ test_guard_extension_policy() {
   esac
   pass "the checker's own deny reason is forwarded verbatim"
 
+  # A command too long to pass to the checker as one argv string is allowed
+  # without classification, the same verdict the checker's own size cap gives,
+  # even though a checker that denies everything is installed.
+  local big="$TMP_ROOT/big-command.txt"
+  { printf 'grep -rn foo src/ '; head -c 200000 /dev/zero | tr '\0' 'x'; } >"$big"
+  drive_guard "$bare" "$denying" bash "@$big" "$INDEXED"
+  expect_guard_allow "an oversized command is allowed unclassified, not crashed on"
+
   # A checker that answers with an exit code the contract does not define, and a
   # checker that cannot be executed at all, are both "could not run".
   local broken="$TMP_ROOT/fm-broken"
@@ -503,6 +520,20 @@ test_guard_extension_policy() {
   }
   drive_guard_pinned "$denying/bin/fm-codegraph-pretool-check.sh" bash 'rg foo src/' "$INDEXED"
   expect_guard_block "FM_CODEGRAPH_CHECKER pins a checker ahead of the installed and repo paths"
+
+  drive_guard_pinned "$TMP_ROOT/no-such-checker.sh" bash 'rg foo src/' "$INDEXED"
+  expect_guard_block "a pinned checker that does not exist refuses instead of falling back"
+  case "$GUARD_RESULT" in
+  *"$TMP_ROOT/no-such-checker.sh"*) ;;
+  *) fail "the refusal must name the missing pinned path; got: $GUARD_RESULT" ;;
+  esac
+  pass "the missing-pin refusal names the exact pinned path"
+
+  drive_guard_pinned "$TMP_ROOT/no-such-checker.sh" bash 'git status --short' "$INDEXED"
+  expect_guard_allow "a missing pin still leaves non-search calls alone"
+
+  drive_guard_pinned "" bash 'rg foo src/' "$INDEXED"
+  expect_guard_allow "an empty pin resolves the installed and repo checkers normally"
 
   local unexecutable="$TMP_ROOT/fm-unexecutable"
   mkdir -p "$unexecutable/bin"
@@ -529,6 +560,7 @@ test_allow_raw_search_without_index
 test_allow_pipe_into_grep
 test_allow_env_escape_hatch
 test_allow_inline_escape_hatch
+test_deny_search_behind_a_single_char_env_assignment
 test_allow_target_outside_repo
 test_allow_unrelated_tool_name
 test_allow_log_target

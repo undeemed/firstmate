@@ -471,7 +471,7 @@ classify_segment() {
     tok=${TOKENS[$idx]}
     case "$tok" in
     FM_ALLOW_RAW_SEARCH=1) return 0 ;;
-    [A-Za-z_][A-Za-z0-9_]*=*)
+    [A-Za-z_]*=*)
       idx=$((idx + 1))
       continue
       ;;

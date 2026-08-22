@@ -685,3 +685,27 @@ The host-tool sequence was:
 Observed guarantee: a Desktop-owned thread can write Firstmate lifecycle files when the prompt provides an authorized absolute path, and create, send, read, and archive work at the Desktop host-tool layer.
 The missing guarantee remains a supported shell-callable bridge that lets Firstmate perform those operations against the same visible Desktop endpoint.
 App-server partial methods and raw socket experiments do not satisfy that bridge contract.
+
+## CodeGraph search seatbelt
+
+The user-level CodeGraph search guard (`extensions/fm-codegraph-guard.ts` driving `bin/fm-codegraph-pretool-check.sh`) was verified live under pi 0.84.2 on 2026-08-22.
+Every case ran a real non-interactive pi session against a throwaway Git working tree carrying a `.codegraph/` index and a `src/user.rs` containing `fn createUser() {}`, with `FM_CODEGRAPH_CHECKER` pinning the checker under test so no shared installed copy was touched.
+
+```sh
+FM_CODEGRAPH_CHECKER=<checker under test> pi -ne -e extensions/fm-codegraph-guard.ts --no-session -nc -ns -p '<one bash command>'
+```
+
+Observed per case:
+
+- `cd <indexed repo> && grep -rn createUser src/` with the per-command checker was refused, and the agent relayed the `codegraph explore "createUser"` alternative and the escape hatch.
+- A checker without per-command classification ran that same command to completion and returned `src/user.rs:1:fn createUser() {}`, which is the enforcement gap the per-command classification closes.
+- With the checker pinned to a script exiting 7, the same search was refused with a reason naming that the guard could not run, while `cat src/user.rs` ran normally, so ordinary work is not wedged.
+- `cd <indexed repo> && FM_ALLOW_RAW_SEARCH=1 grep -rn createUser src/` ran the search, so the inline escape hatch releases the call.
+- The same search inside a Git working tree with no `.codegraph/` index ran unchanged.
+
+omp loads the same guard file but has not been exercised live, so its enforcement is recorded as not yet verified rather than assumed from the pi result.
+Refresh this record after a pi or omp upgrade, or after changing the guard or checker, with the opt-in live guard:
+
+```sh
+FM_CODEGRAPH_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-codegraph-guard-live-e2e.test.sh
+```
