@@ -59,7 +59,7 @@ The check therefore splits the line into the individual commands it runs and cla
 - The line is split on `;`, `&&`, `||`, `|`, `|&`, `&`, and newlines.
 - A command downstream of a pipe is never classified; it filters another command's output rather than searching the repository.
 - Leading environment assignments and pure wrappers (`command`, `builtin`, `exec`, `time`, `nohup`, `nice`, `env`) and a leading `(`, `{`, or `!` are stripped before the command word is read.
-- A redirection (`<`, `>`, `>>`, `<&`, `>&`) ends a command's operands, and a lone file-descriptor number in front of one (`2>/dev/null`) is part of the redirection rather than a search target.
+- A redirection (`<`, `>`, `>>`, `<&`, `>&`) ends a command's operands, and a lone file-descriptor number in front of one (`2>/dev/null`) is part of the redirection rather than an operand, so it is neither a search target nor a `cd` destination.
 
 A leading `cd` moves the working directory the following commands are judged against, so `cd <indexed repo> && grep -rn foo .` is denied and `cd /tmp && grep -rn foo .` is allowed.
 Only a single literal destination is resolved, and it must exist.
