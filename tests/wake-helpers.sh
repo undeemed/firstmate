@@ -53,6 +53,21 @@ append_wake() {
   ' _ "$lib" "$kind" "$key" "$payload"
 }
 
+# retire_task_state <state> <id> [window...]: run the production retirement sweep
+# (bin/fm-retire-lib.sh) for a task whose identity records have just been
+# removed, in a subshell scoped to <state>. This is exactly what
+# bin/fm-teardown.sh calls at the moment it retires a task.
+retire_task_state() {
+  local state=$1 lib="$ROOT/bin/fm-retire-lib.sh"
+  shift
+  FM_STATE_OVERRIDE="$state" bash -c '
+    # shellcheck disable=SC1090,SC1091
+    . "$1"
+    shift
+    fm_retire_task_wake_state "$@"
+  ' _ "$lib" "$state" "$@"
+}
+
 make_case() {
   local name=$1 dir fakebin
   dir="$TMP_ROOT/$name"
