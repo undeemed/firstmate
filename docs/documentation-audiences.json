@@ -301,6 +301,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/codegraph-pretool-check.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/codex-app-backend.md",
       "audience": "operator-current"
     },
