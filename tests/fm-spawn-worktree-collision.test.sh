@@ -15,6 +15,12 @@
 # assert the second spawn refuses, names the conflicting task, and touches
 # neither the shared checkout nor its own metadata - while an ordinary spawn
 # onto a free worktree and a same-task relaunch both still succeed.
+#
+# The orca cases cover the refusal firing while destructive abort cleanup is
+# armed: the orca spawn path arms an EXIT-trap cleanup (kill the terminal,
+# remove the worktree, publish fallback metadata) before the occupied-checkout
+# check runs, and a refusal must drop that arming so the trap does to the
+# contested checkout none of what the refusal forbids.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -56,6 +62,44 @@ SH
   printf '%s\n' "$fakebin"
 }
 
+# add_orca_fake <fakebin-dir>: a fake orca CLI that reports a ready runtime,
+# hands back FM_FAKE_ORCA_WT as the created worktree (with a terminal handle),
+# and logs every call to FM_FAKE_ORCA_LOG. Its `worktree rm` REALLY deletes the
+# contested checkout, so a refusal that leaves the abort cleanup armed destroys
+# the co-tenant's checkout and fails the intact-checkout assertions below.
+add_orca_fake() {
+  local fakebin=$1
+  cat > "$fakebin/orca" <<'SH'
+#!/usr/bin/env bash
+set -u
+{
+  printf 'orca'
+  for a in "$@"; do printf '\x1f%s' "$a"; done
+  printf '\n'
+} >> "${FM_FAKE_ORCA_LOG:?}"
+case "${1:-} ${2:-}" in
+  'status --json')
+    printf '{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready"}}}\n'
+    ;;
+  'repo show'|'repo add')
+    printf '{"ok":true,"result":{"repo":{"id":"repo-1"}}}\n'
+    ;;
+  'worktree create')
+    printf '{"ok":true,"result":{"worktree":{"id":"wt-1","path":"%s"},"terminal":{"handle":"term-1"}}}\n' "${FM_FAKE_ORCA_WT:?}"
+    ;;
+  'worktree rm')
+    rm -rf "${FM_FAKE_ORCA_WT:?}"
+    printf '{"ok":true}\n'
+    ;;
+  *)
+    printf '{"ok":true}\n'
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/orca"
+}
+
 # make_collision_case <name> [treehouse-status-json]: a home, a project, and one
 # pool worktree that every spawn in the case is handed.
 make_collision_case() {
@@ -91,6 +135,29 @@ run_collision_spawn() {
     FM_FAKE_PANE_PATH="$pane" \
     PATH="$FAKEBIN_DIR:$PATH" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+}
+
+# run_orca_collision_spawn <id>: spawn <id> on the orca path, where the fake
+# orca hands back the case's shared worktree and the abort cleanup is armed
+# before the occupied-checkout check runs.
+run_orca_collision_spawn() {
+  local id=$1
+  mkdir -p "$HOME_DIR/data/$id"
+  printf 'brief for %s\n' "$id" > "$HOME_DIR/data/$id/brief.md"
+  FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    FM_SPAWN_NO_GUARD=1 \
+    FM_FAKE_ORCA_LOG="$ORCA_LOG" FM_FAKE_ORCA_WT="$WT_DIR" \
+    PATH="$FAKEBIN_DIR:$PATH" \
+    "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off --backend orca 2>&1
+}
+
+assert_no_destructive_orca_calls() {
+  ! grep -q $'\x1fworktree\x1frm' "$ORCA_LOG" \
+    || fail "the refused spawn still removed the orca worktree"
+  ! grep -q $'\x1fterminal\x1fclose' "$ORCA_LOG" \
+    || fail "the refused spawn still closed the orca terminal"
 }
 
 # The incident: a second spawn is handed the checkout a live task already
@@ -224,10 +291,81 @@ test_free_worktree_still_spawns() {
   pass "an unrelated task's record does not block a free worktree"
 }
 
+# The durable-record refusal with orca's destructive abort cleanup armed: the
+# EXIT trap must kill no terminal, remove no worktree, and publish no fallback
+# metadata for the refused task.
+test_orca_collision_refusal_runs_no_armed_cleanup() {
+  local rec live new out status
+  live=collide-orca-live-k2
+  new=collide-orca-new-m3
+  if ! command -v node > /dev/null 2>&1; then
+    echo "# skip: node is not available to drive the orca backend adapter"
+    return 0
+  fi
+  rec=$(make_collision_case orca-armed)
+  read_collision_record "$rec"
+  add_orca_fake "$FAKEBIN_DIR"
+  ORCA_LOG="$TMP_ROOT/orca-armed/orca.log"
+  : > "$ORCA_LOG"
+  fm_write_meta "$HOME_DIR/state/$live.meta" \
+    "window=firstmate:fm-$live" \
+    "worktree=$WT_DIR" \
+    "project=$PROJ_DIR" \
+    "harness=codex" \
+    "kind=ship"
+
+  out=$(run_orca_collision_spawn "$new")
+  status=$?
+  expect_code 1 "$status" "an orca spawn onto an occupied checkout should refuse"
+  assert_contains "$out" "$live" "the refusal did not name the conflicting task"
+  [ -d "$WT_DIR" ] || fail "the armed abort cleanup removed the contested checkout"
+  [ -f "$WT_DIR/README.md" ] || fail "the contested checkout lost its contents"
+  git -C "$WT_DIR" status --porcelain > /dev/null 2>&1 \
+    || fail "the contested checkout is no longer a working git worktree"
+  assert_absent "$HOME_DIR/state/$new.meta" \
+    "the refused orca spawn published metadata for an occupied checkout"
+  assert_no_destructive_orca_calls
+  pass "an orca collision refusal disarms the destructive abort cleanup"
+}
+
+# The pool-lease refusal is a separate exit path and must drop the same arming.
+test_orca_lease_refusal_runs_no_armed_cleanup() {
+  local rec id json out status
+  id=collide-orca-leased-n4
+  if ! command -v node > /dev/null 2>&1; then
+    echo "# skip: node is not available to drive the orca backend adapter"
+    return 0
+  fi
+  if ! command -v jq > /dev/null 2>&1 && ! command -v python3 > /dev/null 2>&1; then
+    echo "# skip: neither jq nor python3 is available to read pool lease state"
+    return 0
+  fi
+  rec=$(make_collision_case orca-leased)
+  read_collision_record "$rec"
+  json="[{\"name\":\"1\",\"path\":\"$WT_DIR\",\"status\":\"leased\",\"lease_id\":\"abc\",\"lease_holder\":\"other-home-mate\",\"processes\":[]}]"
+  FAKEBIN_DIR=$(make_collision_fakebin "$TMP_ROOT/orca-leased/fake2" "$json")
+  add_orca_fake "$FAKEBIN_DIR"
+  ORCA_LOG="$TMP_ROOT/orca-leased/orca.log"
+  : > "$ORCA_LOG"
+
+  out=$(run_orca_collision_spawn "$id")
+  status=$?
+  expect_code 1 "$status" "an orca spawn onto a leased worktree should refuse"
+  assert_contains "$out" "other-home-mate" "the refusal did not name the lease holder"
+  [ -d "$WT_DIR" ] || fail "the armed abort cleanup removed the leased checkout"
+  [ -f "$WT_DIR/README.md" ] || fail "the leased checkout lost its contents"
+  assert_absent "$HOME_DIR/state/$id.meta" \
+    "the refused orca spawn published metadata for a leased worktree"
+  assert_no_destructive_orca_calls
+  pass "an orca lease refusal disarms the destructive abort cleanup"
+}
+
 test_second_spawn_onto_occupied_checkout_refuses
 test_refusal_leaves_the_shared_checkout_untouched
 test_symlinked_route_to_an_occupied_checkout_refuses
 test_pool_lease_by_another_holder_refuses
+test_orca_collision_refusal_runs_no_armed_cleanup
+test_orca_lease_refusal_runs_no_armed_cleanup
 test_same_task_relaunch_is_not_a_collision
 test_free_worktree_still_spawns
 
