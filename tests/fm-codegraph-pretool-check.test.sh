@@ -260,6 +260,11 @@ test_deny_search_after_cd_with_end_of_options_marker() {
   expect_deny "deny cd -- <repo> && grep -rn foo . (the end-of-options spelling)"
 }
 
+test_deny_search_after_cd_with_an_fd_redirect() {
+  check_cli "$INDEXED" bash "cd $INDEXED 2>/dev/null && grep -rn foo ."
+  expect_deny "deny cd <repo> 2>/dev/null && grep -rn foo . (the fd digit is not a second destination)"
+}
+
 test_deny_search_after_relative_cd() {
   check_cli "$INDEXED" bash 'cd src && rg foo deep'
   expect_deny "deny a search after a relative cd that stays inside the repo"
@@ -638,6 +643,7 @@ test_allow_nested_repo_without_own_index
 test_allow_repo_under_an_indexed_ancestor
 test_deny_search_after_cd_into_the_repo
 test_deny_search_after_cd_with_end_of_options_marker
+test_deny_search_after_cd_with_an_fd_redirect
 test_deny_search_after_relative_cd
 test_allow_search_after_cd_out_of_the_repo
 test_allow_search_after_unresolvable_cd
