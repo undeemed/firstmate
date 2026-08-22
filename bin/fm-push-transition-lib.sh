@@ -15,6 +15,8 @@ FM_PUSH_TRANSITION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$FM_PUSH_TRANSITION_LIB_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-transition-lib.sh
 . "$FM_PUSH_TRANSITION_LIB_DIR/fm-transition-lib.sh"
+# shellcheck source=bin/fm-retire-lib.sh
+. "$FM_PUSH_TRANSITION_LIB_DIR/fm-retire-lib.sh"
 
 TRIAGE_LOG="$STATE/.watch-triage.log"
 TRIAGE_LOG_MAX_BYTES=${FM_WATCH_TRIAGE_LOG_MAX_BYTES:-262144}
@@ -123,6 +125,18 @@ handle_push_transition() {  # <backend> <session> <record>
   to=$(fm_transition_to_status "$record")
   [ -n "$pane_id" ] || { sleep 1; return; }
   window="$session:$pane_id"
+  # The transport prints every pane.agent_status_changed edge the session sends,
+  # not only the panes this cycle subscribed to (bin/backends/herdr-eventwait.py
+  # is deliberately policy-free), so an edge can name a pane that belongs to no
+  # task here - most sharply, the retiring pane's own last edge. Escalating it
+  # would alarm on a worker this home cannot act on. Every live task records its
+  # pane in its meta, and the subscription list is built from exactly those
+  # metas, so requiring a recording meta can never drop a live worker's edge.
+  if ! fm_retire_window_is_recorded "$STATE" "$window"; then
+    triage_log "absorbed push $to (no task records this pane): $window"
+    fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
+    return
+  fi
   task=$(window_to_task "$window" "$STATE")
   if status_is_paused "$(last_status_line "$STATE/$task.status")"; then
     triage_log "absorbed push $to (declared pause, awaiting external): $window"

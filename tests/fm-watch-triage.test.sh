@@ -1799,6 +1799,88 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
   pass "AFK changed paused panes hand off plain stale identities for daemon-owned pause triage"
 }
 
+# --- retirement is final --------------------------------------------------
+# Live incident (2026-08, two secondmate homes): the same pane alarm for a
+# worker retired hours earlier kept arriving, while the receiving home's own
+# queue read empty and its watcher only tracked live workers. Retiring a task
+# removed its identity records but left every derived record that names it - the
+# queued wake, the per-pane staleness/wedge counters, the per-file signal
+# suppressors, and the arm layer's delivered-reason ledger - so the alarm could
+# still be delivered by a home with nothing left that could clear it.
+#
+# The whole risk of the repair is silencing a LIVE worker, so this drives both
+# halves against one real watcher: after retirement nothing naming the retired
+# pane is ever delivered again, and a live worker's stale pane still surfaces and
+# still drains in the very same cycle.
+test_retired_task_alarms_stop_while_live_alarms_continue() {
+  local dir state fakebin out drain_out capture_file live_capture pid
+  local window key live_window live_key pane_hash live_hash sig marker
+  dir=$(make_case retired-replay); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  capture_file="$dir/pane.txt"; live_capture="$dir/live-pane.txt"
+  window="test:fm-w63"; live_window="test:fm-live"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  live_key=$(printf '%s' "$live_window" | tr ':/.' '___')
+  printf 'idle prompt, finished' > "$capture_file"
+  printf 'idle prompt, still nothing' > "$live_capture"
+  pane_hash=$(hash_text "idle prompt, finished")
+  live_hash=$(hash_text "idle prompt, still nothing")
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+
+  # Phase 1: the worker is live and its quiet pane surfaces a real alarm, so the
+  # watcher writes every derived record this fix has to clean up.
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/w63.meta"
+  printf 'working: implementing\n' > "$state/w63.status"
+  sig=$(seen_sig "$state/w63.status"); printf '%s' "$sig" > "$state/.seen-w63_status"
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "watcher did not surface the live worker's stale pane"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "watcher did not print the pre-retirement stale wake"
+  grep -F "stale: $window" "$state/.wake-queue" >/dev/null || fail "pre-retirement stale wake was not queued"
+  grep -F "stale: $window" "$state/.watch-deliveries.log" >/dev/null \
+    || fail "pre-retirement stale wake was not recorded in the delivery ledger"
+  [ -e "$state/.stale-$key" ] || fail "watcher did not record its per-pane stale suppressor"
+
+  # Phase 2: retire the worker exactly as bin/fm-teardown.sh does - remove the
+  # identity records, then sweep everything derived from them.
+  rm -f "$state/w63.meta" "$state/w63.status" "$state/w63.turn-ended"
+  retire_task_state "$state" w63 "$window" || fail "retirement sweep reported a failure"
+  for marker in ".hash-$key" ".count-$key" ".stale-$key" ".stale-since-$key" \
+    ".wedge-escalations-$key" ".paused-$key" ".seen-w63_status" ".hb-surfaced-w63"; do
+    [ ! -e "$state/$marker" ] || fail "retirement left the watcher marker $marker behind"
+  done
+  grep -F "$window" "$state/.wake-queue" >/dev/null && fail "retirement left a queued wake naming the retired pane"
+  grep -F "$window" "$state/.watch-deliveries.log" >/dev/null \
+    && fail "retirement left a replayable delivered reason naming the retired pane"
+
+  # Phase 3: a watcher cycle racing that teardown still queues one last alarm for
+  # the retired pane, while a genuinely live worker goes quiet on its own pane.
+  append_wake "$state" stale "$window" "stale: $window" || fail "late in-flight append failed"
+  printf 'window=%s\nkind=ship\n' "$live_window" > "$state/live.meta"
+  printf 'working: implementing\n' > "$state/live.status"
+  sig=$(seen_sig "$state/live.status"); printf '%s' "$sig" > "$state/.seen-live_status"
+  printf '%s' "$live_hash" > "$state/.hash-$live_key"
+  printf '1\n' > "$state/.count-$live_key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$live_window" FM_FAKE_TMUX_CAPTURE="$live_capture" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out.2" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "watcher did not surface the live worker after a sibling retirement"
+  grep -Fx "stale: $live_window" "$out.2" >/dev/null \
+    || fail "the live worker's stale pane was not surfaced: $(cat "$out.2")"
+  grep -F "$window" "$out.2" >/dev/null && fail "the watcher alarmed on the retired pane again"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the retirement failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$live_window" >/dev/null \
+    || fail "the live worker's stale wake was not delivered"
+  grep -F "$window" "$drain_out" >/dev/null \
+    && fail "a wake naming the retired pane was delivered after retirement: $(cat "$drain_out")"
+  pass "a retired worker's alarms stop at retirement while a live worker's alarms keep flowing"
+}
+
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
@@ -1845,3 +1927,4 @@ test_heartbeat_backstop_surfaces_unsurfaced_status
 test_beacon_stays_fresh_while_absorbing
 test_afk_present_reverts_watcher_to_one_shot
 test_afk_paused_changed_pane_hands_off_plain_stale
+test_retired_task_alarms_stop_while_live_alarms_continue

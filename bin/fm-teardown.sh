@@ -150,6 +150,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-retire-lib.sh
+. "$SCRIPT_DIR/fm-retire-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
@@ -174,6 +176,20 @@ REMOTE_PENDING_DIR_REAL=
 REMOTE_HANDOFF_LOCK=
 REMOTE_REGISTRY_LOCK=
 REMOTE_REPLY_LIFECYCLE_LOCK=
+
+# Retirement is final: once a task's identity records are gone, purge every wake
+# record, watcher/daemon marker, and delivered-reason record that still names it
+# (bin/fm-retire-lib.sh). Called AFTER the meta is removed, so no watcher can
+# still produce a record for this task while the purge runs. Best-effort by
+# design - the task is already retired at this point, and bin/fm-wake-drain.sh
+# still drops a retired task's records at delivery time - but never silent.
+retire_wake_state() {  # <state-dir> <id> [window...]
+  local state=$1 id=$2
+  shift 2
+  fm_retire_task_wake_state "$state" "$id" "$@" && return 0
+  echo "warning: leftover supervision records for retired task $id could not all be purged from $state" >&2
+  return 0
+}
 
 remote_teardown_locks_release() {
   if [ -n "$REMOTE_REPLY_LIFECYCLE_LOCK" ]; then
@@ -270,7 +286,8 @@ remote_outbox_cleanup() {
 }
 
 remote_secondmate_teardown() {
-  local remote_host remote_root remote_home kind route_host route_root route_home out rc tmp rec phase task_id
+  local remote_host remote_root remote_home kind route_host route_root route_home out rc tmp rec phase task_id target
+  target=$(fm_backend_target_of_meta "$META" 2>/dev/null || true)
   remote_host=$(fm_meta_get "$META" remote_host)
   [ -n "$remote_host" ] || return 3
   kind=$(fm_meta_get "$META" kind)
@@ -340,6 +357,7 @@ remote_secondmate_teardown() {
   mv -f -- "$tmp" "$SECONDMATE_REG"
   rm -f -- "$STATE/$ID.status" "$STATE/$ID.meta" "$STATE/$ID.turn-ended" \
     "$STATE/.$ID.open-decisions-cursor"
+  retire_wake_state "$STATE" "$ID" "$target"
   printf 'teardown %s complete (remote %s:%s)\n' "$ID" "$remote_host" "$remote_home"
   return 0
 }
@@ -2082,6 +2100,7 @@ cleanup_firstmate_home_children() {
       "$sub_state/$child_id.omp-ext.ts" \
       "$sub_state/$child_id.grok-turnend-token" "$sub_state/$child_id.kimi-turnend-token" \
       "$sub_state/$child_id.muse-session" "$sub_state/$child_id.muse-session-current"
+    retire_wake_state "$sub_state" "$child_id" "$child_t"
   done
 }
 
@@ -2355,6 +2374,7 @@ rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.muse-session" \
   "$STATE/$ID.muse-session-current" \
   "$STATE/.$ID.open-decisions-cursor"
+retire_wake_state "$STATE" "$ID" "$T" "$T_ORCA"
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
