@@ -419,7 +419,7 @@ A forced repair must use the home-scoped owner path emitted by supervision instr
 
 Guard warnings do not replace the contract.
 Queued wakes must be presented before other action and acknowledged only after handling, stale liveness must be repaired through the emitted protocol, and the worktree-tangle warning must be resolved without touching unlanded work.
-The spawn assertion and generated ship brief must both enforce that project work starts in an isolated disposable worktree, never the primary checkout.
+The spawn assertion and generated ship brief must both enforce that project work starts in an isolated disposable worktree, never the primary checkout and never a checkout another task already records; a spawn refused for that conflict is a stop-and-investigate result, and the named conflicting task's checkout must be left untouched.
 Harness-aware turn-end guards are structural backstops, not permission to omit the live cycle.
 
 ### Away-mode stub
