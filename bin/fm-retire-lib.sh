@@ -209,9 +209,18 @@ fm_retire_wake_record_is_retired() {  # <state-dir> <kind> <key>
       # A pane some task still records is live by definition.
       fm_retire_window_is_recorded "$state" "$key" && return 1
       window=$key
-      id=${key##*:}
-      id=${id#fm-}
-      fm_retire_task_id_valid "$id" || id=''
+      case "$key" in
+        *:fm-?*)
+          id=${key##*:}
+          case "$id" in
+            fm-?*)
+              id=${id#fm-}
+              fm_retire_task_id_valid "$id" || id=''
+              ;;
+            *) id='' ;;
+          esac
+          ;;
+      esac
       ;;
     signal)
       case "$key" in
@@ -282,14 +291,16 @@ fm_retire_wake_queue_purge() {  # <state-dir> <id> [window...]
 # backend reuses the pane target, mis-keys the NEXT task's escalation count and
 # declared-pause cadence.
 fm_retire_watch_markers_purge() {  # <state-dir> <id> [window...]
-  local state=$1 id=$2 win key tkey status=0
+  local state=$1 id=$2 win key tkey seen_status seen_turn status=0
   shift 2
   fm_retire_state_dir_valid "$state" || return 1
   fm_retire_task_id_valid "$id" || return 1
   tkey=$(fm_retire_state_key "$id")
+  seen_status=$(printf '%s' "$id.status" | tr '.' '_')
+  seen_turn=$(printf '%s' "$id.turn-ended" | tr '.' '_')
   rm -f -- \
-    "$state/.seen-${id}_status" \
-    "$state/.seen-${id}_turn-ended" \
+    "$state/.seen-$seen_status" \
+    "$state/.seen-$seen_turn" \
     "$state/.hb-surfaced-$tkey" \
     "$state/.subsuper-stale-$tkey" \
     "$state/.subsuper-paused-$tkey" \
@@ -334,13 +345,22 @@ fm_retire_delivery_log_purge() {  # <state-dir> <id> [window...]
     if awk -F '\t' -v id="$id" -v wins="$wins" '
       BEGIN {
         panes = split(wins, pane, "\t")
+        suffix = ":fm-" id
+        sig_status = id ".status"
+        sig_turn = id ".turn-ended"
       }
       {
-        reason = $3
-        for (i = 1; i <= panes; i++) if (pane[i] != "" && index(reason, pane[i]) > 0) next
-        if (index(reason, ":fm-" id) > 0) next
-        if (index(reason, id ".status") > 0) next
-        if (index(reason, id ".turn-ended") > 0) next
+        n = split($3, tok, " ")
+        for (t = 1; t <= n; t++) {
+          for (i = 1; i <= panes; i++) if (pane[i] != "" && tok[t] == pane[i]) next
+          if (length(tok[t]) > length(suffix) \
+            && substr(tok[t], length(tok[t]) - length(suffix) + 1) == suffix) next
+          if (tok[t] == sig_status || tok[t] == sig_turn) next
+          if (length(tok[t]) > length(sig_status) \
+            && substr(tok[t], length(tok[t]) - length(sig_status)) == "/" sig_status) next
+          if (length(tok[t]) > length(sig_turn) \
+            && substr(tok[t], length(tok[t]) - length(sig_turn)) == "/" sig_turn) next
+        }
         print
       }
     ' "$log" > "$tmp" 2>/dev/null; then
@@ -375,7 +395,7 @@ fm_retire_orphan_markers_sweep() {  # <state-dir>
   local prefixes_pane=(.hash- .count- .stale- .stale-since- .wedge-escalations- \
     .paused- .paused-rechecked- .paused-resurfaced- .herdr-escalated-)
   local prefixes_task=(.hb-surfaced- .subsuper-stale- .subsuper-paused- .subsuper-seen-status-)
-  local prefix matched
+  local prefix matched best
   fm_retire_state_dir_valid "$state" || return 1
 
   for meta in "$state"/*.meta; do
@@ -409,17 +429,16 @@ fm_retire_orphan_markers_sweep() {  # <state-dir>
     base=$(basename "$f")
     key=''
     matched=''
+    best=''
     for prefix in "${prefixes_pane[@]}"; do
       case "$base" in
-        "$prefix"*)
-          # .stale- also prefixes .stale-since-, whose own entry wins.
-          [ "$prefix" = .stale- ] && case "$base" in .stale-since-*) continue ;; esac
-          key=${base#"$prefix"}
-          matched=pane
-          break
-          ;;
+        "$prefix"*) [ "${#prefix}" -gt "${#best}" ] && best=$prefix ;;
       esac
     done
+    if [ -n "$best" ]; then
+      key=${base#"$best"}
+      matched=pane
+    fi
     if [ -z "$matched" ]; then
       for prefix in "${prefixes_task[@]}"; do
         case "$base" in
