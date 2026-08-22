@@ -80,19 +80,29 @@ const SEARCH_TOOLS = new Set([
 const SEARCH_WORD = /(^|[\s;&|(])(rg|grep|egrep|fgrep|ag|ack|fd|find|ast-grep)([\s;&|)]|$)/;
 const INLINE_ESCAPE_HATCH = /(^|\s)FM_ALLOW_RAW_SEARCH=1(\s|$)/;
 
-type CheckerResolution = { checker: string } | { unavailable: string };
+type CheckerResolution = { checker: string; remedy: string } | { unavailable: string; remedy: string };
+
+// The remedy travels with the resolution because it depends on which checker
+// source was in play: reinstalling the shared copy cannot recover a session
+// whose explicit pin is missing or broken, since the pin never falls through.
+const INSTALL_REMEDY = [
+  `Use codegraph explore instead, or reinstall the checker:`,
+  `  install -m 0755 "${REPO_CHECKER}" "${INSTALLED_CHECKER}"`,
+].join("\n");
+const PIN_REMEDY =
+  "Use codegraph explore instead, or fix the checker FM_CODEGRAPH_CHECKER points at (or unset it to fall back to the installed copy).";
 
 // The checker is resolved per call, not once at load, so installing or removing
 // it mid-session takes effect immediately.
 function resolveChecker(): CheckerResolution {
   const pinned = process.env.FM_CODEGRAPH_CHECKER;
   if (pinned) {
-    if (existsSync(pinned)) return { checker: pinned };
-    return { unavailable: `FM_CODEGRAPH_CHECKER is set but no checker exists at ${pinned}` };
+    if (existsSync(pinned)) return { checker: pinned, remedy: PIN_REMEDY };
+    return { unavailable: `FM_CODEGRAPH_CHECKER is set but no checker exists at ${pinned}`, remedy: PIN_REMEDY };
   }
-  if (existsSync(INSTALLED_CHECKER)) return { checker: INSTALLED_CHECKER };
-  if (existsSync(REPO_CHECKER)) return { checker: REPO_CHECKER };
-  return { unavailable: `no checker at ${INSTALLED_CHECKER} or ${REPO_CHECKER}` };
+  if (existsSync(INSTALLED_CHECKER)) return { checker: INSTALLED_CHECKER, remedy: INSTALL_REMEDY };
+  if (existsSync(REPO_CHECKER)) return { checker: REPO_CHECKER, remedy: INSTALL_REMEDY };
+  return { unavailable: `no checker at ${INSTALLED_CHECKER} or ${REPO_CHECKER}`, remedy: INSTALL_REMEDY };
 }
 
 // The same repo-boundary rule the checker applies: the walk stops at the first
@@ -136,7 +146,7 @@ function looksLikeSearch(tool: string, command: string): boolean {
  * one step away. Outside an indexed repository the guard has nothing to enforce,
  * so its absence changes nothing and the call proceeds.
  */
-function guardUnavailable(tool: string, command: string, cwd: string, why: string): ToolCallResult {
+function guardUnavailable(tool: string, command: string, cwd: string, why: string, remedy: string): ToolCallResult {
   if (process.env.FM_ALLOW_RAW_SEARCH === "1") return {};
   if (INLINE_ESCAPE_HATCH.test(command)) return {};
   const repo = indexedRepoRoot(cwd);
@@ -147,8 +157,7 @@ function guardUnavailable(tool: string, command: string, cwd: string, why: strin
     reason: [
       `Refused a search-shaped ${tool} call: the CodeGraph-first search guard could not run (${why}).`,
       `This repository is CodeGraph-indexed (.codegraph/ at ${repo}), so raw search is normally refused here and the guard cannot confirm this call is allowed.`,
-      `Use codegraph explore instead, or reinstall the checker:`,
-      `  install -m 0755 "${REPO_CHECKER}" "${INSTALLED_CHECKER}"`,
+      remedy,
       `To run the raw search anyway, set FM_ALLOW_RAW_SEARCH=1 (environment or inline prefix).`,
     ].join("\n"),
   };
@@ -198,7 +207,7 @@ export default function (pi: GuardExtensionApi) {
     if (Buffer.byteLength(command, "utf8") > MAX_SPAWNABLE_COMMAND_BYTES) return {};
     const resolved = resolveChecker();
     if ("unavailable" in resolved) {
-      return guardUnavailable(tool, command, cwd, resolved.unavailable);
+      return guardUnavailable(tool, command, cwd, resolved.unavailable, resolved.remedy);
     }
 
     const result = await runChecker(resolved.checker, tool, command, cwd);
@@ -206,6 +215,6 @@ export default function (pi: GuardExtensionApi) {
     if (result.code === 2) {
       return { block: true, reason: result.stderr.trim() || DEFAULT_BLOCK_REASON };
     }
-    return guardUnavailable(tool, command, cwd, result.error ?? `${resolved.checker} exited ${result.code}`);
+    return guardUnavailable(tool, command, cwd, result.error ?? `${resolved.checker} exited ${result.code}`, resolved.remedy);
   });
 }

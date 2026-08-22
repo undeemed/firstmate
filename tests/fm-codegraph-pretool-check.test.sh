@@ -454,6 +454,10 @@ test_guard_extension_policy() {
   *"fm-codegraph-pretool-check.sh"*) ;;
   *) fail "the refusal must name the missing checker; got: $GUARD_RESULT" ;;
   esac
+  case "$GUARD_RESULT" in
+  *"install -m 0755"*) ;;
+  *) fail "the no-checker refusal must keep the install remedy; got: $GUARD_RESULT" ;;
+  esac
   pass "no checker: the refusal names the missing checker and how to restore it"
 
   drive_guard "$bare" "$bare" bash 'git status --short' "$INDEXED"
@@ -528,6 +532,14 @@ test_guard_extension_policy() {
   *) fail "the refusal must name the missing pinned path; got: $GUARD_RESULT" ;;
   esac
   pass "the missing-pin refusal names the exact pinned path"
+  case "$GUARD_RESULT" in
+  *"install -m 0755"*) fail "the missing-pin refusal must not name the install remedy; got: $GUARD_RESULT" ;;
+  esac
+  case "$GUARD_RESULT" in
+  *"unset it"*) ;;
+  *) fail "the missing-pin refusal must name fixing or unsetting the pin; got: $GUARD_RESULT" ;;
+  esac
+  pass "the missing-pin refusal points at the pin, not the install command"
 
   drive_guard_pinned "$TMP_ROOT/no-such-checker.sh" bash 'git status --short' "$INDEXED"
   expect_guard_allow "a missing pin still leaves non-search calls alone"

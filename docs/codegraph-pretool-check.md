@@ -181,7 +181,7 @@ It applies when no checker exists at either resolved path, when the spawn fails,
 
 The refusal is scoped rather than blanket, because this one handler sees every tool call:
 
-- A search-shaped call inside a CodeGraph-indexed repository is refused, and the reason names what could not run and the `install` command that restores it.
+- A search-shaped call inside a CodeGraph-indexed repository is refused, and the reason names what could not run and the recovery that matches the cause: the `install` command when the shared checker paths are what failed, or fixing or unsetting `FM_CODEGRAPH_CHECKER` when an explicit pin was in play.
 - Everything else proceeds. A blanket refusal would block reading, writing, editing, and running commands, including the commands needed to reinstall the missing checker, and wedge the session with no way out.
 - Outside an indexed repository the guard has nothing to enforce, so its absence changes nothing.
 - The escape hatch still releases the call, so a genuinely needed raw search is never trapped.
