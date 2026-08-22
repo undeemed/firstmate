@@ -55,6 +55,11 @@ const REPO_CHECKER = `${FM_HOME}/bin/fm-codegraph-pretool-check.sh`;
 
 const DEFAULT_BLOCK_REASON = "denied by the CodeGraph-first PreToolUse seatbelt";
 
+// Linux caps a single argv string near 128KiB and spawn throws past it, so a
+// command too long to hand over is allowed unclassified - the same verdict the
+// checker's own MAX_COMMAND_BYTES cap gives every long command line.
+const MAX_SPAWNABLE_COMMAND_BYTES = 100000;
+
 // Structured code-search tool names across the harnesses this guard runs in:
 // pi (grep/find), Claude (Grep/Glob), and the ast_grep/ripgrep/search spellings.
 const SEARCH_TOOLS = new Set([
@@ -75,14 +80,19 @@ const SEARCH_TOOLS = new Set([
 const SEARCH_WORD = /(^|[\s;&|(])(rg|grep|egrep|fgrep|ag|ack|fd|find|ast-grep)([\s;&|)]|$)/;
 const INLINE_ESCAPE_HATCH = /(^|\s)FM_ALLOW_RAW_SEARCH=1(\s|$)/;
 
+type CheckerResolution = { checker: string } | { unavailable: string };
+
 // The checker is resolved per call, not once at load, so installing or removing
 // it mid-session takes effect immediately.
-function resolveChecker(): string | null {
+function resolveChecker(): CheckerResolution {
   const pinned = process.env.FM_CODEGRAPH_CHECKER;
-  if (pinned && existsSync(pinned)) return pinned;
-  if (existsSync(INSTALLED_CHECKER)) return INSTALLED_CHECKER;
-  if (existsSync(REPO_CHECKER)) return REPO_CHECKER;
-  return null;
+  if (pinned) {
+    if (existsSync(pinned)) return { checker: pinned };
+    return { unavailable: `FM_CODEGRAPH_CHECKER is set but no checker exists at ${pinned}` };
+  }
+  if (existsSync(INSTALLED_CHECKER)) return { checker: INSTALLED_CHECKER };
+  if (existsSync(REPO_CHECKER)) return { checker: REPO_CHECKER };
+  return { unavailable: `no checker at ${INSTALLED_CHECKER} or ${REPO_CHECKER}` };
 }
 
 // The same repo-boundary rule the checker applies: the walk stops at the first
@@ -148,15 +158,19 @@ type CheckerOutcome = { code: number; stderr: string; error?: string };
 
 function runChecker(checker: string, tool: string, command: string, cwd: string): Promise<CheckerOutcome> {
   return new Promise((resolveOutcome) => {
-    const child = spawn(checker, ["--tool", tool, "--command", command, "--cwd", cwd], {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (err: Error) => resolveOutcome({ code: -1, stderr: "", error: err.message }));
-    child.on("close", (code) => resolveOutcome({ code: code ?? -1, stderr }));
+    try {
+      const child = spawn(checker, ["--tool", tool, "--command", command, "--cwd", cwd], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", (err: Error) => resolveOutcome({ code: -1, stderr: "", error: err.message }));
+      child.on("close", (code) => resolveOutcome({ code: code ?? -1, stderr }));
+    } catch (err) {
+      resolveOutcome({ code: -1, stderr: "", error: err instanceof Error ? err.message : String(err) });
+    }
   });
 }
 
@@ -181,16 +195,17 @@ export default function (pi: GuardExtensionApi) {
     }
 
     const cwd = ctx?.cwd || process.cwd();
-    const checker = resolveChecker();
-    if (!checker) {
-      return guardUnavailable(tool, command, cwd, `no checker at ${INSTALLED_CHECKER} or ${REPO_CHECKER}`);
+    if (Buffer.byteLength(command, "utf8") > MAX_SPAWNABLE_COMMAND_BYTES) return {};
+    const resolved = resolveChecker();
+    if ("unavailable" in resolved) {
+      return guardUnavailable(tool, command, cwd, resolved.unavailable);
     }
 
-    const result = await runChecker(checker, tool, command, cwd);
+    const result = await runChecker(resolved.checker, tool, command, cwd);
     if (result.code === 0) return {};
     if (result.code === 2) {
       return { block: true, reason: result.stderr.trim() || DEFAULT_BLOCK_REASON };
     }
-    return guardUnavailable(tool, command, cwd, result.error ?? `${checker} exited ${result.code}`);
+    return guardUnavailable(tool, command, cwd, result.error ?? `${resolved.checker} exited ${result.code}`);
   });
 }

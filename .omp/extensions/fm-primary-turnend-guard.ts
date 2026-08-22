@@ -189,15 +189,19 @@ function runGuard(): Promise<{ code: number; stderr: string }> {
 function runChecker(script: string, command: string, tool?: string): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
     const args = tool ? ["--tool", tool, "--command", command] : ["--command", command];
-    const child = spawn(`${root}/bin/${script}`, args, {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", () => resolveResult({ code: 0, stderr: "" }));
-    child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
+    try {
+      const child = spawn(`${root}/bin/${script}`, args, {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", () => resolveResult({ code: 0, stderr: "" }));
+      child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
+    } catch {
+      resolveResult({ code: 0, stderr: "" });
+    }
   });
 }
 
