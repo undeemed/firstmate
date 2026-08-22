@@ -382,10 +382,30 @@ make_project() {  # <dir>
   git -C "$dir" remote add origin "file://$dir.origin.git"
 }
 
-spawn_task() {  # <id> <home> <project>
-  local id=$1 home=$2 project=$3
+# Stand-in worker for a real agent. It must outlive the whole suite, because a
+# pool worktree is freed the moment its holder exits.
+FAKE_WORKER_COMMAND="sh -c 'sleep ${FM_TEST_FAKE_WORKER_SECONDS:-3600}'"
+
+# Per-task-id worktree pool. Several fixtures below stop the entire lab session,
+# which kills every stand-in worker at once and frees each pool worktree while
+# the task that recorded it still exists; one shared pool would then hand a
+# recorded checkout to the next task, which fm-spawn refuses by design. One
+# identical project per task id keeps every fixture in its own pool while
+# preserving each id's own slot reuse across its teardown and respawn.
+task_pool_project() {  # <id>
+  local pool="$TMP_ROOT/pool-$1"
+  if [ ! -d "$pool" ]; then
+    make_project "$pool" || return 1
+  fi
+  printf '%s\n' "$pool"
+}
+
+# Each task id runs in its own pool project, built fresh by task_pool_project.
+spawn_task() {  # <id> <home>
+  local id=$1 home=$2 pool
+  pool=$(task_pool_project "$id") || return 1
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'sleep 120'" --mode no-mistakes --yolo off --backend herdr
+    "$ROOT/bin/fm-spawn.sh" "$id" "$pool" "$FAKE_WORKER_COMMAND" --mode no-mistakes --yolo off --backend herdr
 }
 
 finish_concurrent_spawn() {  # <id> <status> <stdout> <stderr>
@@ -410,7 +430,7 @@ finish_concurrent_expected_abort() {  # <id> <status> <stdout> <stderr>
 spawn_secondmate_task() {
   local id=$1 home=$2
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$home" "sh -c 'sleep 120'" --secondmate --backend herdr
+    "$ROOT/bin/fm-spawn.sh" "$id" "$home" "$FAKE_WORKER_COMMAND" --secondmate --backend herdr
 }
 
 teardown_task() {  # <id> <home>
@@ -507,7 +527,7 @@ make_project "$PROJECT_DIR"
 
 # Keep one ordinary primary task live so the durable firstmate workspace is
 # first and remains present while disposable workers are projected around it.
-spawn_task anchor "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/anchor.out" 2> "$TMP_ROOT/anchor.err" \
+spawn_task anchor "$HOME_DIR" > "$TMP_ROOT/anchor.out" 2> "$TMP_ROOT/anchor.err" \
   || fail "opted-out anchor spawn failed: $(cat "$TMP_ROOT/anchor.err")"
 ANCHOR_META="$HOME_DIR/state/anchor.meta"
 remember_meta_worktree "$ANCHOR_META" >/dev/null
@@ -520,7 +540,7 @@ FIRSTMATE_WSID=$(grep '^herdr_workspace_id=' "$ANCHOR_META" | cut -d= -f2-)
 : > "$TREEHOUSE_CALL_LOG"
 OFF_HERDR_START=$(log_line_count)
 OFF_MOVE_START=$(wc -l < "$MOVE_CALL_LOG" | tr -d '[:space:]')
-spawn_task shape "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/off.out" 2> "$TMP_ROOT/off.err" \
+spawn_task shape "$HOME_DIR" > "$TMP_ROOT/off.out" 2> "$TMP_ROOT/off.err" \
   || fail "opted-out spawn failed: $(cat "$TMP_ROOT/off.err")"
 OFF_HERDR_END=$(log_line_count)
 OFF_META="$TMP_ROOT/off.meta"
@@ -554,7 +574,7 @@ FLOOR_VERDICT=$(bash -c '
 ' "$ROOT" "$FLOOR_PROTOCOL" "$FLOOR_VERSION")
 [ "$FLOOR_VERDICT" = 0 ] || [ "$FLOOR_VERDICT" = 1 ] \
   || fail "herdr $FLOOR_VERSION protocol $FLOOR_PROTOCOL could not be classified against the presentation floor"
-spawn_task default-on "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/default-on.out" 2> "$TMP_ROOT/default-on.err" \
+spawn_task default-on "$HOME_DIR" > "$TMP_ROOT/default-on.out" 2> "$TMP_ROOT/default-on.err" \
   || fail "default-on spawn failed: $(cat "$TMP_ROOT/default-on.err")"
 DEFAULT_ON_META="$HOME_DIR/state/default-on.meta"
 remember_meta_worktree "$DEFAULT_ON_META" >/dev/null
@@ -607,7 +627,7 @@ assert_focus_is "$CAPTAIN_FOCUS" "focused secondmate fixture"
 # so no home that had already enabled the projection is turned off by the default.
 : > "$HOME_DIR/config/herdr-presentation-spaces"
 SHAPE_FOCUS_AUDIT_START=$(focus_audit_line_count)
-spawn_task shape "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/on.out" 2> "$TMP_ROOT/on.err" \
+spawn_task shape "$HOME_DIR" > "$TMP_ROOT/on.out" 2> "$TMP_ROOT/on.err" \
   || fail "projected spawn failed: $(cat "$TMP_ROOT/on.err")"
 assert_focus_is "$CAPTAIN_FOCUS" "projected spawn"
 assert_raw_presentation_mutations_preserved_since "$SHAPE_FOCUS_AUDIT_START" "projected spawn"
@@ -648,7 +668,7 @@ mkdir -p "$ACTIVE_SEEDED_CONTROL"
 printf '%s\n' requested > "$ACTIVE_SEEDED_CONTROL/stage"
 ACTIVE_SEEDED_START=$(log_line_count)
 ACTIVE_SEEDED_FOCUS_START=$(focus_audit_line_count)
-if spawn_task active-seeded "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/active-seeded.out" 2> "$TMP_ROOT/active-seeded.err"; then
+if spawn_task active-seeded "$HOME_DIR" > "$TMP_ROOT/active-seeded.out" 2> "$TMP_ROOT/active-seeded.err"; then
   fail "active seeded-tab projection should refuse the prune"
 fi
 grep -F "target is the captain's active tab" "$TMP_ROOT/active-seeded.err" >/dev/null 2>&1 \
@@ -709,7 +729,7 @@ while [ ! -e "$LOCK_CONTENTION_READY" ] && kill -0 "$LOCK_CONTENTION_OWNER_PID" 
 LOCK_CONTENTION_START=$(log_line_count)
 LOCK_CONTENTION_FOCUS_START=$(focus_audit_line_count)
 LOCK_CONTENTION_MOVE_START=$(wc -l < "$MOVE_CALL_LOG" | tr -d '[:space:]')
-if spawn_task lock-contended "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/lock-contended.out" 2> "$TMP_ROOT/lock-contended.err"; then
+if spawn_task lock-contended "$HOME_DIR" > "$TMP_ROOT/lock-contended.out" 2> "$TMP_ROOT/lock-contended.err"; then
   LOCK_CONTENTION_STATUS=0
 else
   LOCK_CONTENTION_STATUS=$?
@@ -756,9 +776,9 @@ cmp -s "$TMP_ROOT/off.meta.normalized" "$TMP_ROOT/on.meta.normalized" \
 # Their final relative order must match Herdr's actual serialized create order,
 # rather than a task-name or priority guess.
 CONCURRENT_FOCUS_AUDIT_START=$(focus_audit_line_count)
-spawn_task order-a "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/order-a.out" 2> "$TMP_ROOT/order-a.err" &
+spawn_task order-a "$HOME_DIR" > "$TMP_ROOT/order-a.out" 2> "$TMP_ROOT/order-a.err" &
 ORDER_A_PID=$!
-spawn_task order-b "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/order-b.out" 2> "$TMP_ROOT/order-b.err" &
+spawn_task order-b "$HOME_DIR" > "$TMP_ROOT/order-b.out" 2> "$TMP_ROOT/order-b.err" &
 ORDER_B_PID=$!
 if wait "$ORDER_A_PID"; then ORDER_A_STATUS=0; else ORDER_A_STATUS=$?; fi
 if wait "$ORDER_B_PID"; then ORDER_B_STATUS=0; else ORDER_B_STATUS=$?; fi
@@ -807,7 +827,7 @@ chmod +x "$FAIL_MOVER"
 FAIL_START=$(log_line_count)
 FAIL_FOCUS_AUDIT_START=$(focus_audit_line_count)
 FM_BACKEND_HERDR_WORKSPACE_MOVER="$FAIL_MOVER" \
-  spawn_task order-fail "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/order-fail.out" 2> "$TMP_ROOT/order-fail.err" \
+  spawn_task order-fail "$HOME_DIR" > "$TMP_ROOT/order-fail.out" 2> "$TMP_ROOT/order-fail.err" \
   || fail "move-failure projected spawn should still succeed: $(cat "$TMP_ROOT/order-fail.err")"
 assert_focus_is "$CAPTAIN_FOCUS" "failed presentation ordering"
 assert_raw_presentation_mutations_preserved_since "$FAIL_FOCUS_AUDIT_START" "failed presentation ordering"
@@ -833,9 +853,9 @@ pass "real Herdr lab: forced workspace.move failure leaves a successful worker i
 mkdir -p "$POST_CREATE_ABORT_CONTROL"
 ABORT_START=$(log_line_count)
 ABORT_FOCUS_START=$(focus_audit_line_count)
-spawn_task abort-a "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/abort-a.out" 2> "$TMP_ROOT/abort-a.err" &
+spawn_task abort-a "$HOME_DIR" > "$TMP_ROOT/abort-a.out" 2> "$TMP_ROOT/abort-a.err" &
 ABORT_A_PID=$!
-spawn_task abort-b "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/abort-b.out" 2> "$TMP_ROOT/abort-b.err" &
+spawn_task abort-b "$HOME_DIR" > "$TMP_ROOT/abort-b.out" 2> "$TMP_ROOT/abort-b.err" &
 ABORT_B_PID=$!
 if wait "$ABORT_A_PID"; then ABORT_A_STATUS=0; else ABORT_A_STATUS=$?; fi
 if wait "$ABORT_B_PID"; then ABORT_B_STATUS=0; else ABORT_B_STATUS=$?; fi
@@ -914,9 +934,9 @@ for ROUND in 1 2 3; do
   printf 'Projection focus wave %s fixture B.\n' "$ROUND" > "$HOME_DIR/data/focus-$ROUND-b/brief.md"
   WAVE_LOG_START=$(log_line_count)
   WAVE_FOCUS_START=$(focus_audit_line_count)
-  spawn_task "focus-$ROUND-a" "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/focus-$ROUND-a.out" 2> "$TMP_ROOT/focus-$ROUND-a.err" &
+  spawn_task "focus-$ROUND-a" "$HOME_DIR" > "$TMP_ROOT/focus-$ROUND-a.out" 2> "$TMP_ROOT/focus-$ROUND-a.err" &
   WAVE_A_PID=$!
-  spawn_task "focus-$ROUND-b" "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/focus-$ROUND-b.out" 2> "$TMP_ROOT/focus-$ROUND-b.err" &
+  spawn_task "focus-$ROUND-b" "$HOME_DIR" > "$TMP_ROOT/focus-$ROUND-b.out" 2> "$TMP_ROOT/focus-$ROUND-b.err" &
   WAVE_B_PID=$!
   if wait "$WAVE_A_PID"; then WAVE_A_STATUS=0; else WAVE_A_STATUS=$?; fi
   if wait "$WAVE_B_PID"; then WAVE_B_STATUS=0; else WAVE_B_STATUS=$?; fi
@@ -1029,17 +1049,17 @@ printf 'Secondmate B fixture 1.\n' > "$SECOND_HOME_B/data/b1/brief.md"
 printf 'Secondmate B fixture 2.\n' > "$SECOND_HOME_B/data/b2/brief.md"
 
 MULTI_FOCUS_START=$(focus_audit_line_count)
-spawn_task p1 "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/p1.out" 2> "$TMP_ROOT/p1.err" \
+spawn_task p1 "$HOME_DIR" > "$TMP_ROOT/p1.out" 2> "$TMP_ROOT/p1.err" \
   || fail "multi-home primary p1 failed: $(cat "$TMP_ROOT/p1.err")"
-spawn_task p2 "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/p2.out" 2> "$TMP_ROOT/p2.err" \
+spawn_task p2 "$HOME_DIR" > "$TMP_ROOT/p2.out" 2> "$TMP_ROOT/p2.err" \
   || fail "multi-home primary p2 failed: $(cat "$TMP_ROOT/p2.err")"
-spawn_task a1 "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/a1.out" 2> "$TMP_ROOT/a1.err" \
+spawn_task a1 "$SECOND_HOME_A" > "$TMP_ROOT/a1.out" 2> "$TMP_ROOT/a1.err" \
   || fail "multi-home secondmate A a1 failed: $(cat "$TMP_ROOT/a1.err")"
-spawn_task a2 "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/a2.out" 2> "$TMP_ROOT/a2.err" \
+spawn_task a2 "$SECOND_HOME_A" > "$TMP_ROOT/a2.out" 2> "$TMP_ROOT/a2.err" \
   || fail "multi-home secondmate A a2 failed: $(cat "$TMP_ROOT/a2.err")"
-spawn_task b1 "$SECOND_HOME_B" "$PROJECT_DIR" > "$TMP_ROOT/b1.out" 2> "$TMP_ROOT/b1.err" \
+spawn_task b1 "$SECOND_HOME_B" > "$TMP_ROOT/b1.out" 2> "$TMP_ROOT/b1.err" \
   || fail "multi-home secondmate B b1 failed: $(cat "$TMP_ROOT/b1.err")"
-spawn_task b2 "$SECOND_HOME_B" "$PROJECT_DIR" > "$TMP_ROOT/b2.out" 2> "$TMP_ROOT/b2.err" \
+spawn_task b2 "$SECOND_HOME_B" > "$TMP_ROOT/b2.out" 2> "$TMP_ROOT/b2.err" \
   || fail "multi-home secondmate B b2 failed: $(cat "$TMP_ROOT/b2.err")"
 for META_X in p1 p2 a1 a2 b1 b2; do
   case "$META_X" in
@@ -1089,11 +1109,11 @@ printf 'Cross-home concurrent primary.\n' > "$HOME_DIR/data/pcw/brief.md"
 printf 'Cross-home concurrent A.\n' > "$SECOND_HOME_A/data/acw/brief.md"
 printf 'Cross-home concurrent B.\n' > "$SECOND_HOME_B/data/bcw/brief.md"
 WAVE_CROSS_FOCUS=$(focus_audit_line_count)
-spawn_task pcw "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/pcw.out" 2> "$TMP_ROOT/pcw.err" &
+spawn_task pcw "$HOME_DIR" > "$TMP_ROOT/pcw.out" 2> "$TMP_ROOT/pcw.err" &
 PCW_PID=$!
-spawn_task acw "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/acw.out" 2> "$TMP_ROOT/acw.err" &
+spawn_task acw "$SECOND_HOME_A" > "$TMP_ROOT/acw.out" 2> "$TMP_ROOT/acw.err" &
 ACW_PID=$!
-spawn_task bcw "$SECOND_HOME_B" "$PROJECT_DIR" > "$TMP_ROOT/bcw.out" 2> "$TMP_ROOT/bcw.err" &
+spawn_task bcw "$SECOND_HOME_B" > "$TMP_ROOT/bcw.out" 2> "$TMP_ROOT/bcw.err" &
 BCW_PID=$!
 wait "$PCW_PID" || fail "cross-home concurrent primary failed: $(cat "$TMP_ROOT/pcw.err")"
 wait "$ACW_PID" || fail "cross-home concurrent A failed: $(cat "$TMP_ROOT/acw.err")"
@@ -1136,7 +1156,7 @@ while [ ! -e "$CROSS_LOCK_READY" ] && kill -0 "$CROSS_LOCK_PID" 2>/dev/null; do 
 [ -e "$CROSS_LOCK_READY" ] || fail "could not hold the cross-home session presentation lock"
 mkdir -p "$SECOND_HOME_A/data/aflat"
 printf 'Flat fallback under session lock contention.\n' > "$SECOND_HOME_A/data/aflat/brief.md"
-if spawn_task aflat "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/aflat.out" 2> "$TMP_ROOT/aflat.err"; then
+if spawn_task aflat "$SECOND_HOME_A" > "$TMP_ROOT/aflat.out" 2> "$TMP_ROOT/aflat.err"; then
   AFLAT_STATUS=0
 else
   AFLAT_STATUS=$?
@@ -1164,7 +1184,7 @@ pass "real Herdr lab: session lock contention from a secondmate home falls back 
 # Exercise both the leading fm- identity style seen in Hi Bit work and the
 # project-name identity style used by Wheelhouse work.
 for RESTART_ID in fm-hibit-resume-r1 wheelhouse-healing-r1; do
-  spawn_task "$RESTART_ID" "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/$RESTART_ID-first.out" 2> "$TMP_ROOT/$RESTART_ID-first.err" \
+  spawn_task "$RESTART_ID" "$HOME_DIR" > "$TMP_ROOT/$RESTART_ID-first.out" 2> "$TMP_ROOT/$RESTART_ID-first.err" \
     || fail "$RESTART_ID fixture's projected spawn failed: $(cat "$TMP_ROOT/$RESTART_ID-first.err")"
   RESTART_META="$HOME_DIR/state/$RESTART_ID.meta"
   OLD_RESTART_WT=$(remember_meta_worktree "$RESTART_META")
@@ -1190,7 +1210,7 @@ for RESTART_ID in fm-hibit-resume-r1 wheelhouse-healing-r1; do
     fail "$RESTART_ID restart fixture unexpectedly retained a registered agent"
   fi
   RECLAIM_FOCUS=$(focus_snapshot)
-  spawn_task "$RESTART_ID" "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/$RESTART_ID-reclaim.out" 2> "$TMP_ROOT/$RESTART_ID-reclaim.err" \
+  spawn_task "$RESTART_ID" "$HOME_DIR" > "$TMP_ROOT/$RESTART_ID-reclaim.out" 2> "$TMP_ROOT/$RESTART_ID-reclaim.err" \
     || fail "$RESTART_ID same-identity reclaim failed: $(cat "$TMP_ROOT/$RESTART_ID-reclaim.err")"
   NEW_RESTART_WT=$(remember_meta_worktree "$RESTART_META")
   NEW_RESTART_WSID=$(grep '^herdr_workspace_id=' "$RESTART_META" | cut -d= -f2-)
@@ -1215,7 +1235,7 @@ for RESTART_ID in fm-hibit-resume-r1 wheelhouse-healing-r1; do
       || fail "could not reprovision the isolated session for idempotent reclaim"
     PRIOR_RESTART_WT=$NEW_RESTART_WT
     PRIOR_RESTART_PANE=$NEW_RESTART_PANE
-    spawn_task "$RESTART_ID" "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/$RESTART_ID-idempotent.out" 2> "$TMP_ROOT/$RESTART_ID-idempotent.err" \
+    spawn_task "$RESTART_ID" "$HOME_DIR" > "$TMP_ROOT/$RESTART_ID-idempotent.out" 2> "$TMP_ROOT/$RESTART_ID-idempotent.err" \
       || fail "$RESTART_ID repeated reclaim failed: $(cat "$TMP_ROOT/$RESTART_ID-idempotent.err")"
     NEW_RESTART_WT=$(remember_meta_worktree "$RESTART_META")
     NEW_RESTART_WSID=$(grep '^herdr_workspace_id=' "$RESTART_META" | cut -d= -f2-)
@@ -1240,7 +1260,7 @@ pass "real Herdr lab: Hi Bit and Wheelhouse-style same-identity restarts reclaim
 CROSS_RESTART_ID=wheel-child-resume
 mkdir -p "$SECOND_HOME_A/data/$CROSS_RESTART_ID"
 printf 'Cross-home restart fixture.\n' > "$SECOND_HOME_A/data/$CROSS_RESTART_ID/brief.md"
-spawn_task "$CROSS_RESTART_ID" "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/cross-restart-first.out" 2> "$TMP_ROOT/cross-restart-first.err" \
+spawn_task "$CROSS_RESTART_ID" "$SECOND_HOME_A" > "$TMP_ROOT/cross-restart-first.out" 2> "$TMP_ROOT/cross-restart-first.err" \
   || fail "cross-home restart fixture failed: $(cat "$TMP_ROOT/cross-restart-first.err")"
 CROSS_RESTART_META="$SECOND_HOME_A/state/$CROSS_RESTART_ID.meta"
 CROSS_OLD_WT=$(remember_meta_worktree "$CROSS_RESTART_META")
@@ -1256,7 +1276,7 @@ PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" stop "$HERDR_LAB_SESSION" >/dev/
   || fail "could not stop the isolated session for cross-home restart"
 PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" \
   || fail "could not reprovision the isolated session for cross-home restart"
-spawn_task "$CROSS_RESTART_ID" "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/cross-restart-resume.out" 2> "$TMP_ROOT/cross-restart-resume.err" \
+spawn_task "$CROSS_RESTART_ID" "$SECOND_HOME_A" > "$TMP_ROOT/cross-restart-resume.out" 2> "$TMP_ROOT/cross-restart-resume.err" \
   || fail "cross-home same-identity reclaim failed: $(cat "$TMP_ROOT/cross-restart-resume.err")"
 CROSS_NEW_WT=$(remember_meta_worktree "$CROSS_RESTART_META")
 CROSS_NEW_WSID=$(grep '^herdr_workspace_id=' "$CROSS_RESTART_META" | cut -d= -f2-)
@@ -1278,9 +1298,9 @@ BRAVO_WAVE_ID=resume-wave-bravo
 mkdir -p "$HOME_DIR/data/$PRIMARY_WAVE_ID" "$SECOND_HOME_B/data/$BRAVO_WAVE_ID"
 printf 'Concurrent primary recovery fixture.\n' > "$HOME_DIR/data/$PRIMARY_WAVE_ID/brief.md"
 printf 'Concurrent secondmate recovery fixture.\n' > "$SECOND_HOME_B/data/$BRAVO_WAVE_ID/brief.md"
-spawn_task "$PRIMARY_WAVE_ID" "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/primary-wave-first.out" 2> "$TMP_ROOT/primary-wave-first.err" \
+spawn_task "$PRIMARY_WAVE_ID" "$HOME_DIR" > "$TMP_ROOT/primary-wave-first.out" 2> "$TMP_ROOT/primary-wave-first.err" \
   || fail "primary recovery-wave fixture failed: $(cat "$TMP_ROOT/primary-wave-first.err")"
-spawn_task "$BRAVO_WAVE_ID" "$SECOND_HOME_B" "$PROJECT_DIR" > "$TMP_ROOT/bravo-wave-first.out" 2> "$TMP_ROOT/bravo-wave-first.err" \
+spawn_task "$BRAVO_WAVE_ID" "$SECOND_HOME_B" > "$TMP_ROOT/bravo-wave-first.out" 2> "$TMP_ROOT/bravo-wave-first.err" \
   || fail "secondmate recovery-wave fixture failed: $(cat "$TMP_ROOT/bravo-wave-first.err")"
 PRIMARY_WAVE_META="$HOME_DIR/state/$PRIMARY_WAVE_ID.meta"
 BRAVO_WAVE_META="$SECOND_HOME_B/state/$BRAVO_WAVE_ID.meta"
@@ -1295,9 +1315,9 @@ PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" stop "$HERDR_LAB_SESSION" >/dev/
 PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" \
   || fail "could not reprovision the isolated session for concurrent recovery"
 CONCURRENT_RECOVERY_FOCUS=$(focus_snapshot)
-spawn_task "$PRIMARY_WAVE_ID" "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/primary-wave-resume.out" 2> "$TMP_ROOT/primary-wave-resume.err" &
+spawn_task "$PRIMARY_WAVE_ID" "$HOME_DIR" > "$TMP_ROOT/primary-wave-resume.out" 2> "$TMP_ROOT/primary-wave-resume.err" &
 PRIMARY_WAVE_PID=$!
-spawn_task "$BRAVO_WAVE_ID" "$SECOND_HOME_B" "$PROJECT_DIR" > "$TMP_ROOT/bravo-wave-resume.out" 2> "$TMP_ROOT/bravo-wave-resume.err" &
+spawn_task "$BRAVO_WAVE_ID" "$SECOND_HOME_B" > "$TMP_ROOT/bravo-wave-resume.out" 2> "$TMP_ROOT/bravo-wave-resume.err" &
 BRAVO_WAVE_PID=$!
 wait "$PRIMARY_WAVE_PID" || fail "concurrent primary recovery failed: $(cat "$TMP_ROOT/primary-wave-resume.err")"
 wait "$BRAVO_WAVE_PID" || fail "concurrent secondmate recovery failed: $(cat "$TMP_ROOT/bravo-wave-resume.err")"
@@ -1336,7 +1356,7 @@ FLAT_TAB_OUT=$(lab tab create --workspace "$(lab workspace list | jq -r '.result
 FLAT_TAB_ID=$(printf '%s' "$FLAT_TAB_OUT" | jq -r '.result.tab.tab_id // empty')
 mkdir -p "$HOME_DIR/data/post-legacy"
 printf 'Post-legacy primary child.\n' > "$HOME_DIR/data/post-legacy/brief.md"
-spawn_task post-legacy "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/post-legacy.out" 2> "$TMP_ROOT/post-legacy.err" \
+spawn_task post-legacy "$HOME_DIR" > "$TMP_ROOT/post-legacy.out" 2> "$TMP_ROOT/post-legacy.err" \
   || fail "post-legacy projected spawn failed: $(cat "$TMP_ROOT/post-legacy.err")"
 remember_meta_worktree "$HOME_DIR/state/post-legacy.meta" >/dev/null
 [ "$(lab workspace get "$LEGACY_WSID" | jq -r '.result.workspace.label')" = "firstmate/legacy-seed · p:AbCdEfGhIjKlMnOpQrStUv" ] \
@@ -1411,6 +1431,47 @@ assert_no_projection_mutation_since "$START" "live duplicate-token recovery"
 lab workspace get "$DUP1_WSID" >/dev/null 2>&1 || fail "live duplicate refusal removed the first workspace"
 lab workspace get "$DUP2_WSID" >/dev/null 2>&1 || fail "live duplicate refusal removed the second workspace"
 pass "real Herdr lab: missing, renamed, and duplicate tokens trigger zero destructive or adoptive calls, and live duplicate risk refuses launch"
+
+# The occupied-checkout refusal with the projection's destructive abort cleanup
+# armed. The herdr crewmate path arms an EXIT-trap pane cleanup before the
+# treehouse acquisition, so a collision refusal must drop that arming: closing
+# the refused task's pane would exit the treehouse subshell whose cwd is inside
+# the contested checkout, which is exactly what the refusal forbids. This
+# reproduces the incident mechanism directly: the slot is force-returned while
+# its task's meta still exists, and the next spawn in that pool is handed the
+# recorded checkout.
+printf 'on\n' > "$HOME_DIR/config/herdr-presentation-spaces"
+mkdir -p "$HOME_DIR/data/collide-live" "$HOME_DIR/data/collide-new"
+printf 'Projection collision live fixture.\n' > "$HOME_DIR/data/collide-live/brief.md"
+printf 'Projection collision new fixture.\n' > "$HOME_DIR/data/collide-new/brief.md"
+spawn_task collide-live "$HOME_DIR" > "$TMP_ROOT/collide-live.out" 2> "$TMP_ROOT/collide-live.err" \
+  || fail "collide-live spawn failed: $(cat "$TMP_ROOT/collide-live.err")"
+COLLIDE_WT=$(remember_meta_worktree "$HOME_DIR/state/collide-live.meta")
+"$REAL_TREEHOUSE" return --force "$COLLIDE_WT" > /dev/null 2>&1 \
+  || fail "could not force-return the collide-live worktree while its meta remains"
+if FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" \
+  "$ROOT/bin/fm-spawn.sh" collide-new "$TMP_ROOT/pool-collide-live" "$FAKE_WORKER_COMMAND" \
+  --mode no-mistakes --yolo off --backend herdr \
+  > "$TMP_ROOT/collide-new.out" 2> "$TMP_ROOT/collide-new.err"; then
+  fail "a spawn onto a recorded checkout did not refuse: $(cat "$TMP_ROOT/collide-new.out")"
+fi
+grep -q "collide-live" "$TMP_ROOT/collide-new.err" \
+  || fail "the collision refusal did not name collide-live: $(cat "$TMP_ROOT/collide-new.err")"
+grep -q "already records as its worktree" "$TMP_ROOT/collide-new.err" \
+  || fail "the collision refusal did not report the conflicting durable record"
+grep -q "flat layout" "$TMP_ROOT/collide-new.err" \
+  && fail "the collision fixture fell back to the flat layout, so no abort cleanup was armed"
+[ -d "$COLLIDE_WT" ] || fail "the refused spawn removed the contested checkout"
+grep -Fq "worktree=$COLLIDE_WT" "$HOME_DIR/state/collide-live.meta" \
+  || fail "the refused spawn disturbed collide-live's durable record"
+[ ! -e "$HOME_DIR/state/collide-new.meta" ] \
+  || fail "the refused spawn published metadata for a recorded checkout"
+COLLIDE_TARGET=$(sed -n 's/.*leave target \([^ ]*\) exactly as found.*/\1/p' "$TMP_ROOT/collide-new.err" | head -n 1)
+[ -n "$COLLIDE_TARGET" ] || fail "the collision refusal did not print its inspect target"
+COLLIDE_PANE=${COLLIDE_TARGET#*:}
+lab pane get "$COLLIDE_PANE" > /dev/null 2>&1 \
+  || fail "the refused spawn's projected pane did not survive; the armed abort cleanup must not fire on a collision refusal"
+pass "real Herdr lab: a collision refusal with projection abort cleanup armed closes no pane and publishes nothing"
 
 STATUS_JSON=$(lab status --json)
 HERDR_VERSION=$(printf '%s' "$STATUS_JSON" | jq -r '.client.version // "unknown"')
