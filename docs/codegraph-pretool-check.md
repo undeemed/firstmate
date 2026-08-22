@@ -64,6 +64,7 @@ The check therefore splits the line into the individual commands it runs and cla
 A leading `cd` moves the working directory the following commands are judged against, so `cd <indexed repo> && grep -rn foo .` is denied and `cd /tmp && grep -rn foo .` is allowed.
 Only a single literal destination is resolved, and it must exist.
 A `cd` whose destination would need expansion (`cd $DIR`), or that cannot be resolved, makes the rest of the line unknowable, and every remaining command on it is allowed.
+A directory-stack move (`pushd`, `popd`) is not resolved either, so it likewise makes the rest of the line unknowable, and every remaining command on it is allowed.
 
 ### Tokenization
 
