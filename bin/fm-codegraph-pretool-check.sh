@@ -59,6 +59,13 @@ REPO=""
 # heredoc operator long before the cap.
 MAX_COMMAND_BYTES=4000
 
+# The length of $1 in bytes. The cap above is a byte budget, and a plain
+# ${#...} counts locale characters, which undercounts multibyte text.
+byte_length() {
+  local LC_ALL=C
+  printf '%s' "${#1}"
+}
+
 TAB=$'\t'
 NL=$'\n'
 BACKSLASH=$'\134'
@@ -430,7 +437,7 @@ apply_cd() {
     [ "${TOKKIND[$idx]}" = w ] || break
     tok=${TOKENS[$idx]}
     case "$tok" in
-    -[LP]) ;;
+    -[LP] | --) ;;
     *)
       dest=$tok
       count=$((count + 1))
@@ -758,7 +765,7 @@ fi
 # Branch 2: a shell command line. Every command it runs is classified, not only
 # the leading one.
 [ -n "$CMD" ] || exit 0
-[ "${#CMD}" -le "$MAX_COMMAND_BYTES" ] || exit 0
+[ "$(byte_length "$CMD")" -le "$MAX_COMMAND_BYTES" ] || exit 0
 tokenize "$CMD" || exit 0
 [ "${#TOKENS[@]}" -gt 0 ] || exit 0
 classify_command_line
