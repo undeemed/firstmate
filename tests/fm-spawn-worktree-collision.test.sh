@@ -360,8 +360,75 @@ test_orca_lease_refusal_runs_no_armed_cleanup() {
   pass "an orca lease refusal disarms the destructive abort cleanup"
 }
 
+# The secondmate path knows its worktree - the home itself - before any pane
+# exists, and every pre-launch step writes into it: the ff sync, the state
+# directory, the inheritance and trace-context propagation. The record axis
+# must refuse before the first of those writes. The fixture's home sits one
+# commit behind its primary on main, so a regressed order (check after the ff
+# sync) visibly advances HEAD and fails the byte-unchanged assertions below.
+test_secondmate_collision_refuses_before_touching_the_home() {
+  local case_dir primary home active live new fakebin out status c1 before after
+  live=collide-sm-live-p5
+  new=collide-sm-new-q6
+  case_dir="$TMP_ROOT/secondmate-early"
+  primary="$case_dir/primary"
+  home="$case_dir/sm-home"
+  active="$case_dir/active-home"
+  mkdir -p "$active/data/$new" "$active/state" "$active/config" "$active/projects"
+  touch "$active/state/.last-watcher-beat"
+  printf 'brief for %s\n' "$new" > "$active/data/$new/brief.md"
+  git init -q -b main "$primary"
+  printf 'state/\ndata/\nconfig/\nprojects/\n.fm-secondmate-home\n' > "$primary/.gitignore"
+  printf 'v1\n' > "$primary/AGENTS.md"
+  mkdir -p "$primary/bin"
+  printf 'echo a\n' > "$primary/bin/tool.sh"
+  git -C "$primary" add -A
+  git -C "$primary" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm c1
+  c1=$(git -C "$primary" rev-parse HEAD)
+  printf 'v2\n' > "$primary/AGENTS.md"
+  git -C "$primary" add -A
+  git -C "$primary" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm c2
+  git clone -q "$primary" "$home" 2>/dev/null
+  git -C "$home" reset -q --hard "$c1"
+  printf '%s\n' "$new" > "$home/.fm-secondmate-home"
+  fm_write_meta "$active/state/$live.meta" \
+    "window=firstmate:fm-$live" \
+    "worktree=$home" \
+    "project=$primary" \
+    "harness=codex" \
+    "kind=ship"
+  fakebin=$(make_collision_fakebin "$case_dir/fake")
+
+  before=$( (cd "$home" && LC_ALL=C ls -A; git -C "$home" status --porcelain) )
+  out=$(FM_ROOT_OVERRIDE="$primary" FM_HOME="$active" \
+    FM_STATE_OVERRIDE="$active/state" FM_DATA_OVERRIDE="$active/data" \
+    FM_PROJECTS_OVERRIDE="$active/projects" FM_CONFIG_OVERRIDE="$active/config" \
+    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    PATH="$fakebin:$PATH" \
+    "$SPAWN" "$new" "$home" codex --secondmate 2>&1)
+  status=$?
+  after=$( (cd "$home" && LC_ALL=C ls -A; git -C "$home" status --porcelain) )
+
+  expect_code 1 "$status" "a secondmate spawn onto a home another task records should refuse"
+  assert_contains "$out" "$live" "the refusal did not name the conflicting task"
+  assert_contains "$out" "refusing to launch $new into an occupied checkout" \
+    "the spawn did not fail with the occupied-checkout refusal"
+  [ "$(git -C "$home" rev-parse HEAD)" = "$c1" ] \
+    || fail "the refused spawn fast-forwarded the contested home off $c1"
+  [ "$(git -C "$home" symbolic-ref --short HEAD)" = main ] \
+    || fail "the refused spawn moved the contested home off its branch"
+  [ ! -e "$home/state" ] || fail "the refused spawn created the home's state directory"
+  [ ! -e "$home/config" ] || fail "the refused spawn propagated config into the home"
+  [ ! -e "$home/data" ] || fail "the refused spawn copied inherited material into the home's data"
+  [ "$before" = "$after" ] || fail "the refused spawn modified the contested home"$'\n'"before:"$'\n'"$before"$'\n'"after:"$'\n'"$after"
+  assert_absent "$active/state/$new.meta" \
+    "the refused secondmate spawn still published metadata"
+  pass "a secondmate collision refuses before the first write into the home"
+}
+
 test_second_spawn_onto_occupied_checkout_refuses
 test_refusal_leaves_the_shared_checkout_untouched
+test_secondmate_collision_refuses_before_touching_the_home
 test_symlinked_route_to_an_occupied_checkout_refuses
 test_pool_lease_by_another_holder_refuses
 test_orca_collision_refusal_runs_no_armed_cleanup
