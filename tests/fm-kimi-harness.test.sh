@@ -185,7 +185,7 @@ EOF
 test_kimi_launch_then_send_is_verified() {
   local id rec out rc launch pointer brief_real meta task_tmp
   id="kimi-success-z1-$$"
-  task_tmp="/tmp/fm-$id"
+  task_tmp="$FM_TASKTMP_ROOT/fm-$id"
   KIMI_RUNTIME_TASK_TMP=$task_tmp
   rm -rf "$task_tmp"
   rec=$(make_spawn_case success "$id")
@@ -213,8 +213,14 @@ test_kimi_launch_then_send_is_verified() {
   assert_grep 'effort=high' "$meta" "kimi meta did not retain the unsupported effort axis"
   assert_grep "tasktmp=$task_tmp" "$meta" "kimi meta did not record its task temp root"
   assert_present "$task_tmp/gotmp" "kimi spawn did not create its Go temp directory"
-  assert_grep "export GOTMPDIR=$task_tmp/gotmp" "$CASE_DIR/tmux-calls.log" \
+  assert_present "$task_tmp/tmp" "kimi spawn did not create its general temp directory"
+  case "$task_tmp" in
+    /tmp/*) fail "kimi spawn rooted its task scratch on the shared temporary filesystem: $task_tmp" ;;
+  esac
+  assert_grep "export GOTMPDIR='$task_tmp/gotmp'" "$CASE_DIR/tmux-calls.log" \
     "kimi spawn did not export its Go temp directory into the pane"
+  assert_grep "export TMPDIR='$task_tmp/tmp'" "$CASE_DIR/tmux-calls.log" \
+    "kimi spawn did not export its general temp directory into the pane"
   assert_grep 'BEGIN FIRSTMATE KIMI TURN-END HOOK' "$HOME_DIR/.kimi-code/config.toml" \
     "kimi spawn did not install its guarded global hook region"
   assert_grep 'token=' "$WT_DIR/.fm-kimi-turnend" "kimi spawn did not write its token pointer"

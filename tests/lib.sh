@@ -110,6 +110,16 @@ trap fm_test_cleanup EXIT
 trap 'fm_test_cleanup; exit 130' INT
 trap 'fm_test_cleanup; exit 143' TERM
 
+# Per-task scratch roots default under the user's cache directory
+# (bin/fm-tasktmp-lib.sh). A suite that drives the real fm-spawn would otherwise
+# create task scratch in the developer's own cache, so point every such spawn at
+# a self-cleaning fixture root instead. A caller that pinned FM_TASKTMP_ROOT
+# deliberately keeps its own choice.
+if [ -z "${FM_TASKTMP_ROOT:-}" ]; then
+  FM_TASKTMP_ROOT=$(fm_test_tmproot fm-tasktmp) || return 1
+  export FM_TASKTMP_ROOT
+fi
+
 # fm_test_reap_orphans: best-effort sweep for fixture roots left behind by a
 # prior run that was killed hard enough to skip the traps above (e.g. a
 # SIGKILL timeout). Only removes directories carrying the .fm-test-fixture
