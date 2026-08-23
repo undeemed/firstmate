@@ -33,7 +33,14 @@
 #                          also carries a "demand-deep-inspection" marker so the
 #                          wake payload itself, not just repetition, forces a
 #                          closer look instead of another routine supervision
-#                          resume. Unless afk is active. A pane whose own task
+#                          resume, and from that escalation onward the SAME
+#                          unchanged pane re-surfaces on a doubling interval
+#                          (FM_WEDGE_BACKOFF_SECS, bounded by
+#                          FM_WEDGE_BACKOFF_MAX_SECS) instead of the fixed short
+#                          one, so an already-reported wedge keeps reporting
+#                          without burying every other event. Any genuine change
+#                          resets both the count and the cadence. Unless afk is
+#                          active. A pane whose own task
 #                          worktree was written during the quiet window is
 #                          deferred rather than escalated (wedge_defer_writing),
 #                          because files appearing there are liveness the pane and
@@ -398,6 +405,42 @@ EOF
 # pane/hash state resets to genuinely active (see the two rm-on-reset call sites
 # below).
 FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
+# Past that threshold the marker alone changed nothing about the watcher's own
+# cadence, so an already-reported wedge kept waking firstmate every
+# STALE_ESCALATE_SECS indefinitely (2026-08-23: eight panes at "escalation 28"
+# and still climbing, burying real events). The condition is real and must never
+# be silenced, so it re-surfaces on a growing interval instead of a fixed one -
+# the same "known, already-reported, must not rot invisibly" treatment a declared
+# pause gets from PAUSE_RESURFACE_SECS. WEDGE_BACKOFF_SECS is the unit that
+# doubles per escalation past the threshold, and WEDGE_BACKOFF_MAX_SECS bounds it
+# at the pause cadence, so a genuine wedge still reports at least hourly. The
+# backoff is derived purely from the escalation counter, so every existing reset
+# of .wedge-escalations-<key> - a changed stale hash, a busy pane, a terminal or
+# paused task - returns the cadence to STALE_ESCALATE_SECS with no extra state.
+WEDGE_BACKOFF_SECS=${FM_WEDGE_BACKOFF_SECS:-$STALE_ESCALATE_SECS}
+WEDGE_BACKOFF_MAX_SECS=${FM_WEDGE_BACKOFF_MAX_SECS:-$PAUSE_RESURFACE_SECS}
+
+# Seconds this pane must stay idle before its NEXT wedge escalation, given the
+# escalations already recorded for it. Below the demand-inspect threshold this is
+# the unchanged STALE_ESCALATE_SECS cadence; from the threshold escalation onward
+# it doubles per escalation, bounded by WEDGE_BACKOFF_MAX_SECS.
+wedge_escalate_interval() {  # <escalations-already-recorded>
+  local n=$1 steps interval
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  if [ "$n" -lt "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
+    printf '%s' "$STALE_ESCALATE_SECS"
+    return 0
+  fi
+  steps=$(( n - FM_WEDGE_DEMAND_INSPECT_COUNT + 1 ))
+  [ "$steps" -gt 20 ] && steps=20   # shift guard; the ceiling below binds long before this
+  interval=$(( WEDGE_BACKOFF_SECS * (1 << steps) ))
+  [ "$interval" -gt "$WEDGE_BACKOFF_MAX_SECS" ] && interval=$WEDGE_BACKOFF_MAX_SECS
+  # A backoff only ever slows this pane down. A smaller configured unit or
+  # ceiling clamps to the pre-threshold cadence rather than escalating a
+  # known, already-reported wedge FASTER than an unreported one.
+  [ "$interval" -lt "$STALE_ESCALATE_SECS" ] && interval=$STALE_ESCALATE_SECS
+  printf '%s' "$interval"
+}
 
 # One bounded re-surface for a pane the watcher is deliberately absorbing, so no
 # absorb can rot invisibly. <age> is how long the current absorb has held and
@@ -453,16 +496,16 @@ clear_write_tracking() {  # <window-key>
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
-# escalates once STALE_ESCALATE_SECS have elapsed. Never re-reads the crew
-# state (the costly check already ran once, at classification time). Shared by
-# both places a hash can be absorbed this way: the plain non-terminal path,
-# and the stale_is_terminal-overridden path (a captain-relevant status-log
-# line that an active run/busy pane outranked).
+# escalates once this pane's current wedge_escalate_interval has elapsed. Never
+# re-reads the crew state (the costly check already ran once, at classification
+# time). Shared by both places a hash can be absorbed this way: the plain
+# non-terminal path, and the stale_is_terminal-overridden path (a
+# captain-relevant status-log line that an active run/busy pane outranked).
 # The worktree write probe runs ONLY here, inside the at-threshold branch that is
 # about to escalate: at most one bounded walk per window per STALE_ESCALATE_SECS,
 # never per poll.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n interval next reason
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -472,16 +515,20 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       ;;
     *)
       age=$(( $(date +%s) - since ))
-      if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
+      n=$(cat "$escalation_file" 2>/dev/null || echo 0)
+      case "$n" in ''|*[!0-9]*) n=0 ;; esac
+      interval=$(wedge_escalate_interval "$n")
+      if [ "$age" -ge "$interval" ]; then
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
           wedge_defer_writing "$win" "$since_file" "$label" "$age"
           return 0
         fi
-        n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
+        n=$(( n + 1 ))
         echo "$n" > "$escalation_file"
         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
-          reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
+          next=$(wedge_escalate_interval "$n")
+          reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone; backing off, next recheck of this unchanged pane in ${next}s)"
         fi
         fm_wake_append stale "$win" "$reason" || exit 1
         rm -f "$since_file"
