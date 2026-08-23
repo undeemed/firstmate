@@ -3,6 +3,8 @@
 # then install it for the dorm lane and wake dorm-mate-d9. One-shot: exits after successful install.
 set -euo pipefail
 FM_HOME="${FM_HOME:-$HOME/Dev/firstmate}"
+# Exported once so the wake below runs the send helper with this same home.
+export FM_HOME
 INBOX="$FM_HOME/state/captain-inbox"
 SECRETS="$FM_HOME/state/secrets"
 SUPER_ENV="$FM_HOME/super.env"
@@ -25,7 +27,7 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
       printf 'DORM_GH_APP_PRIVATE_KEY="%s"\nDORM_GH_APP_PRIVATE_KEY_PATH=%s\n' "$ONELINE" "$SECRETS/dorm-gh-app.pem" >>"$SUPER_ENV.tmp"
       chmod 600 "$SUPER_ENV.tmp" && mv "$SUPER_ENV.tmp" "$SUPER_ENV"
       shred -u "$PEM" 2>/dev/null || rm -f "$PEM"
-      FM_HOME="$FM_HOME" "$FM_HOME/bin/fm-send.sh" dorm-mate-d9 --resolve-key gh-app-private-key \
+      "$FM_HOME/bin/fm-send.sh" dorm-mate-d9 --resolve-key gh-app-private-key \
         "DORM_GH_APP_PRIVATE_KEY landed in super.env (plus _PATH variant at state/secrets/dorm-gh-app.pem, mode 600). Captain pushed the dorms.dev App pem from the laptop. Unblock 10.2 off the stub and switch to the real key." || true
       echo "pem installed $(date -Is)"
       exit 0
