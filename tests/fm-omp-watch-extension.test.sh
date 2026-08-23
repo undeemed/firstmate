@@ -326,7 +326,77 @@ EOF
   pass "omp watch coalesces identical unread wakes and re-delivers after the queue is read"
 }
 
+test_omp_watch_coalesces_distinct_pending_wakes() {
+  local repo home out status
+  repo="$TMP_ROOT/coalesce-distinct-root"
+  home="$TMP_ROOT/coalesce-distinct-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_omp_watch_fixture "$repo"
+  cat >"$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+set -u
+count_file="${FM_HOME}/state/arm-count"
+count=0
+if [ -f "$count_file" ]; then
+  count=$(cat "$count_file")
+fi
+count=$((count + 1))
+printf '%s\n' "$count" >"$count_file"
+if [ "$count" -le 2 ]; then
+  printf 'signal: distinct-wake-%s\n' "$count"
+  if [ "$count" -eq 1 ]; then
+    exit 0
+  fi
+fi
+printf 'watcher: started\n'
+sleep 5
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(
+    PLUGIN="$repo/.omp/extensions/fm-primary-omp-watch.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
+      FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 \
+      node --input-type=module 2>&1 <<'EOF'
+import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const prompts = [];
+let handler = null;
+const pi = {
+  on() {},
+  registerCommand(name, options) {
+    if (name === "fm-watch-arm-omp") handler = options.handler;
+  },
+  registerTool() {},
+  sendUserMessage: async (message) => {
+    prompts.push(message);
+  },
+};
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+await handler("", { ui: { notify() {} } });
+for (let i = 0; i < 250 && prompts.length < 2; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+if (prompts.length !== 1) {
+  console.error(`expected one coalesced wake, got ${prompts.length}`);
+  process.exitCode = 1;
+}
+if (prompts[0] && !prompts[0].includes("distinct-wake-1")) {
+  console.error(`first wake was not preserved: ${prompts[0]}`);
+  process.exitCode = 1;
+}
+EOF
+  )
+  status=$?
+  expect_code 0 "$status" "omp watcher must coalesce distinct pending wakes"
+  [ -z "$out" ] || fail "omp distinct-wake coalescing test printed output: $out"
+  pass "omp watcher coalesces distinct pending wakes until agent consumption"
+}
+
+
 test_omp_watch_registers_named_tool_and_command
 test_omp_watch_reports_external_healthy_watcher
 test_omp_watch_retires_generation_on_shutdown
 test_omp_watch_coalesces_unread_duplicate_wakes
+test_omp_watch_coalesces_distinct_pending_wakes

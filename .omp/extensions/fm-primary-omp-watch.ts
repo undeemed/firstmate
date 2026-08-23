@@ -21,12 +21,13 @@
 // late callbacks cannot rearm. Stale callbacks from a prior generation are
 // no-ops against the active replacement.
 //
-// Wake coalescing (this comment is the contract; it is not stated elsewhere):
-// each generation keeps a ledger of the wakes it has delivered and not yet seen
-// consumed, so a watcher cycle that keeps reporting the same actionable line
-// queues one follow-up instead of one per cycle. The ledger is cleared when a
-// run starts consuming queued input (agent_start) and at generation activation
-// and retirement; anything it cannot answer is delivered.
+// Wake coalescing (contract stated once in docs/watcher-continuity.md):
+// each generation keeps one pending watcher wake until the run starts consuming
+// queued input, so a burst of distinct actionable lines queues one follow-up,
+// not one per cycle. The durable wake queue carries every underlying event.
+// The ledger is cleared when a run starts consuming queued input (agent_start)
+// and at generation activation and retirement; anything it cannot answer is
+// delivered.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -111,6 +112,7 @@ const armReadyTimeoutMs = positiveInteger(
 const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
 const wakeCoalesceTtlMs = positiveInteger("FM_WATCH_WAKE_COALESCE_TTL_MS", 300000);
 const wakeLedgerLimit = 64;
+const pendingWakeKey = "watcher-wake-pending";
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 
@@ -223,12 +225,12 @@ function clearWakeLedger(generation: SessionGeneration): void {
   if (generation.deliveredWakes instanceof Map) generation.deliveredWakes.clear();
 }
 
-// True when this exact wake must be delivered. False only when a byte-identical
-// copy is already queued and unconsumed. Every uncertain case delivers, because
-// losing a wake is worse than repeating one: no usable ledger, a clock that
-// moved backwards, a ledger already at its bound, or - while this session has
-// never once reported a consumption boundary - an entry older than the coalesce
-// TTL, which is the fail-open bound for a harness that never reports one.
+// True when this pending watcher wake must be delivered. False only when one is
+// already queued and unconsumed. Every uncertain case delivers, because losing a
+// wake is worse than repeating one: no usable ledger, a clock that moved
+// backwards, a ledger already at its bound, or - while this session has never
+// once reported a consumption boundary - an entry older than the coalesce TTL,
+// which is the fail-open bound for a harness that never reports one.
 function claimWakeDelivery(generation: SessionGeneration, message: string): boolean {
   const ledger = generation.deliveredWakes;
   if (!(ledger instanceof Map)) return true;
@@ -276,7 +278,7 @@ export default function (pi: OmpExtensionApi) {
 
   async function sendWake(owner: SessionGeneration, message: string): Promise<void> {
     if (!generationIsLive(owner)) return;
-    if (!claimWakeDelivery(owner, message)) return;
+    if (!claimWakeDelivery(owner, pendingWakeKey)) return;
     try {
       const content = encodeFirstmateOperationalInput(
         "watcher",
@@ -285,7 +287,7 @@ export default function (pi: OmpExtensionApi) {
       await pi.sendUserMessage(content, { deliverAs: "followUp" });
     } catch (error) {
       // Nothing was queued, so the ledger must not claim a pending copy.
-      releaseWakeDelivery(owner, message);
+      releaseWakeDelivery(owner, pendingWakeKey);
       throw error;
     }
   }
