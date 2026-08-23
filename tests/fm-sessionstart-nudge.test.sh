@@ -328,9 +328,9 @@ test_pi_startup_classifies_cli_continuations() {
     return 0
   }
   fixture="$TMP_ROOT/pi-continuation-source"
-  mkdir -p "$fixture/.pi/extensions/lib" "$fixture/bin" "$fixture/state"
+  mkdir -p "$fixture/.pi/extensions/lib" "$fixture/extensions/lib" "$fixture/bin" "$fixture/state"
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
-  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/"
+  cp "$ROOT/extensions/lib/fm-operational-input.ts" "$fixture/extensions/lib/"
   cat > "$fixture/bin/fm-sessionstart-run.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FM_HOME:?}/state/sources"
