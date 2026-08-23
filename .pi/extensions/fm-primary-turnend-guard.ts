@@ -168,23 +168,29 @@ function runGuard(): Promise<{ code: number; stderr: string }> {
 }
 
 // PreToolUse seatbelts (bin/fm-arm-pretool-check.sh, docs/arm-pretool-check.md;
-// bin/fm-cd-pretool-check.sh, docs/cd-guard.md). Both piggyback on this same
+// bin/fm-cd-pretool-check.sh, docs/cd-guard.md; bin/fm-codegraph-pretool-check.sh,
+// docs/codegraph-pretool-check.md). They all piggyback on this same
 // extension file rather than separate ones so no extra Pi -e flag is needed at
 // launch - the primary already loads this file for the turn-end guard, and
 // pi.on("tool_call", ...) can block (verified 2026-07-09 against pi 0.80.5:
 // returning {block: true} prevents the bash command from running). Each owner
 // script owns its own decision and is inert outside the real primary checkout.
-function runChecker(script: string, command: string): Promise<{ code: number; stderr: string }> {
+function runChecker(script: string, command: string, tool?: string): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const child = spawn(`${root}/bin/${script}`, ["--command", command], {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", () => resolveResult({ code: 0, stderr: "" }));
-    child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
+    const args = tool ? ["--tool", tool, "--command", command] : ["--command", command];
+    try {
+      const child = spawn(`${root}/bin/${script}`, args, {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", () => resolveResult({ code: 0, stderr: "" }));
+      child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
+    } catch {
+      resolveResult({ code: 0, stderr: "" });
+    }
   });
 }
 
@@ -220,6 +226,10 @@ export default function (pi: ExtensionAPI) {
     const cdResult = await runCdCheck(command);
     if (cdResult.code === 2) {
       return { block: true, reason: cdResult.stderr.trim() || "denied by the cd-guard PreToolUse seatbelt" };
+    }
+    const cgResult = await runChecker("fm-codegraph-pretool-check.sh", command, event.toolName);
+    if (cgResult.code === 2) {
+      return { block: true, reason: cgResult.stderr.trim() || "denied by the CodeGraph-first PreToolUse seatbelt" };
     }
     const result = await runPretoolCheck(command);
     if (result.code !== 2) return {};
