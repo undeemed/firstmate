@@ -7,6 +7,7 @@ The tracked harness adapters forward command text without classifying it.
 
 It is the third member of a family of primary-session guards that share the same cross-harness hook machinery:
 the watcher-arm PreToolUse seatbelt (`bin/fm-arm-pretool-check.sh`, `docs/arm-pretool-check.md`) and the turn-end supervision guard (`bin/fm-turnend-guard.sh`, `docs/turnend-guard.md`).
+The CodeGraph search seatbelt (`bin/fm-codegraph-pretool-check.sh`, `docs/codegraph-pretool-check.md`) is the fourth member; unlike the other three it guards every session, not only the primary.
 
 ## Purpose and boundary
 
