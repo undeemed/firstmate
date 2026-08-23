@@ -202,7 +202,7 @@ test_refusal_leaves_the_shared_checkout_untouched() {
   after=$( (cd "$WT_DIR" && LC_ALL=C ls -A; git -C "$WT_DIR" status --porcelain) )
 
   [ "$before" = "$after" ] || fail "the refused spawn modified the shared checkout"$'\n'"before:"$'\n'"$before"$'\n'"after:"$'\n'"$after"
-  assert_absent "/tmp/fm-$new" "the refused spawn created its per-task temp root"
+  assert_absent "$FM_TASKTMP_ROOT/fm-$new" "the refused spawn created its per-task temp root"
   pass "a refused spawn leaves the occupied checkout and its own scratch state untouched"
 }
 
