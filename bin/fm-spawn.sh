@@ -323,9 +323,14 @@
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
 #     __WORKTREE__  absolute path to the task worktree
 #     __CURSORBIN__ resolved, cursor-verified executable for a cursor launch
-#     __GEMINISETTINGS__ firstmate-owned per-task gemini settings file (busy-state hooks)
-#     __ROVOBIN__   resolved, rovo-verified executable for a rovo launch
-#     __AGYBIN__    resolved, agy-verified executable for an agy launch
+# Each spawn also gets one disk-backed per-task scratch root, recorded as tasktmp=
+# and exported into the pane as both TMPDIR and GOTMPDIR so a build tool the agent
+# never prefixes still writes to disk. The broad TMPDIR knob is deliberate and must
+# not be narrowed back to GOTMPDIR alone: /tmp is commonly a quota-capped tmpfs (the
+# reference host: a 12G tmpfs with a 9,608,675 KiB per-user hard cap) that a parallel
+# fleet exhausts, and the resulting EDQUOT reads as a code failure. Path resolution,
+# the FM_TASKTMP_ROOT override, and the full measurement live in
+# bin/fm-tasktmp-lib.sh; fm-teardown.sh removes the recorded root.
 # Verified per-harness turn-end hooks are installed automatically where enabled; some live outside the worktree.
 # Kimi uses one surgically installed Firstmate region in $HOME/.kimi-code/config.toml,
 # a firstmate-owned global hook and registry, and a gitignored per-task pointer.
@@ -572,6 +577,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-tasktmp-lib.sh
+. "$SCRIPT_DIR/fm-tasktmp-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -4131,17 +4138,31 @@ fm_lock_acquire_wait "$WORKTREE_CLAIM_LOCK"
 WORKTREE_CLAIM_LOCK_HELD=1
 assert_worktree_unclaimed "$WT_SOURCE" "$T"
 
-# Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
-# create GOTMPDIR, so mkdir before it is used; fm-teardown removes the whole root.
-# Nested (not a bare /tmp/fm-<id>/gotmp) so other per-task temp can live alongside
-# later, and teardown cleans one deterministic path. GOTMPDIR (not TMPDIR) is the
-# targeted knob: TMPDIR is too broad (affects every program's temp, not just Go's).
-# The root is private (0700) because its path is predictable under a shared
-# /tmp: a root that already exists is reused only as a real directory owned by
-# this user and writable by nobody else, then tightened, so no other local user
-# can plant or swap a file in it. The staged launch command lives in a sibling
-# directory namespaced by home identity, not in this shared per-id root.
-TASK_TMP="/tmp/fm-$ID"
+# Per-task temp root: a relaunch reuses the root recorded in the task's meta
+# verbatim, so the directory a task already works in is never moved or deleted
+# mid-lifecycle; a fresh spawn (or a pre-tasktmp record) resolves one through
+# bin/fm-tasktmp-lib.sh (the single owner of that path and of the FM_TASKTMP_ROOT
+# override). The general temp nests at tmp/ and Go's build temp at gotmp/.
+# Neither is created by its consumer, so mkdir both before use; fm-teardown
+# removes the whole root recorded in tasktmp=. Both are exported into the pane
+# below, because cargo, rustc, cc, ld, and sort spill to TMPDIR rather than
+# GOTMPDIR (rationale in this script's header).
+# The root itself is private (0700) because its path stays predictable and
+# FM_TASKTMP_ROOT may point it at a shared parent: a root that already exists is
+# reused only as a real directory owned by this user and writable by nobody
+# else, then tightened, so no other local user can plant or swap a file in it.
+# The staged launch command lives in a sibling directory namespaced by home
+# identity, not in this shared per-id root.
+RELAUNCH_RECORDED_TASKTMP=
+if [ "$RELAUNCH" -eq 1 ]; then
+  RELAUNCH_RECORDED_TASKTMP=$(fm_meta_get "$RELAUNCH_META" tasktmp)
+fi
+if [ -n "$RELAUNCH_RECORDED_TASKTMP" ]; then
+  TASK_TMP=$RELAUNCH_RECORDED_TASKTMP
+else
+  TASK_TMP=$(fm_tasktmp_dir "$ID") || exit 1
+fi
+mkdir -p "$(dirname "$TASK_TMP")"
 if ! (umask 077 && mkdir "$TASK_TMP") 2>/dev/null; then
   if [ -L "$TASK_TMP" ] || [ ! -d "$TASK_TMP" ] || [ ! -O "$TASK_TMP" ] ||
     [ -n "$(find "$TASK_TMP" -prune \( -perm -g=w -o -perm -o=w \) -print 2>/dev/null)" ] ||
@@ -4150,7 +4171,7 @@ if ! (umask 077 && mkdir "$TASK_TMP") 2>/dev/null; then
     exit 1
   fi
 fi
-mkdir -p "$TASK_TMP/gotmp"
+mkdir -p "$TASK_TMP/gotmp" "$TASK_TMP/tmp"
 
 # Per-harness turn-end hook where enabled: a file that touches
 # state/<id>.turn-ended when the agent finishes a turn. Worktree-resident hooks
@@ -4881,10 +4902,12 @@ spawn_record_traceparent() {
   return "$status"
 }
 
-# Export GOTMPDIR into the crewmate's pane shell so the agent and every child
-# process (go build, go test, ...) inherit it. Sent before the launch command so
-# the env is set when the agent starts; the brief sleep lets the export land.
-spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+# Export TMPDIR and GOTMPDIR into the crewmate pane shell so the agent and every
+# child process (cargo, rustc, cc, ld, sort, go build, go test, ...) inherit them
+# and keep their scratch on disk. Sent before the launch command so the env is set
+# when the agent starts; the brief sleep lets the exports land.
+spawn_send_text_line "$T" "export TMPDIR=$(shell_quote "$TASK_TMP/tmp")"
+spawn_send_text_line "$T" "export GOTMPDIR=$(shell_quote "$TASK_TMP/gotmp")"
 # Export the compact-adviser kill switch into the pane shell through the same
 # pre-launch channel, so later commands in that shell inherit it too. The launch
 # command independently establishes the value for the agent process itself.
@@ -4893,7 +4916,7 @@ if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
   spawn_send_text_line "$T" "export LAVISH_AXI_HOST=$(shell_quote "$LAVISH_AXI_HOST")"
 fi
 # Mark the pane as a task worker so bin/fm-test-run.sh can refuse to run the
-# suite in the repository's primary checkout. Ship and scout workers are the
+# suite in the repository primary checkout. Ship and scout workers are the
 # ones assigned an isolated worktree; a secondmate runs its own home instead.
 # The id reached a validated bare-slug charset above, so it carries no shell
 # syntax of its own.
