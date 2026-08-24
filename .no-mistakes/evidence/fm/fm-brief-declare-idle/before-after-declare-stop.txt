@@ -1,0 +1,10 @@
+=== Before/after: 'Declare every stop' in generated ship brief ===
+--- BASE f689932 (before) ---
+ABSENT - a finished-and-quiet worker had no declare-stop rule
+--- TARGET d590691 (after) ---
+38:   Declare every stop before you go quiet: whenever you stop making progress, append
+PRESENT in generated ship brief
+
+=== Fail-before/pass-after: new test run against BASE tree ===
+not ok - ship brief did not require a declared stop
+(same test passes on target: 'ok - fm-brief.sh: ship and scout briefs declare every stop; the charter keeps its idle contract')
