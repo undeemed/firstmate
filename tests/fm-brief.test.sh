@@ -706,6 +706,54 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
   pass "fm-brief.sh: custom pause verb renders in every scaffold"
 }
 
+# A finished-and-quiet worker must be distinguishable from a wedged one, so ship
+# and scout scaffolds require a declared stop before the pane goes still. The
+# secondmate charter is idle-by-default and deliberately keeps its own contract.
+test_ship_and_scout_declare_every_stop() {
+  local home kind id brief
+  home="$TMP_ROOT/declare-stop-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout; do
+    id="declare-stop-$kind"
+    case "$kind" in
+      ship)
+        FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
+          "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+        ;;
+      scout)
+        FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
+          "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+        ;;
+    esac
+    brief="$home/data/$id/brief.md"
+    assert_grep 'Declare every stop before you go quiet' "$brief" \
+      "$kind brief did not require a declared stop"
+    # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
+    assert_grep 'awaiting: {why}` or `blocked: {why}` first' "$brief" \
+      "$kind brief did not render both declared-stop verbs with the configured pause verb"
+    assert_grep 'Finishing a block with nothing queued' "$brief" \
+      "$kind brief did not count a finished block with nothing queued as stopping"
+    assert_grep 'say what is ready and where it sits' "$brief" \
+      "$kind brief did not require the ready-work location in a declared stop"
+    assert_grep 'A still pane with no declared state is indistinguishable from a wedge' "$brief" \
+      "$kind brief did not state the wedge-ambiguity reason"
+    assert_grep 'must spend a deep inspection to tell them apart' "$brief" \
+      "$kind brief did not state the deep-inspection cost"
+  done
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    "$ROOT/bin/fm-brief.sh" declare-stop-secondmate --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/declare-stop-secondmate/brief.md"
+  assert_no_grep 'Declare every stop before you go quiet' "$brief" \
+    "secondmate charter picked up the crewmate declared-stop requirement"
+  assert_grep 'An empty queue is a healthy resting state' "$brief" \
+    "secondmate charter lost its idle-by-default contract"
+  assert_grep 'never only in this chat' "$brief" \
+    "secondmate charter lost its marked-return-channel contract"
+  pass "fm-brief.sh: ship and scout briefs declare every stop; the charter keeps its idle contract"
+}
+
 test_scout_and_secondmate_load_decision_hold_policy() {
   local home scout charter
   home="$TMP_ROOT/decision-policy-home"
@@ -766,5 +814,6 @@ test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
+test_ship_and_scout_declare_every_stop
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
