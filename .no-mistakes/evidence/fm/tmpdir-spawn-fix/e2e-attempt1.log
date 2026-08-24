@@ -1,0 +1,28 @@
+
+### 1. start a REAL tmux server (private socket fm-e2e-2378483) with session 'firstmate'
+firstmate: 1 windows (created Mon Aug 24 05:54:06 2026)
+
+### 2. real fm-spawn of task e2e-proof-2378483 (harness claude -> stub agent) into that server
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+fm-spawn exit=3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+FAIL: fm-spawn failed

@@ -1,0 +1,29 @@
+
+### 1. start a REAL tmux server (private socket fm-e2e-2401472) with session 'firstmate'
+firstmate: 1 windows (created Mon Aug 24 05:54:39 2026)
+
+### 2. real fm-spawn of task e2e-proof-2401472 (harness claude -> stub agent) into that server
+warning: /tmp/fm-e2e-proof.aCpkdi/home/data/e2e-proof-2401472/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: treehouse get did not enter a worktree within 60s; inspect window firstmate:fm-e2e-proof-2401472
+fm-spawn exit=1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+FAIL: fm-spawn failed
