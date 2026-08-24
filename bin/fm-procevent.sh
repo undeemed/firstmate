@@ -11,6 +11,7 @@
 #   fm-procevent.sh retire <source-id>
 #   fm-procevent.sh sweep-home [--preflight]
 #   fm-procevent.sh list
+#   fm-procevent.sh alive <source-id>
 #
 # register   Record a source: its adapter, its canonical id, and the exact argv
 #            to execute. argv is stored one argument per line and executed
@@ -44,6 +45,21 @@
 #            claims, then refuse unless no registration, runner record, or owned
 #            claim remains. Used by supported Firstmate home retirement.
 # list       Show registered sources, owners, and pending captured results.
+#            Ownership is not liveness: a source can be registered, and even
+#            owned, while the process that was supposed to be blocking on it is
+#            gone.
+# alive      Prove one source is being consumed RIGHT NOW, for a caller about to
+#            promise that the far side is listening. It requires a registration,
+#            an owning claim whose runner leader is alive and identity-matched,
+#            and at least one other process still in that runner's own process
+#            group - the child it launched. Exit 0 prints `listening:`; exit 3
+#            prints `not-polling:` for a live runner whose group holds nothing
+#            else, a transient state rather than proof of a dead channel; exit 1
+#            prints `not-listening:` for everything else, including a
+#            registration nothing owns. This stays adapter-neutral: it inspects
+#            processes, never a result, so an adapter that must also prove its
+#            own far-side process (Lavish proves a live poll for the board)
+#            layers that on top.
 #
 # Terminal knowledge is adapter-owned. This runner never inspects a result and
 # never names an adapter-specific status: it calls
@@ -120,7 +136,7 @@ REG=$(fm_procevent_registry_dir "$STATE")
 MAX_OUTPUT_BYTES=${FM_PROCEVENT_MAX_OUTPUT_BYTES:-1048576}
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,104p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,120p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 
 adapter_script() { printf '%s/bin/fm-procevent-%s.sh\n' "$FM_ROOT" "$1"; }
 
@@ -822,6 +838,45 @@ cmd_sweep_home() {
   printf 'swept: attempted=%s\n' "$attempted"
 }
 
+# The one live member of a runner's process group that is not the leader itself:
+# the child the runner launched and is blocked on. Read from the process table,
+# so it is the same fact whichever home owns the claim.
+runner_group_child() {  # <leader-pid>
+  local leader=$1 child
+  case "$leader" in ''|*[!0-9]*) return 1 ;; esac
+  child=$(ps -eo pid=,pgid= 2>/dev/null \
+    | awk -v leader="$leader" '$2 == leader && $1 != leader { print $1; exit }')
+  [ -n "$child" ] || return 1
+  printf '%s\n' "$child"
+}
+
+cmd_alive() {
+  local id=${1-} state pid='' child
+  [ "$#" -eq 1 ] || usage
+  fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
+  if [ ! -f "$(source_file "$id")" ] || [ -L "$(source_file "$id")" ]; then
+    printf 'not-listening: %s (no registration)\n' "$id"
+    return 1
+  fi
+  fm_procevent_source_lock_acquire "$id" || die "cannot lock source: $id"
+  fm_procevent_claim_state_locked "$id"
+  state=$?
+  [ "$state" -eq 1 ] || pid=$FM_PROCEVENT_CLAIM_PID
+  fm_procevent_source_lock_release "$id"
+  case "$state" in
+    0) ;;
+    1) printf 'not-listening: %s (registered with no live owner)\n' "$id"; return 1 ;;
+    3) printf 'not-listening: %s (the runner leader died; its group is still up)\n' "$id"; return 1 ;;
+    4) printf 'not-listening: %s (retiring on a terminal result)\n' "$id"; return 1 ;;
+    *) printf 'not-listening: %s (ownership cannot be read)\n' "$id"; return 1 ;;
+  esac
+  if ! child=$(runner_group_child "$pid"); then
+    printf 'not-polling: %s (runner %s is alive with no source process)\n' "$id" "$pid"
+    return 3
+  fi
+  printf 'listening: %s runner=%s source-process=%s\n' "$id" "$pid" "$child"
+}
+
 cmd_list() {
   local rec id adapter owner pending
   if ! fm_procevent_any_registered "$STATE"; then
@@ -851,6 +906,7 @@ case "${1-}" in
   retire)    shift; cmd_retire "$@" ;;
   sweep-home) shift; cmd_sweep_home "$@" ;;
   list)      shift; cmd_list "$@" ;;
+  alive)     shift; cmd_alive "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;
 esac
