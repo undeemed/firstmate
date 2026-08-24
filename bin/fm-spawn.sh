@@ -2963,7 +2963,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fm_lock_release "$SPAWN_META_LOCK"
   SPAWN_META_LOCK_HELD=0
   if [ -n "${RELAUNCH_PRIOR_TASKTMP:-}" ] && [ "$RELAUNCH_PRIOR_TASKTMP" != "$TASK_TMP" ]; then
-    rm -rf "$RELAUNCH_PRIOR_TASKTMP"
+    rm -rf "$RELAUNCH_PRIOR_TASKTMP" || echo "warning: could not fully remove superseded scratch root $RELAUNCH_PRIOR_TASKTMP" >&2
   fi
 fi
 if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then

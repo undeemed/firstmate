@@ -323,6 +323,30 @@ test_relaunch_reroots_scratch_and_removes_the_superseded_root() {
   pass "fm-control relaunch: the scratch root follows the record and the superseded root is removed"
 }
 
+test_relaunch_survives_an_unremovable_superseded_root() {
+  local dir out rc legacy current
+  dir=$(new_case tasktmp-stuck rl37)
+  add_ship_task "$dir" rl37 claude
+  legacy="$dir/legacy-scratch/fm-rl37"
+  mkdir -p "$legacy/stuck"
+  printf 'pinned\n' > "$legacy/stuck/artifact"
+  chmod 500 "$legacy/stuck"
+  sed "s|^tasktmp=.*|tasktmp=$legacy|" "$dir/home/state/rl37.meta" > "$dir/home/state/rl37.meta.tmp"
+  mv "$dir/home/state/rl37.meta.tmp" "$dir/home/state/rl37.meta"
+  current="$FM_TASKTMP_ROOT/fm-rl37"
+  TASK_TMPS+=("$current")
+  out=$(run_control "$dir" rl37 relaunch --note "stuck scratch remnant"); rc=$?
+  chmod 700 "$legacy/stuck"
+  expect_code 0 "$rc" "a relaunch must survive a superseded root it cannot remove"$'\n'"$out"
+  [ -e "$legacy/stuck/artifact" ] \
+    || fail "precondition lost: the unremovable remnant should have survived the rm"
+  assert_contains "$out" "warning: could not fully remove superseded scratch root $legacy" \
+    "the surviving remnant must be reported, not silently leaked"
+  [ "$(meta_field "$dir" rl37 tasktmp)" = "$current" ] \
+    || fail "the record must still point at the re-derived scratch root, got '$(meta_field "$dir" rl37 tasktmp)'"
+  pass "fm-control relaunch: an unremovable superseded root warns and never aborts the published relaunch"
+}
+
 test_relaunch_serializes_concurrent_durable_metadata_publication() {
   local dir control_pid link_pid rc i=0 traceparent prepare ready exported release
   dir=$(new_case metadata-race rl28)
@@ -1341,6 +1365,7 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_preserves_durable_task_metadata
 test_relaunch_reroots_scratch_and_removes_the_superseded_root
+test_relaunch_survives_an_unremovable_superseded_root
 test_relaunch_serializes_concurrent_durable_metadata_publication
 test_disabled_relaunch_clears_prior_trace_context
 test_relaunch_appends_the_progress_note_to_the_instructions
