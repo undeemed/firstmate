@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Behavior tests for per-task GOTMPDIR support (fm-gotmp).
+# Behavior tests for the per-task scratch root (fm-tasktmp) and its cleanup.
 #
-# fm-spawn gives each task a temp root /tmp/fm-<id>/ with Go's build temp nested at
-# gotmp/, exports GOTMPDIR into the crewmate pane, and records tasktmp= in the task's
-# meta. fm-teardown reads tasktmp= and removes the whole root on cleanup.
+# fm-spawn gives each task one disk-backed temp root, resolved by
+# bin/fm-tasktmp-lib.sh, with the general temp nested at tmp/ and Go's build temp at
+# gotmp/. It exports TMPDIR and GOTMPDIR into the crewmate pane and records tasktmp=
+# in the task's meta. fm-teardown removes exactly the recorded root on cleanup,
+# including a root recorded before that root moved off the shared temporary
+# filesystem.
 #
-# These tests exercise fm-teardown directly as a subprocess against a fake FM_HOME/FM_ROOT
-# built so the real script resolves into it, with stub helper scripts.
-# The isolated fm-spawn subprocess in fm-kimi-harness.test.sh covers temp-root creation,
-# metadata publication, and the pane environment export.
+# These tests exercise the real fm-tasktmp-lib.sh in a subshell, and fm-teardown
+# directly as a subprocess against a fake FM_HOME/FM_ROOT built so the real script
+# resolves into it, with stub helper scripts.
+# The isolated fm-spawn subprocess in fm-kimi-harness.test.sh covers temp-root
+# creation, metadata publication, and the pane environment exports.
 set -u
 
 # This suite does not source tests/lib.sh, so exempt its teardown subprocess from
@@ -19,6 +23,7 @@ export FM_GATE_REFUSE_BYPASS=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
+TASKTMP_LIB="$ROOT/bin/fm-tasktmp-lib.sh"
 
 fail() {
   printf 'not ok - %s\n' "$1" >&2
@@ -30,10 +35,14 @@ pass() {
 }
 
 TMP_ROOT=
+LEGACY_TMPFS_FIXTURE=
 
 cleanup() {
   if [ -n "${TMP_ROOT:-}" ]; then
     rm -rf "$TMP_ROOT"
+  fi
+  if [ -n "${LEGACY_TMPFS_FIXTURE:-}" ]; then
+    rm -rf "$LEGACY_TMPFS_FIXTURE"
   fi
 }
 trap cleanup EXIT
@@ -221,6 +230,118 @@ test_teardown_skips_gracefully_when_dir_missing() {
   pass "fm-teardown skips gracefully when tasktmp= points to a nonexistent dir"
 }
 
+test_teardown_removes_legacy_tmpfs_tasktmp() {
+  # A task spawned before the scratch root moved off the shared temporary
+  # filesystem recorded tasktmp=/tmp/fm-<id>. Teardown must remove that exact
+  # recorded path instead of re-deriving today's root, or the old directory leaks.
+  local id="td-legacy-z5-$$"
+  local legacy="/tmp/fm-$id"
+  LEGACY_TMPFS_FIXTURE=$legacy
+  local current_root="$TMP_ROOT/$id-current-root"
+  mkdir -p "$legacy/gotmp" \
+    || fail "precondition: could not create the legacy temp root $legacy"
+  printf 'leftover\n' > "$legacy/gotmp/build-artifact"
+  local fake
+  fake=$(make_fake_root "$id" "$legacy")
+  FM_HOME="$fake" FM_TASKTMP_ROOT="$current_root" \
+    bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 || {
+    rm -rf "$legacy"
+    fail "teardown exited non-zero with a legacy tasktmp"
+  }
+  [ ! -e "$legacy" ] || {
+    rm -rf "$legacy"
+    fail "teardown left the legacy tasktmp dir behind ($legacy still exists)"
+  }
+  [ ! -e "$current_root/fm-$id" ] \
+    || fail "teardown re-derived a current-root path instead of using the recorded one"
+  pass "fm-teardown removes a tasktmp recorded on the shared temporary filesystem"
+}
+
+# --- fm-tasktmp-lib.sh side (real library, subshell per case) ---
+
+# tasktmp_call <env-assignments...> -- <function> [args...]
+# Runs one library call in a clean subshell so no case leaks env into the next.
+tasktmp_call() {
+  local -a envs=()
+  while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
+    envs+=("$1")
+    shift
+  done
+  shift
+  # The single-quoted body is the child shell's script, not this shell's: the
+  # positional parameters it expands are the ones passed after it.
+  # shellcheck disable=SC2016
+  env -u FM_TASKTMP_ROOT -u XDG_CACHE_HOME -u HOME "${envs[@]}" \
+    bash -c '. "$1"; shift; "$@"' _ "$TASKTMP_LIB" "$@"
+}
+
+test_root_prefers_the_operator_override() {
+  local out
+  out=$(tasktmp_call FM_TASKTMP_ROOT=/srv/scratch XDG_CACHE_HOME=/c HOME=/h -- fm_tasktmp_root) \
+    || fail "an absolute FM_TASKTMP_ROOT should resolve"
+  [ "$out" = /srv/scratch ] || fail "override not honored (got: $out)"
+  out=$(tasktmp_call FM_TASKTMP_ROOT=/srv/scratch/ -- fm_tasktmp_dir demo-id) \
+    || fail "fm_tasktmp_dir should resolve under an absolute override"
+  [ "$out" = /srv/scratch/fm-demo-id ] \
+    || fail "task dir is not <root>/fm-<id> with the trailing slash trimmed (got: $out)"
+  pass "fm_tasktmp_root prefers FM_TASKTMP_ROOT and fm_tasktmp_dir nests fm-<id> under it"
+}
+
+test_root_refuses_a_relative_override() {
+  local out rc
+  out=$(tasktmp_call FM_TASKTMP_ROOT=scratch HOME=/h -- fm_tasktmp_root 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "a relative FM_TASKTMP_ROOT should be refused (got: $out)"
+  case "$out" in
+    *"FM_TASKTMP_ROOT must be an absolute path"*) ;;
+    *) fail "the refusal did not name the absolute-path requirement (got: $out)" ;;
+  esac
+  pass "fm_tasktmp_root refuses a relative FM_TASKTMP_ROOT instead of guessing"
+}
+
+test_root_falls_back_to_the_cache_directory() {
+  local out
+  out=$(tasktmp_call XDG_CACHE_HOME=/c HOME=/h -- fm_tasktmp_root) \
+    || fail "XDG_CACHE_HOME should resolve a root"
+  [ "$out" = /c/firstmate/tasktmp ] || fail "XDG_CACHE_HOME root is wrong (got: $out)"
+  out=$(tasktmp_call HOME=/h -- fm_tasktmp_root) \
+    || fail "HOME should resolve a root when XDG_CACHE_HOME is unset"
+  [ "$out" = /h/.cache/firstmate/tasktmp ] || fail "HOME root is wrong (got: $out)"
+  case "$out" in
+    /tmp/*) fail "the default root landed on the shared temporary filesystem" ;;
+  esac
+  pass "fm_tasktmp_root falls back to XDG_CACHE_HOME then HOME, never to /tmp"
+}
+
+test_root_refuses_when_nothing_resolves() {
+  local out rc
+  out=$(tasktmp_call -- fm_tasktmp_root 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "an unresolvable root should be refused (got: $out)"
+  case "$out" in
+    *FM_TASKTMP_ROOT*) ;;
+    *) fail "the refusal did not name the override that fixes it (got: $out)" ;;
+  esac
+  out=$(tasktmp_call HOME=relative XDG_CACHE_HOME=also-relative -- fm_tasktmp_root 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "relative HOME/XDG_CACHE_HOME should not resolve a root (got: $out)"
+  pass "fm_tasktmp_root refuses rather than falling back to a temporary filesystem"
+}
+
+test_task_dir_requires_an_id() {
+  local out rc
+  out=$(tasktmp_call FM_TASKTMP_ROOT=/srv/scratch -- fm_tasktmp_dir 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "fm_tasktmp_dir should refuse an empty task id (got: $out)"
+  pass "fm_tasktmp_dir refuses without a task id"
+}
+
 test_teardown_removes_tasktmp_dir
 test_teardown_skips_gracefully_without_tasktmp
 test_teardown_skips_gracefully_when_dir_missing
+test_teardown_removes_legacy_tmpfs_tasktmp
+test_root_prefers_the_operator_override
+test_root_refuses_a_relative_override
+test_root_falls_back_to_the_cache_directory
+test_root_refuses_when_nothing_resolves
+test_task_dir_requires_an_id

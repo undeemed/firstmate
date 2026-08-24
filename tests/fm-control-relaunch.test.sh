@@ -39,10 +39,15 @@ TASK_TMPS=()
 
 relaunch_cleanup() {
   local d
+  chmod -R u+rwX "$TMP_ROOT" 2>/dev/null || true
   for d in "${TASK_TMPS[@]:-}"; do
     [ -n "$d" ] && rm -rf "$d"
   done
   rm -rf "$TMP_ROOT"
+  # Overriding lib.sh's EXIT trap makes this function responsible for the
+  # registered fixture roots too (tests/lib.sh contract), including the
+  # FM_TASKTMP_ROOT fixture lib.sh pins for this suite's fm-spawn runs.
+  fm_test_cleanup
 }
 trap relaunch_cleanup EXIT
 
@@ -295,6 +300,57 @@ test_relaunch_preserves_durable_task_metadata() {
   [ "$(meta_field "$dir" rl19 decisions_reviewed)" = 1 ] \
     || fail "the task decision state must survive relaunch"
   pass "fm-control relaunch: durable task metadata survives replacement launch publication"
+}
+
+test_relaunch_preserves_the_recorded_scratch_root() {
+  local dir out rc legacy
+  dir=$(new_case tasktmp-preserve rl36)
+  add_ship_task "$dir" rl36 claude
+  legacy="$dir/legacy-scratch/fm-rl36"
+  mkdir -p "$legacy/gotmp" "$legacy/tmp"
+  printf 'kept\n' > "$legacy/gotmp/artifact"
+  sed "s|^tasktmp=.*|tasktmp=$legacy|" "$dir/home/state/rl36.meta" > "$dir/home/state/rl36.meta.tmp"
+  mv "$dir/home/state/rl36.meta.tmp" "$dir/home/state/rl36.meta"
+  TASK_TMPS+=("$FM_TASKTMP_ROOT/fm-rl36")
+  out=$(run_control "$dir" rl36 relaunch --note "keep the recorded root"); rc=$?
+  expect_code 0 "$rc" "a relaunch with a recorded scratch root should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl36 tasktmp)" = "$legacy" ] \
+    || fail "the record must keep the recorded scratch root, got '$(meta_field "$dir" rl36 tasktmp)'"
+  [ -f "$legacy/gotmp/artifact" ] \
+    || fail "the recorded root's contents must survive a relaunch"
+  [ ! -e "$FM_TASKTMP_ROOT/fm-rl36" ] \
+    || fail "a relaunch must reuse the recorded root, not derive a new one"
+  rm -rf "$legacy"
+  out=$(run_control "$dir" rl36 relaunch --note "recreate after out-of-band removal"); rc=$?
+  expect_code 0 "$rc" "a relaunch should recreate a recorded root removed out of band"$'\n'"$out"
+  [ -d "$legacy/tmp" ] && [ -d "$legacy/gotmp" ] \
+    || fail "the recorded root's tmp/ and gotmp/ must be recreated in place"
+  [ "$(meta_field "$dir" rl36 tasktmp)" = "$legacy" ] \
+    || fail "the recreated root must keep the recorded path, got '$(meta_field "$dir" rl36 tasktmp)'"
+  pass "fm-control relaunch: the recorded scratch root is preserved, reused, and recreated in place"
+}
+
+test_relaunch_keeps_an_unwritable_remnant_in_the_recorded_root() {
+  local dir out rc legacy
+  dir=$(new_case tasktmp-stuck rl37)
+  add_ship_task "$dir" rl37 claude
+  legacy="$dir/legacy-scratch/fm-rl37"
+  mkdir -p "$legacy/stuck"
+  printf 'pinned\n' > "$legacy/stuck/artifact"
+  chmod 500 "$legacy/stuck"
+  sed "s|^tasktmp=.*|tasktmp=$legacy|" "$dir/home/state/rl37.meta" > "$dir/home/state/rl37.meta.tmp"
+  mv "$dir/home/state/rl37.meta.tmp" "$dir/home/state/rl37.meta"
+  TASK_TMPS+=("$FM_TASKTMP_ROOT/fm-rl37")
+  out=$(run_control "$dir" rl37 relaunch --note "unwritable remnant in the recorded root"); rc=$?
+  chmod 700 "$legacy/stuck"
+  expect_code 0 "$rc" "a relaunch must succeed with an unwritable remnant in the recorded root"$'\n'"$out"
+  [ -f "$legacy/stuck/artifact" ] \
+    || fail "the remnant must be preserved, never deleted"
+  [ "$(meta_field "$dir" rl37 tasktmp)" = "$legacy" ] \
+    || fail "the record must keep the recorded scratch root, got '$(meta_field "$dir" rl37 tasktmp)'"
+  [ -d "$legacy/tmp" ] && [ -d "$legacy/gotmp" ] \
+    || fail "tmp/ and gotmp/ must be created beside the remnant"
+  pass "fm-control relaunch: an unwritable remnant in the recorded root is preserved and never aborts"
 }
 
 test_relaunch_serializes_concurrent_durable_metadata_publication() {
@@ -1314,6 +1370,8 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
 
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_preserves_durable_task_metadata
+test_relaunch_preserves_the_recorded_scratch_root
+test_relaunch_keeps_an_unwritable_remnant_in_the_recorded_root
 test_relaunch_serializes_concurrent_durable_metadata_publication
 test_disabled_relaunch_clears_prior_trace_context
 test_relaunch_appends_the_progress_note_to_the_instructions

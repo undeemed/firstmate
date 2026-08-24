@@ -196,6 +196,14 @@
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
 #     __WORKTREE__  absolute path to the task worktree
 #     __CURSORBIN__ resolved, cursor-verified executable for a cursor launch
+# Each spawn also gets one disk-backed per-task scratch root, recorded as tasktmp=
+# and exported into the pane as both TMPDIR and GOTMPDIR so a build tool the agent
+# never prefixes still writes to disk. The broad TMPDIR knob is deliberate and must
+# not be narrowed back to GOTMPDIR alone: /tmp is commonly a quota-capped tmpfs (the
+# reference host: a 12G tmpfs with a 9,608,675 KiB per-user hard cap) that a parallel
+# fleet exhausts, and the resulting EDQUOT reads as a code failure. Path resolution,
+# the FM_TASKTMP_ROOT override, and the full measurement live in
+# bin/fm-tasktmp-lib.sh; fm-teardown.sh removes the recorded root.
 # Verified per-harness turn-end hooks are installed automatically where enabled; some live outside the worktree.
 # Kimi uses one surgically installed Firstmate region in $HOME/.kimi-code/config.toml,
 # a firstmate-owned global hook and registry, and a gitignored per-task pointer.
@@ -297,6 +305,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-tasktmp-lib.sh
+. "$SCRIPT_DIR/fm-tasktmp-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -2485,13 +2495,25 @@ fm_lock_acquire_wait "$WORKTREE_CLAIM_LOCK"
 WORKTREE_CLAIM_LOCK_HELD=1
 assert_worktree_unclaimed "$WT_SOURCE" "$T"
 
-# Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
-# create GOTMPDIR, so mkdir before it is used; fm-teardown removes the whole root.
-# Nested (not a bare /tmp/fm-<id>/gotmp) so other per-task temp can live alongside
-# later, and teardown cleans one deterministic path. GOTMPDIR (not TMPDIR) is the
-# targeted knob: TMPDIR is too broad (affects every program's temp, not just Go's).
-TASK_TMP="/tmp/fm-$ID"
-mkdir -p "$TASK_TMP/gotmp"
+# Per-task temp root: a relaunch reuses the root recorded in the task's meta
+# verbatim, so the directory a task already works in is never moved or deleted
+# mid-lifecycle; a fresh spawn (or a pre-tasktmp record) resolves one through
+# bin/fm-tasktmp-lib.sh (the single owner of that path and of the FM_TASKTMP_ROOT
+# override). The general temp nests at tmp/ and Go's build temp at gotmp/.
+# Neither is created by its consumer, so mkdir both before use; fm-teardown
+# removes the whole root recorded in tasktmp=. Both are exported into the pane
+# below, because cargo, rustc, cc, ld, and sort spill to TMPDIR rather than
+# GOTMPDIR (rationale in this script's header).
+RELAUNCH_RECORDED_TASKTMP=
+if [ "$RELAUNCH" -eq 1 ]; then
+  RELAUNCH_RECORDED_TASKTMP=$(fm_meta_get "$RELAUNCH_META" tasktmp)
+fi
+if [ -n "$RELAUNCH_RECORDED_TASKTMP" ]; then
+  TASK_TMP=$RELAUNCH_RECORDED_TASKTMP
+else
+  TASK_TMP=$(fm_tasktmp_dir "$ID") || exit 1
+fi
+mkdir -p "$TASK_TMP/gotmp" "$TASK_TMP/tmp"
 
 # Per-harness turn-end hook where enabled: a file that touches
 # state/<id>.turn-ended when the agent finishes a turn. Worktree-resident hooks
@@ -3052,10 +3074,12 @@ spawn_record_traceparent() {
 }
 
 LAUNCH="unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; $LAUNCH"
-# Export GOTMPDIR into the crewmate's pane shell so the agent and every child
-# process (go build, go test, ...) inherit it. Sent before the launch command so
-# the env is set when the agent starts; the brief sleep lets the export land.
-spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+# Export TMPDIR and GOTMPDIR into the crewmate's pane shell so the agent and every
+# child process (cargo, rustc, cc, ld, sort, go build, go test, ...) inherit them
+# and keep their scratch on disk. Sent before the launch command so the env is set
+# when the agent starts; the brief sleep lets the exports land.
+spawn_send_text_line "$T" "export TMPDIR=$(shell_quote "$TASK_TMP/tmp")"
+spawn_send_text_line "$T" "export GOTMPDIR=$(shell_quote "$TASK_TMP/gotmp")"
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.

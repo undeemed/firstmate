@@ -24,6 +24,12 @@ BASE_PATH=${FM_TEST_BASE_PATH:-$PYTHON_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin}
 cleanup_kimi_harness() {
   [ -z "$KIMI_RUNTIME_TASK_TMP" ] || rm -rf "$KIMI_RUNTIME_TASK_TMP"
   rm -rf "$TMP_ROOT"
+  # Overriding lib.sh's EXIT trap makes this function responsible for the
+  # registered fixture roots too (tests/lib.sh contract), including the
+  # FM_TASKTMP_ROOT fixture lib.sh pins for this suite's real fm-spawn runs;
+  # without this call every run leaks that root until the orphan reaper's
+  # age threshold passes.
+  fm_test_cleanup
 }
 trap cleanup_kimi_harness EXIT
 
@@ -185,7 +191,7 @@ EOF
 test_kimi_launch_then_send_is_verified() {
   local id rec out rc launch pointer brief_real meta task_tmp
   id="kimi-success-z1-$$"
-  task_tmp="/tmp/fm-$id"
+  task_tmp="$FM_TASKTMP_ROOT/fm-$id"
   KIMI_RUNTIME_TASK_TMP=$task_tmp
   rm -rf "$task_tmp"
   rec=$(make_spawn_case success "$id")
@@ -213,8 +219,19 @@ test_kimi_launch_then_send_is_verified() {
   assert_grep 'effort=high' "$meta" "kimi meta did not retain the unsupported effort axis"
   assert_grep "tasktmp=$task_tmp" "$meta" "kimi meta did not record its task temp root"
   assert_present "$task_tmp/gotmp" "kimi spawn did not create its Go temp directory"
-  assert_grep "export GOTMPDIR=$task_tmp/gotmp" "$CASE_DIR/tmux-calls.log" \
+  assert_present "$task_tmp/tmp" "kimi spawn did not create its general temp directory"
+  # Regression guard for the pre-fix behavior, which hardcoded the scratch root
+  # at /tmp/fm-<id> on the shared temporary filesystem. Assert that exact legacy
+  # path instead of matching $task_tmp against /tmp/*: tests/lib.sh pins the
+  # FM_TASKTMP_ROOT fixture under ${TMPDIR:-/tmp}, so on any host without an
+  # off-tmpfs ambient TMPDIR the fixture root itself lives under /tmp and a
+  # pattern match would fail even though fm-spawn honored the override.
+  [ ! -e "/tmp/fm-$id" ] \
+    || fail "kimi spawn recreated the legacy shared-tmpfs scratch root: /tmp/fm-$id"
+  assert_grep "export GOTMPDIR='$task_tmp/gotmp'" "$CASE_DIR/tmux-calls.log" \
     "kimi spawn did not export its Go temp directory into the pane"
+  assert_grep "export TMPDIR='$task_tmp/tmp'" "$CASE_DIR/tmux-calls.log" \
+    "kimi spawn did not export its general temp directory into the pane"
   assert_grep 'BEGIN FIRSTMATE KIMI TURN-END HOOK' "$HOME_DIR/.kimi-code/config.toml" \
     "kimi spawn did not install its guarded global hook region"
   assert_grep 'token=' "$WT_DIR/.fm-kimi-turnend" "kimi spawn did not write its token pointer"
