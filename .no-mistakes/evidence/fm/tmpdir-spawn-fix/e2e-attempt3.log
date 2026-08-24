@@ -1,0 +1,61 @@
+
+### 1. start a REAL tmux server (private socket fm-e2e-2506526) with session 'firstmate'
+firstmate: 1 windows (created Mon Aug 24 05:56:56 2026)
+
+### 2. real fm-spawn of task e2e-proof-2506526 (harness claude -> stub agent) into that server
+warning: /tmp/fm-e2e-proof.D8Gs9c/home/data/e2e-proof-2506526/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned e2e-proof-2506526 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-e2e-proof-2506526 worktree=/tmp/fm-e2e-proof.D8Gs9c/wt
+fm-spawn exit=0
+
+### 3. task meta records the disk-backed root (tasktmp= line)
+tasktmp=/tmp/fm-e2e-proof.D8Gs9c/tasktmp-root/fm-e2e-proof-2506526
+
+### 4. the launched agent process exists; read its /proc/<pid>/environ
+agent pid=2510726  child pid=2510737
+--- /proc/2510726/environ (TMPDIR/GOTMPDIR) ---
+TMPDIR=/tmp/fm-e2e-proof.D8Gs9c/tasktmp-root/fm-e2e-proof-2506526/tmp
+GOTMPDIR=/tmp/fm-e2e-proof.D8Gs9c/tasktmp-root/fm-e2e-proof-2506526/gotmp
+--- /proc/2510737/environ (process the agent started) ---
+TMPDIR=/tmp/fm-e2e-proof.D8Gs9c/tasktmp-root/fm-e2e-proof-2506526/tmp
+GOTMPDIR=/tmp/fm-e2e-proof.D8Gs9c/tasktmp-root/fm-e2e-proof-2506526/gotmp
+
+### 5. the agent already used its TMPDIR (scratch dir it created) + root layout
+/tmp/fm-e2e-proof.D8Gs9c/tasktmp-root/fm-e2e-proof-2506526:
+total 0
+drwxrwxr-x 4 ubuntu ubuntu 80 Aug 24 05:56 .
+drwxrwxr-x 3 ubuntu ubuntu 60 Aug 24 05:56 ..
+drwxrwxr-x 2 ubuntu ubuntu 40 Aug 24 05:56 gotmp
+drwxrwxr-x 3 ubuntu ubuntu 60 Aug 24 05:57 tmp
+
+/tmp/fm-e2e-proof.D8Gs9c/tasktmp-root/fm-e2e-proof-2506526/tmp:
+total 0
+drwxrwxr-x 3 ubuntu ubuntu 60 Aug 24 05:57 .
+drwxrwxr-x 4 ubuntu ubuntu 80 Aug 24 05:56 ..
+drwxrwxr-x 2 ubuntu ubuntu 40 Aug 24 05:57 agent-scratch.2510726
+
+### 6. no legacy /tmp/fm-<id> was created by any bin/ code path
+OK: /tmp/fm-e2e-proof-2506526 does not exist
+
+### 7. real fm-teardown removes the recorded disk-backed root
+teardown: reaping leaked worktree process(es) for e2e-proof-2506526: 2507149 2510726 2510737
+teardown: force-killing leaked worktree process(es) for e2e-proof-2506526: 2507149
+/tmp/fm-e2e-proof.D8Gs9c/project: already current
+teardown e2e-proof-2506526 complete (window firstmate:fm-e2e-proof-2506526, worktree /tmp/fm-e2e-proof.D8Gs9c/wt)
+Backlog: e2e-proof-2506526 just finished. Update data/backlog.md - move e2e-proof-2506526 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+fm-teardown exit=0
+OK: /tmp/fm-e2e-proof.D8Gs9c/tasktmp-root/fm-e2e-proof-2506526 removed
+
+### 8. legacy-path teardown: a pre-change task whose meta records tasktmp=/tmp/fm-<id>
+warning: /tmp/fm-e2e-proof.D8Gs9c/home/data/e2e-legacy-2506526/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned e2e-legacy-2506526 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-e2e-legacy-2506526 worktree=/tmp/fm-e2e-proof.D8Gs9c/wt2
+meta now records: tasktmp=/tmp/fm-e2e-legacy-2506526
+teardown: reaping leaked worktree process(es) for e2e-legacy-2506526: 2517825 2522019 2522029
+teardown: force-killing leaked worktree process(es) for e2e-legacy-2506526: 2517825
+/tmp/fm-e2e-proof.D8Gs9c/project: already current
+teardown e2e-legacy-2506526 complete (window firstmate:fm-e2e-legacy-2506526, worktree /tmp/fm-e2e-proof.D8Gs9c/wt2)
+Backlog: e2e-legacy-2506526 just finished. Update data/backlog.md - move e2e-legacy-2506526 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+fm-teardown exit=0
+OK: legacy /tmp/fm-e2e-legacy-2506526 removed (recorded path is authoritative)
+
+### RESULT
+ALL E2E CHECKS PASSED

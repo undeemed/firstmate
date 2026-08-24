@@ -1,0 +1,12 @@
+== bin+tests+docs checked out at BASE 35d15d768cefac48e1377e5ea05a6e5d60062cde (HEAD stays 81dc2e2ff54f5c6073427c1cf1cf77be7c0d6f1a) ==
+FM_TEST_BEGIN 2026-08-24T06:08:35Z tests/fm-session-start.test.sh family=session-bootstrap expected_gate_skip=none
+ok - context digest distinguishes ABSENT, empty-but-present, and populated files
+ok - a lock refusal prints a loud read-only banner, skips every mutating step, and still completes the digest
+ok - session start stays read-only when lock ownership cannot be published
+ok - locked session start freezes trace context and lock refusal leaves it unchanged
+ok - concurrent session-lock acquisition admits exactly one live harness
+not ok - MISSING diagnostic did not appear at all
+FM_TEST_END 2026-08-24T06:08:52Z tests/fm-session-start.test.sh exit=1 duration_ms=17420 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=17490
+FM_TEST_SUMMARY_FAMILY family=session-bootstrap count=1 duration_ms=17420 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-session-start.test.sh duration_ms=17420

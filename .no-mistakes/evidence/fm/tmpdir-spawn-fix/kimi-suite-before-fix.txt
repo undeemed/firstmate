@@ -1,0 +1,14 @@
+== bin/ at BASE 35d15d768cefac48e1377e5ea05a6e5d60062cde + tests/ at TARGET 81dc2e2ff54f5c6073427c1cf1cf77be7c0d6f1a ==
+== proof: git diff --stat base -- bin (only new lib file):
+ bin/fm-tasktmp-lib.sh | 73 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 73 insertions(+)
+FM_TEST_BEGIN 2026-08-24T06:09:10Z tests/fm-kimi-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - Kimi hook install is idempotent and removal restores every foreign config byte
+ok - Kimi hook removal preserves owned newline boundaries and pristine bytes
+ok - Kimi hook install refuses missing, malformed, and surprising config without writing
+ok - Kimi hook install refuses without jq before any config write
+not ok - kimi meta did not record its task temp root
+FM_TEST_END 2026-08-24T06:09:14Z tests/fm-kimi-harness.test.sh exit=1 duration_ms=3741 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=3811
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=3741 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-kimi-harness.test.sh duration_ms=3741
