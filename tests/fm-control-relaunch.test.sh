@@ -44,6 +44,10 @@ relaunch_cleanup() {
     [ -n "$d" ] && rm -rf "$d"
   done
   rm -rf "$TMP_ROOT"
+  # Overriding lib.sh's EXIT trap makes this function responsible for the
+  # registered fixture roots too (tests/lib.sh contract), including the
+  # FM_TASKTMP_ROOT fixture lib.sh pins for this suite's fm-spawn runs.
+  fm_test_cleanup
 }
 trap relaunch_cleanup EXIT
 
