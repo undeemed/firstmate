@@ -1064,7 +1064,6 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   }
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
-  RELAUNCH_PRIOR_TASKTMP=$(fm_meta_get "$RELAUNCH_META" tasktmp)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
@@ -2496,13 +2495,24 @@ fm_lock_acquire_wait "$WORKTREE_CLAIM_LOCK"
 WORKTREE_CLAIM_LOCK_HELD=1
 assert_worktree_unclaimed "$WT_SOURCE" "$T"
 
-# Per-task temp root, resolved by bin/fm-tasktmp-lib.sh (the single owner of that
-# path and of the FM_TASKTMP_ROOT override), with the general temp nested at tmp/
-# and Go's build temp at gotmp/. Neither is created by its consumer, so mkdir both
-# before use; fm-teardown removes the whole root recorded in tasktmp=. Both are
-# exported into the pane below, because cargo, rustc, cc, ld, and sort spill to
-# TMPDIR rather than GOTMPDIR (rationale in this script's header).
-TASK_TMP=$(fm_tasktmp_dir "$ID") || exit 1
+# Per-task temp root: a relaunch reuses the root recorded in the task's meta
+# verbatim, so the directory a task already works in is never moved or deleted
+# mid-lifecycle; a fresh spawn (or a pre-tasktmp record) resolves one through
+# bin/fm-tasktmp-lib.sh (the single owner of that path and of the FM_TASKTMP_ROOT
+# override). The general temp nests at tmp/ and Go's build temp at gotmp/.
+# Neither is created by its consumer, so mkdir both before use; fm-teardown
+# removes the whole root recorded in tasktmp=. Both are exported into the pane
+# below, because cargo, rustc, cc, ld, and sort spill to TMPDIR rather than
+# GOTMPDIR (rationale in this script's header).
+RELAUNCH_RECORDED_TASKTMP=
+if [ "$RELAUNCH" -eq 1 ]; then
+  RELAUNCH_RECORDED_TASKTMP=$(fm_meta_get "$RELAUNCH_META" tasktmp)
+fi
+if [ -n "$RELAUNCH_RECORDED_TASKTMP" ]; then
+  TASK_TMP=$RELAUNCH_RECORDED_TASKTMP
+else
+  TASK_TMP=$(fm_tasktmp_dir "$ID") || exit 1
+fi
 mkdir -p "$TASK_TMP/gotmp" "$TASK_TMP/tmp"
 
 # Per-harness turn-end hook where enabled: a file that touches
@@ -2962,9 +2972,6 @@ if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_META_TMP=
   fm_lock_release "$SPAWN_META_LOCK"
   SPAWN_META_LOCK_HELD=0
-  if [ -n "${RELAUNCH_PRIOR_TASKTMP:-}" ] && [ "$RELAUNCH_PRIOR_TASKTMP" != "$TASK_TMP" ]; then
-    rm -rf "$RELAUNCH_PRIOR_TASKTMP" || echo "warning: could not fully remove superseded scratch root $RELAUNCH_PRIOR_TASKTMP" >&2
-  fi
 fi
 if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
   # The record is published, so this task is now part of the set a teardown
