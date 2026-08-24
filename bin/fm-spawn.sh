@@ -1064,6 +1064,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   }
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
+  RELAUNCH_PRIOR_TASKTMP=$(fm_meta_get "$RELAUNCH_META" tasktmp)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
@@ -2961,6 +2962,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_META_TMP=
   fm_lock_release "$SPAWN_META_LOCK"
   SPAWN_META_LOCK_HELD=0
+  if [ -n "${RELAUNCH_PRIOR_TASKTMP:-}" ] && [ "$RELAUNCH_PRIOR_TASKTMP" != "$TASK_TMP" ]; then
+    rm -rf "$RELAUNCH_PRIOR_TASKTMP"
+  fi
 fi
 if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
   # The record is published, so this task is now part of the set a teardown

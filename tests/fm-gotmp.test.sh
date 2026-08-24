@@ -35,10 +35,14 @@ pass() {
 }
 
 TMP_ROOT=
+LEGACY_TMPFS_FIXTURE=
 
 cleanup() {
   if [ -n "${TMP_ROOT:-}" ]; then
     rm -rf "$TMP_ROOT"
+  fi
+  if [ -n "${LEGACY_TMPFS_FIXTURE:-}" ]; then
+    rm -rf "$LEGACY_TMPFS_FIXTURE"
   fi
 }
 trap cleanup EXIT
@@ -232,6 +236,7 @@ test_teardown_removes_legacy_tmpfs_tasktmp() {
   # recorded path instead of re-deriving today's root, or the old directory leaks.
   local id="td-legacy-z5-$$"
   local legacy="/tmp/fm-$id"
+  LEGACY_TMPFS_FIXTURE=$legacy
   local current_root="$TMP_ROOT/$id-current-root"
   mkdir -p "$legacy/gotmp" \
     || fail "precondition: could not create the legacy temp root $legacy"

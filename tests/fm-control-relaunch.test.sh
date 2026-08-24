@@ -297,6 +297,32 @@ test_relaunch_preserves_durable_task_metadata() {
   pass "fm-control relaunch: durable task metadata survives replacement launch publication"
 }
 
+test_relaunch_reroots_scratch_and_removes_the_superseded_root() {
+  local dir out rc legacy current marker
+  dir=$(new_case tasktmp-reroot rl36)
+  add_ship_task "$dir" rl36 claude
+  legacy="$dir/legacy-scratch/fm-rl36"
+  mkdir -p "$legacy/gotmp"
+  printf 'stale\n' > "$legacy/gotmp/artifact"
+  sed "s|^tasktmp=.*|tasktmp=$legacy|" "$dir/home/state/rl36.meta" > "$dir/home/state/rl36.meta.tmp"
+  mv "$dir/home/state/rl36.meta.tmp" "$dir/home/state/rl36.meta"
+  current="$FM_TASKTMP_ROOT/fm-rl36"
+  TASK_TMPS+=("$current")
+  out=$(run_control "$dir" rl36 relaunch --note "scratch root moved"); rc=$?
+  expect_code 0 "$rc" "a relaunch over a superseded scratch root should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl36 tasktmp)" = "$current" ] \
+    || fail "the record must point at the re-derived scratch root, got '$(meta_field "$dir" rl36 tasktmp)'"
+  [ ! -e "$legacy" ] || fail "the superseded scratch root must be removed, not leaked ($legacy)"
+  [ -d "$current/tmp" ] && [ -d "$current/gotmp" ] \
+    || fail "the replacement scratch root was not created at $current"
+  marker="$current/tmp/keep-across-relaunch"
+  printf 'kept\n' > "$marker"
+  out=$(run_control "$dir" rl36 relaunch --note "same root this time"); rc=$?
+  expect_code 0 "$rc" "a same-root relaunch should succeed"$'\n'"$out"
+  [ -f "$marker" ] || fail "a same-root relaunch must keep the task's current scratch"
+  pass "fm-control relaunch: the scratch root follows the record and the superseded root is removed"
+}
+
 test_relaunch_serializes_concurrent_durable_metadata_publication() {
   local dir control_pid link_pid rc i=0 traceparent prepare ready exported release
   dir=$(new_case metadata-race rl28)
@@ -1314,6 +1340,7 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
 
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_preserves_durable_task_metadata
+test_relaunch_reroots_scratch_and_removes_the_superseded_root
 test_relaunch_serializes_concurrent_durable_metadata_publication
 test_disabled_relaunch_clears_prior_trace_context
 test_relaunch_appends_the_progress_note_to_the_instructions
