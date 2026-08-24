@@ -1658,6 +1658,144 @@ test_wedge_escalation_resets_when_pane_becomes_active() {
 	pass "a pane becoming active again resets the consecutive wedge-escalation counter"
 }
 
+# --- wedge escalation backs off instead of repeating on a fixed cadence -----
+# 2026-08-23 storm: the demand-deep-inspection marker was advisory text only, so
+# the watcher's own cadence never changed. Eight panes reached "escalation 28"
+# and kept going at the fixed STALE_ESCALATE_SECS interval, and every escalation
+# woke the supervisor, which buried real events. Past the threshold the SAME
+# unchanged pane must re-surface on a growing but BOUNDED interval - a backoff,
+# never a silence.
+#
+# wedge_probe drives the production wedge timer directly: it sources the watcher
+# (whose source guard returns before the singleton lock and the blocking loop),
+# replaces the queue append and the wake exit with recorders, plants a timer of a
+# chosen age and an escalation count, and reports whether that poll escalated.
+# The empty fifth argument is the task id: no task record exists here, so the
+# worktree write probe stands down and the timer path is exercised alone.
+wedge_probe() { # <state> <age-secs> <escalations-recorded> [VAR=value...]
+	local state=$1 age=$2 count=$3
+	shift 3
+	# shellcheck disable=SC2016  # single quotes are deliberate: the probe expands its own positionals.
+	env FM_STATE_OVERRIDE="$state" FM_ROOT_OVERRIDE="$ROOT" "$@" bash -c '
+		# shellcheck disable=SC1090,SC1091
+		. "$1"
+		since_file="$FM_STATE_OVERRIDE/.probe-since"
+		esc_file="$FM_STATE_OVERRIDE/.probe-escalations"
+		echo $(( $(date +%s) - $2 )) > "$since_file"
+		printf "%s\n" "$3" > "$esc_file"
+		fm_wake_append() { return 0; }
+		triage_log() { :; }
+		wake() { printf "ESCALATED %s\n" "$1"; exit 0; }
+		wedge_timer_check test:fm-probe "$since_file" probe "$esc_file" ""
+		printf "ABSORBED\n"
+	' _ "$ROOT/bin/fm-watch.sh" "$age" "$count"
+}
+
+test_wedge_escalation_interval_grows_and_is_bounded() {
+	local dir state out
+	local knobs
+	dir=$(make_case wedge-backoff)
+	state="$dir/state"
+	# Base cadence 240s, doubling past 3 consecutive escalations, ceiling 960s.
+	knobs=(FM_STALE_ESCALATE_SECS=240 FM_WEDGE_BACKOFF_SECS=240
+		FM_WEDGE_BACKOFF_MAX_SECS=960 FM_WEDGE_DEMAND_INSPECT_COUNT=3)
+
+	# Below the threshold the cadence is unchanged: escalate at exactly 240s.
+	out=$(wedge_probe "$state" 239 0 "${knobs[@]}")
+	[ "$out" = ABSORBED ] || fail "escalated before the base interval elapsed: $out"
+	out=$(wedge_probe "$state" 240 0 "${knobs[@]}")
+	case "$out" in ESCALATED*"escalation 1"*) ;; *) fail "first escalation did not fire at the base interval: $out" ;; esac
+	out=$(wedge_probe "$state" 240 2 "${knobs[@]}")
+	case "$out" in ESCALATED*"escalation 3"*demand-deep-inspection*) ;; *) fail "threshold escalation did not fire at the base interval: $out" ;; esac
+
+	# Past the threshold the interval doubles: 480s, then 960s.
+	out=$(wedge_probe "$state" 479 3 "${knobs[@]}")
+	[ "$out" = ABSORBED ] || fail "a backed-off wedge still escalated on the old fixed cadence: $out"
+	out=$(wedge_probe "$state" 480 3 "${knobs[@]}")
+	case "$out" in ESCALATED*"escalation 4"*) ;; *) fail "the doubled interval did not escalate once it elapsed: $out" ;; esac
+	out=$(wedge_probe "$state" 959 4 "${knobs[@]}")
+	[ "$out" = ABSORBED ] || fail "the second backoff step escalated early: $out"
+	out=$(wedge_probe "$state" 960 4 "${knobs[@]}")
+	case "$out" in ESCALATED*"escalation 5"*) ;; *) fail "the second backoff step never escalated: $out" ;; esac
+
+	# Bounded: the interval stops growing at the ceiling instead of running away,
+	# so even a pane wedged for days keeps reporting on that bounded cadence.
+	out=$(wedge_probe "$state" 959 30 "${knobs[@]}")
+	[ "$out" = ABSORBED ] || fail "a long-wedged pane escalated before the ceiling: $out"
+	out=$(wedge_probe "$state" 960 30 "${knobs[@]}")
+	case "$out" in ESCALATED*"escalation 31"*) ;; *) fail "the backoff grew past its ceiling and suppressed a wedge: $out" ;; esac
+	out=$(wedge_probe "$state" 100000 300 "${knobs[@]}")
+	case "$out" in ESCALATED*) ;; *) fail "a wedge was permanently suppressed: $out" ;; esac
+
+	# A ceiling set below the base interval clamps the wedge cadence rather than
+	# escalating faster than the unchanged pre-threshold rate.
+	out=$(wedge_probe "$state" 239 9 FM_STALE_ESCALATE_SECS=240 FM_WEDGE_BACKOFF_MAX_SECS=10)
+	[ "$out" = ABSORBED ] || fail "a ceiling below the base interval escalated faster than the base cadence: $out"
+	pass "a pane held on one unchanged stale hash past the threshold escalates on a growing, bounded interval"
+}
+
+test_wedge_backoff_returns_to_base_cadence_after_a_genuine_change() {
+	local dir state fakebin out capture_file window key pane_hash sig pid
+	dir=$(make_case wedge-backoff-reset)
+	state="$dir/state"
+	fakebin="$dir/fakebin"
+	out="$dir/watch.out"
+	capture_file="$dir/pane.txt"
+	window="test:fm-wedged-backoff"
+	printf 'idle building output' >"$capture_file"
+	printf 'window=%s\nkind=ship\n' "$window" >"$state/wedged-backoff.meta"
+	printf 'working: still monitoring ci\n' >"$state/wedged-backoff.status"
+	sig=$(seen_sig "$state/wedged-backoff.status")
+	printf '%s' "$sig" >"$state/.seen-wedged-backoff_status"
+	key=$(printf '%s' "$window" | tr ':/.' '___')
+	pane_hash=$(hash_text "idle building output")
+	printf '%s' "$pane_hash" >"$state/.hash-$key"
+	printf '1\n' >"$state/.count-$key"
+	# A deeply backed-off pane: five consecutive escalations already recorded, so
+	# its current interval is the 960s ceiling, well past the 300s used below.
+	printf '5\n' >"$state/.wedge-escalations-$key"
+	export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+
+	# Phase 1 - a genuine change (the pane produces new output) clears both the
+	# count and, with it, the backed-off cadence.
+	printf 'new output, crew active again' >"$capture_file"
+	PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+		FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+		FM_WEDGE_BACKOFF_SECS=240 FM_WEDGE_BACKOFF_MAX_SECS=960 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+		FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >"$out" &
+	pid=$!
+	if ! wait_poll_cycle "$state" "$pid"; then
+		reap "$pid"
+		fail "watcher exited on a changed pane hash: $(cat "$out")"
+	fi
+	[ ! -e "$state/.wedge-escalations-$key" ] || {
+		reap "$pid"
+		fail "a genuine change did not clear the backed-off escalation count"
+	}
+	reap "$pid"
+	ack_stopped_cycle "$state" || fail "could not acknowledge the intentional backoff-reset stop"
+
+	# Phase 2 - the pane goes quiet again on the NEW hash. 300s of idle is past the
+	# base cadence but well short of the 960s ceiling the pre-reset count would
+	# have demanded, so escalating here proves the cadence itself reset too.
+	pane_hash=$(hash_text "new output, crew active again")
+	printf '%s' "$pane_hash" >"$state/.hash-$key"
+	printf '%s' "$pane_hash" >"$state/.stale-$key"
+	printf '1\n' >"$state/.count-$key"
+	echo $(($(date +%s) - 300)) >"$state/.stale-since-$key"
+	: >"$out"
+	PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+		FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+		FM_WEDGE_BACKOFF_SECS=240 FM_WEDGE_BACKOFF_MAX_SECS=960 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+		FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >"$out" &
+	pid=$!
+	wait_for_exit "$pid" 100 || fail "the reset pane did not escalate again on the base cadence: $(cat "$out")"
+	grep -F "escalation 1" "$out" >/dev/null || fail "the escalation count did not restart from 1 after a genuine change: $(cat "$out")"
+	! grep -F "demand-deep-inspection" "$out" >/dev/null || fail "a reset pane still carried the demand-deep-inspection marker: $(cat "$out")"
+	unset FM_FAKE_CREW_STATE
+	pass "a genuine change resets the escalation count and returns the wedge cadence to the base interval"
+}
+
 # --- busy pane duration bound: a completed-turn age gate on top of busy -----
 # 2026-07 hibit-agent-focus-nonsteal-r1 incident: a busy pane (herdr "working"
 # and/or the harness's rendered busy footer) is unconditional, unbounded proof
@@ -3159,6 +3297,8 @@ test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
+test_wedge_escalation_interval_grows_and_is_bounded
+test_wedge_backoff_returns_to_base_cadence_after_a_genuine_change
 test_busy_pane_below_turn_age_bound_is_absorbed
 test_busy_pane_stable_hash_escalates_past_turn_age_bound
 test_busy_pane_changing_hash_escalates_past_turn_age_bound
