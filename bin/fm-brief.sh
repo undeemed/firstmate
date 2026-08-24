@@ -49,6 +49,10 @@
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
 # blocked when firstmate must act.
+# Ship and scout status protocols also require the worker to DECLARE that it is
+# stopping - pause or blocked, including a finished block with nothing queued -
+# before it goes quiet, because a still pane with no declared state costs
+# supervision a deep inspection to tell apart from a wedge.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -327,6 +331,11 @@ The report is the only thing that survives, so anything worth keeping must be in
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset):
    firstmate then leaves your idle pane alone and rechecks it on a long cadence instead of
    treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   Declare every stop before you go quiet: whenever you stop making progress, append
+   \`$PAUSED_VERB: {why}\` or \`blocked: {why}\` first. Finishing a block with nothing queued
+   counts as stopping - say what is ready and where it sits rather than idling silently.
+   A still pane with no declared state is indistinguishable from a wedge, and supervision
+   must spend a deep inspection to tell them apart.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
@@ -444,6 +453,11 @@ $RULE1
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   Declare every stop before you go quiet: whenever you stop making progress, append
+   \`$PAUSED_VERB: {why}\` or \`blocked: {why}\` first. Finishing a block with nothing queued
+   counts as stopping - say what is ready and where it sits rather than idling silently.
+   A still pane with no declared state is indistinguishable from a wedge, and supervision
+   must spend a deep inspection to tell them apart.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
