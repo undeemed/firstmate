@@ -1,0 +1,31 @@
+# E2E transcript: real fm-spawn + fm-teardown, commit a34ca45, 2026-08-24T14:38:52Z
+
+== 1. Real fm-spawn run (FM_TASKTMP_ROOT unset, XDG_CACHE_HOME unset, HOME=$case/home) ==
+warning: /tmp/fm-e2e-evidence.ksZePM/e2e/home/data/e2e-evidence-72331/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned e2e-evidence-72331 harness=kimi kind=ship mode=no-mistakes yolo=off window=firstmate:fm-e2e-evidence-72331 worktree=/tmp/fm-e2e-evidence.ksZePM/e2e/wt
+spawn exit code: 0
+
+== 2. Scratch root created on disk under the user cache dir (not /tmp) ==
+/tmp/fm-e2e-evidence.ksZePM/e2e/home/.cache/firstmate/tasktmp/fm-e2e-evidence-72331
+/tmp/fm-e2e-evidence.ksZePM/e2e/home/.cache/firstmate/tasktmp/fm-e2e-evidence-72331/gotmp
+/tmp/fm-e2e-evidence.ksZePM/e2e/home/.cache/firstmate/tasktmp/fm-e2e-evidence-72331/tmp
+
+== 3. Recorded in the task's durable metadata ==
+tasktmp=/tmp/fm-e2e-evidence.ksZePM/e2e/home/.cache/firstmate/tasktmp/fm-e2e-evidence-72331
+
+== 4. Env exports sent into the crewmate pane (stub tmux send-keys log) ==
+send-keys -t firstmate:fm-e2e-evidence-72331 export TMPDIR='/tmp/fm-e2e-evidence.ksZePM/e2e/home/.cache/firstmate/tasktmp/fm-e2e-evidence-72331/tmp' Enter
+send-keys -t firstmate:fm-e2e-evidence-72331 export GOTMPDIR='/tmp/fm-e2e-evidence.ksZePM/e2e/home/.cache/firstmate/tasktmp/fm-e2e-evidence-72331/gotmp' Enter
+
+== 5. Legacy shared-tmpfs path is NOT created ==
+OK: /tmp/fm-e2e-evidence-72331 does not exist
+
+== 6. Real fm-teardown removes exactly the recorded root ==
+OK: fm-teardown removed /tmp/fm-e2e-evidence.ksZePM/e2e/home/.cache/firstmate/tasktmp/fm-e2e-evidence-72331
+
+# E2E result: PASS
+
+# Note: the fixture HOME itself lives under /tmp only because the test
+# fixture root is created there; the behavior under test is the resolution
+# rule HOME/.cache/firstmate/tasktmp/fm-<id> (disk-backed on a real host) and
+# the absence of the legacy hardcoded /tmp/fm-<id> root, shown in section 5.
