@@ -12,6 +12,19 @@
 # setting, which the merge API applies, and imposing squash there would override
 # that convention rather than mirror the GitHub default.
 #
+# That implicit default is guarded, because a squash collapses every commit on
+# the pull request into one and destroys its ancestry permanently on the remote.
+# When the caller passes no merge method, the pull request's commit and changed-
+# file counts are read live from REST (gh api repos/<owner>/<repo>/pulls/<n>,
+# never GraphQL, whose budget the whole fleet shares) and the merge is REFUSED,
+# naming the counts it saw, when either exceeds SQUASH_GUARD_MAX_COMMITS (15) or
+# SQUASH_GUARD_MAX_FILES (100). A count that cannot be read refuses the same way
+# rather than squashing on an unverified assumption. An explicit --squash,
+# --merge, --rebase, or --method always wins and skips the guard entirely, so
+# the operator can still squash a stack deliberately. The guard also warns when
+# the head branch name or PR description names a stack, but the counts are the
+# hard gate. GitLab is unaffected because no squash is ever imposed there.
+#
 # A GitLab merge is refused unless every pre-merge condition holds, each read
 # live at merge time rather than taken from recorded metadata: the merge request
 # is open, detailed_merge_status is mergeable, has_conflicts is false,
@@ -163,6 +176,15 @@ pipeline_refuse() {
   echo "error: pipeline merge refused - $1" >&2
 }
 
+# Counts above which the implicit --squash default is refused. They sit between
+# ordinary delivery and a stack: the ten most recent PRs of this repo carried at
+# most 11 commits over 16 files, including the pipeline's own review-fix and
+# documentation commits, while the stacked ladder whose ancestry a default
+# squash destroyed carried 249 commits over 379 files. Set them high enough that
+# routine work never trains an operator to pass --squash reflexively.
+SQUASH_GUARD_MAX_COMMITS=15
+SQUASH_GUARD_MAX_FILES=100
+
 # Extract a count from a JSON payload, failing closed: non-zero unless jq
 # succeeds and the result is a non-negative integer.
 jq_count() {
@@ -172,6 +194,78 @@ jq_count() {
   '' | *[!0-9]*) return 1 ;;
   esac
   printf '%s\n' "$value"
+}
+
+# How the operator proceeds after a squash refusal, printed by every one of them.
+squash_guard_alternatives() {
+  echo '  pass --squash to squash it anyway, or --merge or --rebase to keep the commits' >&2
+}
+
+# A pull request whose commit count cannot be read is not squashed by default,
+# because the default is the destructive option and nothing verified it is safe.
+squash_guard_unreadable() {
+  printf 'error: refusing to squash %s by default - its commit count could not be read from %s/%s\n' \
+    "$URL" "$PR_OWNER" "$PR_REPO" >&2
+  echo '  squashing would flatten every commit on the pull request into one commit and destroy their ancestry permanently' >&2
+  squash_guard_alternatives
+}
+
+# The soft signal: a head branch or description that names a stack. Echoes one
+# reason when it finds one, and returns non-zero when it does not.
+squash_guard_stack_hint() {
+  local head_ref=$1 body=$2 lowered
+  lowered=$(printf '%s' "$head_ref" | tr '[:upper:]' '[:lower:]')
+  case "$lowered" in
+    *stack*|*ladder*|*rung*)
+      printf 'the head branch "%s" names a stack\n' "$head_ref"
+      return 0
+      ;;
+  esac
+  lowered=$(printf '%s' "$body" | tr '[:upper:]' '[:lower:]')
+  case "$lowered" in
+    *stacked*|*"part of a stack"*|*"stack of"*)
+      echo 'the pull request description names a stack'
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# Guard the implicit --squash default. Called only when the caller passed no
+# merge method, so an explicit one never reaches it. Reads the pull request from
+# REST unless the caller already holds that exact payload ($1), which the
+# pipeline gate does, so no merge path spends a second forge read. Returns
+# non-zero, reporting the counts it saw, when squashing would flatten a stack.
+squash_default_guard() {
+  local pull=${1:-} commits files head_ref body hint=''
+  if [ -z "$pull" ]; then
+    if ! pull=$(gh api "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" 2>/dev/null); then
+      squash_guard_unreadable
+      return 1
+    fi
+  fi
+  if ! commits=$(jq_count "$pull" '.commits') || ! files=$(jq_count "$pull" '.changed_files'); then
+    squash_guard_unreadable
+    return 1
+  fi
+  head_ref=$(printf '%s' "$pull" | jq -r '.head.ref // ""' 2>/dev/null) || head_ref=''
+  body=$(printf '%s' "$pull" | jq -r '.body // ""' 2>/dev/null) || body=''
+  hint=$(squash_guard_stack_hint "$head_ref" "$body") || hint=''
+
+  if [ "$commits" -le "$SQUASH_GUARD_MAX_COMMITS" ] && [ "$files" -le "$SQUASH_GUARD_MAX_FILES" ]; then
+    if [ -n "$hint" ]; then
+      printf 'notice: %s carries %s commit(s) and %s changed file(s), and %s; the default squash will flatten them into one commit\n' \
+        "$URL" "$commits" "$files" "$hint" >&2
+    fi
+    return 0
+  fi
+  printf 'error: refusing to squash %s by default - it carries %s commits and %s changed files\n' \
+    "$URL" "$commits" "$files" >&2
+  printf '  squashing would flatten those %s commits into one commit and destroy their ancestry permanently\n' \
+    "$commits" >&2
+  [ -z "$hint" ] || printf '  %s\n' "$hint" >&2
+  squash_guard_alternatives
+  return 1
 }
 
 # Enforce the pipeline-class green gate against the live forge. Every gate and
@@ -270,6 +364,11 @@ pipeline_merge_gate() {
     pipeline_refuse "PR #$PR_NUMBER has $changes_requested outstanding requested-changes review(s)"
     return 1
   fi
+  # The same squash guard the task class applies, run against the payload this
+  # gate already read and before the audit line, so a refusal records no merge.
+  if [ "$DEFAULT_SQUASH" = yes ]; then
+    squash_default_guard "$pull" || return 1
+  fi
   mkdir -p "$STATE" || {
     pipeline_refuse "state directory unavailable for audit log"
     return 1
@@ -284,13 +383,21 @@ pipeline_merge_gate() {
 
 reject_repo_overrides "$@" || exit 1
 
+# The squash guard applies only to the implicit default, so both classes resolve
+# that once, before any forge read, and never guard an explicit merge method.
+if caller_has_merge_method "$@"; then
+  DEFAULT_SQUASH=no
+else
+  DEFAULT_SQUASH=yes
+fi
+
 if [ "$CLASS" = pipeline ]; then
   reject_pipeline_pin_overrides "$@" || exit 1
   pipeline_merge_gate || exit 1
   # Pipeline merges pin to the exact gated head so a commit pushed between the
   # gate and the merge cannot land unvetted.
   merge_args=(--match-head-commit "$PIPELINE_HEAD")
-  if ! caller_has_merge_method "$@"; then
+  if [ "$DEFAULT_SQUASH" = yes ]; then
     merge_args+=(--squash)
   fi
   gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]}" "$@"
@@ -438,7 +545,8 @@ FIELDS
 case "$PROVIDER" in
   github)
     merge_args=()
-    if ! caller_has_merge_method "$@"; then
+    if [ "$DEFAULT_SQUASH" = yes ]; then
+      squash_default_guard || exit 1
       merge_args=(--squash)
     fi
     gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
