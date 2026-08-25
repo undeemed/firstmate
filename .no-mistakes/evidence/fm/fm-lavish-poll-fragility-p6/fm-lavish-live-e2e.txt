@@ -1,0 +1,2 @@
+ok - lavish-axi 0.1.52 polls concurrent boards without displacing one another
+ok - lavish-axi 0.1.52's real poll interruption is absorbed and the board keeps listening

@@ -1,0 +1,23 @@
+sessions[13]{file,status,url,pending_prompts}:
+  /home/ubuntu/.treehouse/firstmate-4e604a/4/firstmate/.lavish/seer-overview.html,open,"http://15.204.113.4:4387/session/5fe3f6e005803277",0
+  /home/ubuntu/.treehouse/firstmate-4e604a/7/firstmate/.lavish/subliminal-brief.html,open,"http://15.204.113.4:4387/session/537781bf5fd399fd",0
+  /home/ubuntu/.treehouse/firstmate-4e604a/7/firstmate/.lavish/v3-review.html,open,"http://15.204.113.4:4387/session/ad97d5777f46026c",0
+  /home/ubuntu/Dev/firstmate/.lavish/aplomb-catchup.html,open,"http://15.204.113.4:4387/session/bec8c3413187a081",0
+  /home/ubuntu/Dev/firstmate/.lavish/captain-decisions-2026-08-23.html,open,"http://15.204.113.4:4387/session/885b7f3f109a34b8",0
+  /home/ubuntu/Dev/firstmate/.lavish/captain-decisions-full.html,open,"http://15.204.113.4:4387/session/655d013fa4d9ab94",0
+  /home/ubuntu/Dev/firstmate/.lavish/decisions-20260821-v2.html,open,"http://15.204.113.4:4387/session/63352cc0d8626d96",0
+  /home/ubuntu/Dev/firstmate/.lavish/decisions-20260821.html,open,"http://15.204.113.4:4387/session/274cddb5ee70bd64",0
+  /home/ubuntu/Dev/firstmate/.lavish/deepseek-harness-rust-plan.html,open,"http://127.0.0.1:4387/session/205028cfe037a91c",0
+  /home/ubuntu/Dev/firstmate/.lavish/dorm-local-aws.html,feedback,"http://15.204.113.4:4387/session/df08ecd413bb7ee6",1
+  /home/ubuntu/Dev/firstmate/.lavish/fleet-review-2026-08-20.html,open,"http://127.0.0.1:4387/session/4440af72c68ab901",0
+  /home/ubuntu/Dev/firstmate/.lavish/outbound-preview.html,feedback,"http://15.204.113.4:4387/session/ef274c63f3f5af9c",8
+  /home/ubuntu/Dev/firstmate/.lavish/proof-of-work-2026-08-24.html,open,"http://15.204.113.4:4387/session/12cdc40e22523dd1",0
+visual_guidance[5]: "Use visual hierarchy to make the most important decisions, risks, tradeoffs, and next actions obvious at a glance","Use visual structure such as sections, cards, tables, diagrams, annotated snippets, and side-by-side comparisons instead of long prose","Choose typography, spacing, color, and layout deliberately so the artifact has a clear point of view","Prevent horizontal overflow at every nesting level: nested grid/flex children also need minmax(0, 1fr) tracks and min-width: 0, especially when badges, labels, or status text use wide pixel or monospace fonts; wrap, truncate, or contain long unbreakable text deliberately","When the artifact would describe existing or current UI or state, show it instead: capture screenshots of the real pages (run the app read-only if needed) and embed them, rather than explaining the current look in prose; reserve prose for what cannot be shown such as rationale, trade-offs, and open questions"
+playbooks[7]{id,use_when}:
+  diagram,"Map relationships, flows, state, and architecture"
+  table,Turn dense records into scan-friendly review surfaces
+  comparison,"Show options, tradeoffs, and current vs target behavior"
+  plan,Explain a product or technical plan before implementation
+  code,"Render source code, code files, patches, PR diffs, and before/after code inside Lavish artifacts"
+  input,"Must be used when the agent needs to collect user input on decisions, choices, preferences, triage, scope, or other structured feedback from within the artifact"
+  slides,Create a deliberate presentation when slides are requested
