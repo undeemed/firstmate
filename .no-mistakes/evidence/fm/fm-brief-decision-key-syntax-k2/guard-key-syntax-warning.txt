@@ -1,0 +1,41 @@
+### 1. The reported defect: two decisions written with [key=...] AFTER the colon
+
+$ cat state/t30.status
+needs-decision: pick REST or RPC [key=api-shape]
+needs-decision: pg or sqlite [key=db-choice]
+
+### 2. And the silent-skip defect: a slug outside the charset on another task
+
+$ cat state/t31.status
+needs-decision [key=bad!slug]: pick a color
+
+### 3. First drain: both t30 notes COLLAPSE into one shared 'default' record
+###    (the printed notes still show the literal tokens), t31 never lists as
+###    open at all - and the KEY SYNTAX section is what makes both visible.
+
+$ bin/fm-wake-drain.sh   (drain #1)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t30 needs-decision: pg or sqlite [key=db-choice]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+KEY SYNTAX (a stated decision key the fold could not use as written - not re-printed after this presentation):
+t30 key token past the note head, so this line folded under "default": needs-decision: pick REST or RPC [key=api-shape]
+t30 key token past the note head, so this line folded under "default": needs-decision: pg or sqlite [key=db-choice]
+t31 key slug outside A-Za-z0-9._-, so the fold skipped this line entirely: needs-decision [key=bad!slug]: pick a color
+KEY SYNTAX: the documented position is before the colon - needs-decision [key=<slug>]: <summary>; steer the worker, and answer an affected decision by the key the open listing above actually shows.
+
+### 4. Second drain: the open decisions still list, the warning does NOT repeat
+
+$ bin/fm-wake-drain.sh   (drain #2)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t30 needs-decision: pg or sqlite [key=db-choice]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+### 5. A NEW bad append is warned about again (once per bad append)
+
+$ bin/fm-wake-drain.sh   (drain #3, after one more misplaced-key append)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t30 blocked: waiting on infra [key=infra]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+KEY SYNTAX (a stated decision key the fold could not use as written - not re-printed after this presentation):
+t30 key token past the note head, so this line folded under "default": blocked: waiting on infra [key=infra]
+KEY SYNTAX: the documented position is before the colon - needs-decision [key=<slug>]: <summary>; steer the worker, and answer an affected decision by the key the open listing above actually shows.

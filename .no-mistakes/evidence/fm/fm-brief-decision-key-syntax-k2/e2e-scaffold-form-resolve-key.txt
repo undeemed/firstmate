@@ -1,0 +1,40 @@
+### 1. The literal decision line the freshly generated ship brief teaches
+
+$ grep -F 'append `needs-decision' home/data/t20/brief.md
+   append `needs-decision [key=<slug>]: {summary of options}` and stop. Firstmate will reply with the decision.
+
+### 2. Worker follows the scaffold verbatim: two decisions on ONE task
+
+$ cat home/state/t20.status
+needs-decision [key=api-shape]: pick REST or RPC
+needs-decision [key=db-choice]: pg or sqlite
+working: continuing while the answers land
+
+### 3. Supervision drain: BOTH decisions list under their own keys
+
+$ FM_STATE_OVERRIDE=home/state bin/fm-wake-drain.sh
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t20 [key=api-shape] needs-decision: pick REST or RPC
+t20 [key=db-choice] needs-decision: pg or sqlite
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+### 4. Answer ONE decision through the real bin/fm-send.sh --resolve-key
+
+$ bin/fm-send.sh t20 --resolve-key api-shape 'go with REST'
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+exit=0
+
+### 5. Drain again: api-shape is CLOSED, db-choice is STILL OPEN
+
+$ FM_STATE_OVERRIDE=home/state bin/fm-wake-drain.sh
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t20 [key=db-choice] needs-decision: pg or sqlite
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+### 6. The ledger after the answer (resolved line written by the answerer)
+
+$ cat home/state/t20.status
+needs-decision [key=api-shape]: pick REST or RPC
+needs-decision [key=db-choice]: pg or sqlite
+working: continuing while the answers land
+resolved [key=api-shape]: answered: go with REST

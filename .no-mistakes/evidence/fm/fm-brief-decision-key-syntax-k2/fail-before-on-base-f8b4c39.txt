@@ -1,0 +1,22 @@
+### The four test files from the fix (commit 1ede7e2), run against the UNFIXED
+### base commit f8b4c39. Every failure below is the defect the fix removes;
+### the same suites pass 100% on the fixed tree.
+
+$ bash tests/fm-brief.test.sh
+not ok - brief-key-a1: ship brief does not show the key before the colon
+suite exit=1
+
+$ bash tests/fm-send-resolve-key.test.sh   (scaffold-verbatim end-to-end)
+not ok - the scaffolded decision form is not a needs-decision line: 'needs-decision: {summary of options}'
+suite exit=1
+
+$ bash tests/fm-wake-drain-open-decisions.test.sh
+not ok - a misplaced key token produced no warning: OPEN DECISIONS (still open, folded from the durable status logs - no
+suite exit=1
+
+$ bash tests/fm-classify-decision-key.test.sh
+# (the guard function status_line_key_syntax_problem does not exist on base)
+not ok - the guard stayed silent on a key the fold cannot use as written: needs-decision: pick REST or RPC [key=api-shape]
+tests/fm-classify-decision-key.test.sh: line 481: status_line_key_syntax_problem: command not found
+tests/fm-classify-decision-key.test.sh: line 486: status_line_key_syntax_problem: command not found
+suite exit=1
