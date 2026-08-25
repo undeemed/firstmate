@@ -288,6 +288,50 @@ test_documented_key_position_is_never_warned_about() {
 }
 
 
+# The section's global byte cap can drop rows, and a dropped row must not be
+# recorded as warned - for a rejected slug this section is the decision's only
+# surface, so a capped-out row would vanish with no named trace. The marker
+# advances only through the last row shown before the task's first omitted row,
+# so the omitted tail re-warns on the next drain (at-least-once, like a marker
+# that failed to write).
+test_rows_omitted_by_the_byte_cap_rewarn_next_drain() {
+  local dir state out pad i
+  dir=$(make_case key-syntax-byte-cap)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # Ten bad appends on ONE task, each long enough to fill the 220-byte item
+  # budget, so the 1500-byte section cap fits six rows and omits four.
+  pad=$(awk 'BEGIN { while (i++ < 12) printf " lots-of-padding" }')
+  for i in 01 02 03 04 05 06 07 08 09 10; do
+    printf 'needs-decision: omitted-%s%s [key=k%s]\n' "$i" "$pad" "$i" >> "$state/task23.status"
+  done
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a byte-capped corpus"
+  grep -F 'more omitted (byte cap)' "$out" >/dev/null \
+    || fail "the byte cap dropped rows without a disclosure: $(cat "$out")"
+  grep -F 'folded under "default"' "$out" | grep -F 'omitted-01' >/dev/null \
+    || fail "the first bad append was not warned about on the first drain: $(cat "$out")"
+  if grep -F 'folded under "default"' "$out" | grep -F 'omitted-10' >/dev/null; then
+    fail "the corpus did not exceed the byte cap: $(cat "$out")"
+  fi
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second drain failed"
+  for i in 07 08 09 10; do
+    grep -F 'folded under "default"' "$out" | grep -F "omitted-$i" >/dev/null \
+      || fail "a row omitted by the byte cap was swallowed instead of re-warned: $(cat "$out")"
+  done
+  if grep -F 'folded under "default"' "$out" | grep -F 'omitted-01' >/dev/null; then
+    fail "an already-shown row re-printed even though its marker had advanced: $(cat "$out")"
+  fi
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "third drain failed"
+  if grep -F 'KEY SYNTAX' "$out" >/dev/null; then
+    fail "the warning repeated after every row had been presented: $(cat "$out")"
+  fi
+  pass "rows omitted by the byte cap re-warn next drain, then go quiet"
+}
+
+
 test_buried_decision_still_surfaces
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
@@ -300,3 +344,4 @@ test_status_symlink_is_not_followed
 test_misplaced_key_is_reported_once
 test_rejected_slug_is_warned_even_though_it_never_lists_as_open
 test_documented_key_position_is_never_warned_about
+test_rows_omitted_by_the_byte_cap_rewarn_next_drain
