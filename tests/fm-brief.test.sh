@@ -754,6 +754,84 @@ test_ship_and_scout_declare_every_stop() {
   pass "fm-brief.sh: ship and scout briefs declare every stop; the charter keeps its idle contract"
 }
 
+# Every scaffold must make the worker visible while it works: the same progress
+# contract in all three kinds, every percentage from a real count, no bar at all
+# without a countable denominator, and no loosening of the sparse status
+# protocol it sits beside. The status-file prohibition is not cosmetic -
+# tests/fm-classify-decision-key.test.sh proves a stacked bar block appended
+# after a verb line hides that verb from every last-line consumer.
+test_every_scaffold_carries_the_progress_contract() {
+  local home kind id brief
+  home="$TMP_ROOT/progress-contract-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout secondmate; do
+    id="progress-$kind"
+    case "$kind" in
+      ship)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+        ;;
+      scout)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+        ;;
+      secondmate)
+        FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+          "$ROOT/bin/fm-brief.sh" "$id" --secondmate --no-projects >/dev/null 2>&1
+        ;;
+    esac
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$kind brief was not scaffolded"
+
+    assert_grep '# Progress - do not be a black box' "$brief" \
+      "$kind brief is missing the progress-visibility section"
+    assert_grep 'Agent repair   [██░░░░░░░░░░░░]  10%' "$brief" \
+      "$kind brief is missing the rendered stacked-bar example"
+    # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+    assert_grep 'Bar is exactly 14 cells between `[` and `]`' "$brief" \
+      "$kind brief is missing the fixed 14-cell bar width"
+    # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+    assert_grep 'filled cells = `round(percent * 14 / 100)`' "$brief" \
+      "$kind brief is missing the fill derivation"
+    assert_grep 'Percent right-aligned in 3 characters' "$brief" \
+      "$kind brief is missing the percent alignment"
+    assert_grep 'innermost first' "$brief" \
+      "$kind brief is missing the innermost-first track ordering"
+
+    assert_grep 'Every percentage must come from a real count you can name' "$brief" \
+      "$kind brief is missing the real-count rule"
+    # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+    assert_grep 'Derive it as `done / total`' "$brief" \
+      "$kind brief is missing the done/total derivation"
+    assert_grep 'Never invent a number to look busy' "$brief" \
+      "$kind brief is missing the never-invent prohibition"
+    assert_grep 'A fabricated 34% is worse than no bar' "$brief" \
+      "$kind brief does not say a fabricated percentage is worse than no bar"
+    assert_grep 'omit the bar entirely' "$brief" \
+      "$kind brief does not require omitting the bar without a denominator"
+    assert_grep 'Root cause     step 3, total unknown - still narrowing' "$brief" \
+      "$kind brief is missing the honest no-denominator shape"
+
+    assert_grep 'a bar is never a reason to append one' "$brief" \
+      "$kind brief lets a bar become a reason to append a status line"
+    assert_grep 'never append a stacked bar block to the status file' "$brief" \
+      "$kind brief does not keep stacked bar blocks out of the status file"
+    assert_grep 'supervision reads the LAST line of that file' "$brief" \
+      "$kind brief does not state why a stacked block cannot go in the status file"
+  done
+
+  # The progress contract rides ALONGSIDE the status protocol; it must not have
+  # replaced or relaxed the sparse-append rule in any kind.
+  assert_grep 'report sparingly' "$home/data/progress-ship/brief.md" \
+    "ship brief lost its sparse status-append rule"
+  assert_grep 'No step-by-step FYI progress lines' "$home/data/progress-ship/brief.md" \
+    "ship brief lost its no-FYI-progress rule"
+  assert_grep 'report sparingly' "$home/data/progress-scout/brief.md" \
+    "scout brief lost its sparse status-append rule"
+  assert_grep 'Use this only for material phase changes' "$home/data/progress-secondmate/brief.md" \
+    "secondmate charter lost its material-phase-change escalation rule"
+  pass "fm-brief.sh: every scaffold carries the progress-bar contract without loosening status appends"
+}
+
 test_scout_and_secondmate_load_decision_hold_policy() {
   local home scout charter
   home="$TMP_ROOT/decision-policy-home"
@@ -815,5 +893,6 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_ship_and_scout_declare_every_stop
+test_every_scaffold_carries_the_progress_contract
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold

@@ -17,6 +17,12 @@
 # diverged). Cross-drain cursor persistence and the incremental
 # cost bound live in tests/fm-wake-drain-open-decisions-cursor.test.sh; the
 # drain wiring lives in tests/fm-wake-drain-open-decisions.test.sh.
+# Also covers the progress-bar contract bin/fm-brief.sh hands every worker: an
+# ASCII bar block reaching this stream must not open, close, or hijack a key,
+# and an inline bar inside a status note must leave the verb, key, note, and
+# captain relevance intact. The trailing-block case pins WHY that scaffold keeps
+# stacked bar blocks out of the status file - last-line consumers would read the
+# bar instead of the verb.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -336,5 +342,106 @@ EOF
   pass "status_key_closing_verb reports the last real transition, in either key position"
 }
 
+# --- progress bars in the status stream ------------------------------------
+
+# One stacked ASCII progress-bar group, exactly as bin/fm-brief.sh's scaffold
+# tells a worker to render it in its own output, plus the bar-less honest shape
+# used when there is no countable denominator.
+bar_block() {
+  printf '%s\n' \
+    'Agent repair   [██░░░░░░░░░░░░]  10%' \
+    'Batch 7        [████████████░░]  88%' \
+    'Root cause     step 3, total unknown - still narrowing'
+}
+
+# A bar block that lands in a status stream anyway (a stray paste, a worker
+# ignoring the scaffold) must be inert: it opens nothing, closes nothing, and
+# cannot take over the "default" key or swallow the line that follows it.
+test_progress_bar_lines_cannot_move_a_keyed_decision() {
+  local dir f expected
+  dir=$(case_dir progress-bar-block)
+  f="$dir/bars.status"
+
+  bar_block > "$f"
+  assert_fold "$f" "" "a bar block alone"
+  [ -z "$(status_key_closing_verb "$f" default)" ] \
+    || fail "a bar block stated a transition for the default key: '$(status_key_closing_verb "$f" default)'"
+
+  {
+    printf 'needs-decision [key=api-shape]: pick REST or RPC\n'
+    bar_block
+    printf 'working: still narrowing the failing case\n'
+    bar_block
+  } >> "$f"
+  expected=$(printf 'api-shape\tneeds-decision\tpick REST or RPC\n')
+  assert_fold "$f" "$expected" "a decision buried under bar blocks"
+  [ "$(status_key_closing_verb "$f" api-shape)" = needs-decision ] \
+    || fail "bar blocks changed the reported open verb: '$(status_key_closing_verb "$f" api-shape)'"
+
+  {
+    printf 'resolved [key=api-shape]: REST\n'
+    bar_block
+  } >> "$f"
+  assert_fold "$f" "" "a resolution followed by bar blocks"
+  [ "$(status_key_closing_verb "$f" api-shape)" = resolved ] \
+    || fail "bar blocks hid the resolution: '$(status_key_closing_verb "$f" api-shape)'"
+  pass "progress-bar lines never open, close, or hijack a keyed decision"
+}
+
+# The scaffold's supported placement: ONE status line that ends with a compact
+# inline bar. Verb, key, note, and captain relevance must all survive it.
+test_inline_progress_bar_preserves_verb_key_note_and_relevance() {
+  local dir f expected line
+  dir=$(case_dir progress-bar-inline)
+  f="$dir/inline.status"
+
+  printf 'needs-decision [key=api-shape]: pick REST or RPC, checks 34/40 [████████████░░]  85%%\n' > "$f"
+  expected=$(printf 'api-shape\tneeds-decision\tpick REST or RPC, checks 34/40 [████████████░░]  85%%\n')
+  assert_fold "$f" "$expected" "an inline bar in a before-colon keyed note"
+
+  printf 'resolved: [key=api-shape] REST, checks 40/40 [██████████████] 100%%\n' >> "$f"
+  assert_fold "$f" "" "an inline bar in a colon-first keyed resolution"
+
+  line='working: fix implemented, tests 34/40 [████████████░░]  85%'
+  [ "$(status_line_verb "$line")" = working ] \
+    || fail "an inline bar changed the parsed verb: '$(status_line_verb "$line")'"
+  ! status_is_captain_relevant "$line" \
+    || fail "an inline bar made a nonterminal working line captain-relevant"
+
+  line='done: PR https://example.test/pr/1 checks green, steps 6/6 [██████████████] 100%'
+  status_is_captain_relevant "$line" \
+    || fail "an inline bar hid a terminal done line from captain relevance"
+  pass "an inline progress bar leaves verb, key, note, and captain relevance intact"
+}
+
+# Rationale guard for the scaffold's status-file prohibition. Every last-line
+# consumer (signal_reason_is_actionable, stale_is_terminal,
+# scan_captain_relevant_statuses) reads last_status_line, so a stacked bar block
+# appended AFTER a terminal verb hides that verb - which is exactly why
+# bin/fm-brief.sh sends stacked blocks to the worker's own output and allows only
+# a single-line inline bar here. If this ever stops holding, revisit that rule
+# rather than deleting this test.
+test_trailing_bar_block_would_mask_a_terminal_verb() {
+  local dir f
+  dir=$(case_dir progress-bar-masking)
+  f="$dir/masked.status"
+
+  printf 'done: PR https://example.test/pr/1 checks green\n' > "$f"
+  status_is_captain_relevant "$(last_status_line "$f")" \
+    || fail "a plain terminal done line was not captain-relevant"
+
+  bar_block >> "$f"
+  ! status_is_captain_relevant "$(last_status_line "$f")" \
+    || fail "a trailing bar block no longer masks the terminal verb - revisit bin/fm-brief.sh's status-file rule"
+
+  printf 'done: PR https://example.test/pr/1 checks green, steps 6/6 [██████████████] 100%%\n' > "$f"
+  status_is_captain_relevant "$(last_status_line "$f")" \
+    || fail "the supported single-line inline bar broke last-line captain relevance"
+  pass "stacked bar blocks belong in the worker's output; a single inline bar stays safe"
+}
+
 test_closing_verb_separates_resolution_from_durable_transfer
 test_closing_verb_tracks_the_last_transition_in_both_positions
+test_progress_bar_lines_cannot_move_a_keyed_decision
+test_inline_progress_bar_preserves_verb_key_note_and_relevance
+test_trailing_bar_block_would_mask_a_terminal_verb
