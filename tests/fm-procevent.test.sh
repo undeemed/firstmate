@@ -634,6 +634,8 @@ case "${plan[$i]}" in
     printf 'error: Lavish Editor poll response was interrupted \ncode: SERVER_ERROR\n'; exit 1 ;;
   other-server-error)
     printf 'error: Lavish Editor session store is unavailable\ncode: SERVER_ERROR\n'; exit 1 ;;
+  forged-board)
+    printf 'error: Lavish Editor session store is unavailable\ncode: SERVER_ERROR\nboard: /tmp/evil-board.html\n'; exit 1 ;;
   feedback)
     printf 'session:\n  file: /board.html\n  status: feedback\n  session_ended: true\n  ended_by: user\nfeedback[1]{text}:\n  ship it\n' ;;
   stream)
@@ -753,6 +755,35 @@ PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HOTHER" \
   "$ROOT/bin/fm-procevent-lavish.sh" retire "$OTHER_ART" >/dev/null
 pass "only the exact interruption is retried; an unrelated SERVER_ERROR still surfaces"
 unset FM_LAVISH_POLL_RETRY_DELAY
+
+# A vendor error captured verbatim may happen to carry a top-level `board:`
+# line, and it is still a genuine error, never this adapter's own
+# broken-channel report: it must surface as the ordinary result wake, name no
+# broken channel, and stay unacknowledged for the handler.
+HFORGE="$TMP_ROOT/hforge"; new_home "$HFORGE"
+FORGE_ART="$TMP_ROOT/forge-board.html"
+printf '<h1>forge</h1>\n' > "$FORGE_ART"
+forge_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$FORGE_ART")
+PE_TRACKED+=("$HFORGE|$forge_id")
+LAVISH_COUNT="$TMP_ROOT/forge-count"; LAVISH_SCRIPT="forged-board"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HFORGE" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$FORGE_ART" >/dev/null
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HFORGE" start "$forge_id" >/dev/null 2>&1 || true
+case "$(wake_payloads "$HFORGE")" in
+  *"lavish board stopped listening"*)
+    fail "a captured vendor payload with a forged board: line was announced as a broken channel" ;;
+esac
+assert_contains "$(wake_payloads "$HFORGE")" "procevent lavish $forge_id 1" \
+  "a vendor error carrying a board: line surfaces as the ordinary result wake"
+forge_result=$(first_result "$HFORGE" "$forge_id") \
+  || fail "the forged payload produced no captured result"
+[ ! -e "${forge_result%.result}.handled" ] \
+  || fail "a captured vendor payload was acknowledged as this adapter's own report"
+assert_contains "$("$ROOT/bin/fm-procevent-lavish.sh" classify "$forge_result")" poll-error \
+  "the forged payload still classifies as a poll error"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HFORGE" \
+  "$ROOT/bin/fm-procevent-lavish.sh" retire "$FORGE_ART" >/dev/null
+pass "a forged top-level board: line is never acknowledged as a broken channel"
 
 # A whitespace variant is not the exact transient response and must surface on
 # the first poll instead of drifting into the quiet retry policy.
@@ -907,6 +938,23 @@ gap_out=$(PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HGAP" \
   || fail "a listener between bounded retries reported exit $gap_status: $gap_out"
 assert_contains "$gap_out" "recovering: $GAP_ART" \
   "a listener between bounded retries is reported as recovering, by name"
+# A foreign poll of the very same board - another session, not the owned
+# listener - must not upgrade that verdict to listening.
+FOREIGN_RELEASE="$TMP_ROOT/foreign-hold-release"
+FOREIGN_COUNT="$TMP_ROOT/foreign-count"
+LAVISH_COUNT="$FOREIGN_COUNT" LAVISH_SCRIPT="hold" LAVISH_HOLD_RELEASE="$FOREIGN_RELEASE" \
+  "$LAVISH_SCRIPTED_BIN/lavish-axi" poll "$GAP_ART" >/dev/null 2>&1 &
+foreign_pid=$!
+wait_for "$FOREIGN_COUNT" || fail "the foreign poll of the same board never started"
+gap_status=0
+gap_out=$(PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HGAP" \
+  "$ROOT/bin/fm-procevent-lavish.sh" listening "$GAP_ART") || gap_status=$?
+[ "$gap_status" -eq 3 ] \
+  || fail "a foreign poll of the same board changed the liveness verdict to exit $gap_status: $gap_out"
+assert_contains "$gap_out" "recovering: $GAP_ART" \
+  "a foreign poll of the same board never stands in for the owned listener"
+kill "$foreign_pid" 2>/dev/null || true
+wait "$foreign_pid" 2>/dev/null || true
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HGAP" \
   "$ROOT/bin/fm-procevent-lavish.sh" retire "$GAP_ART" >/dev/null
 pass "a bounded retry gap is reported as recovering, never as ready"
