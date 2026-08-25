@@ -33,6 +33,9 @@ PROVIDER=$FM_PR_PROVIDER
 HOST=$FM_PR_HOST
 PROJECT_PATH=$FM_PR_PATH
 NUMBER=$FM_PR_NUMBER
+# Set only for github; the REST head read below addresses the repository with them.
+OWNER=$FM_PR_OWNER
+REPO=$FM_PR_REPO
 
 # Task-derived paths are constructed only after the canonical ID validation.
 META="$STATE/$ID.meta"
@@ -64,10 +67,16 @@ fi
 "$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || exit 1
 "$FM_ROOT/bin/fm-guard.sh" || true
 
-# pr_head is recorded only when the forge's CLI can supply it. gh exposes the
-# head commit as a selectable field; plain glab exposes it only inside its JSON
-# output, which would need a JSON processor firstmate does not require, so a
-# GitLab task records no pr_head. Both consumers already treat it as optional:
+# pr_head is recorded only when the forge's CLI can supply it. gh reads the head
+# commit straight from the REST pull request resource, addressed by the owner,
+# repository, and number already parsed from the URL; plain glab exposes it only
+# inside its JSON output, which would need a JSON processor firstmate does not
+# require, so a GitLab task records no pr_head.
+# That read is REST rather than `gh pr view --json headRefOid`, which is
+# GraphQL: bin/fm-pr-merge.sh runs this script on every task-class merge, the
+# fleet's busiest GitHub path, so it must not spend the scarcer shared GraphQL
+# budget on a field REST answers directly.
+# Both consumers already treat pr_head as optional:
 # bin/fm-teardown.sh reads the head from the forge at teardown rather than from
 # metadata and falls back to its provider-agnostic content check, and
 # bin/fm-review-diff.sh resolves the head from the remote when none is recorded.
@@ -76,7 +85,7 @@ fi
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
-  if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
+  if REMOTE_HEAD=$(cd "$WT" && gh api "repos/$OWNER/$REPO/pulls/$NUMBER" --jq .head.sha 2>/dev/null) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
