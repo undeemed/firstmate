@@ -1,0 +1,9 @@
+$ gh api -i repos/undeemed/firstmate/pulls/37   # headers excerpt
+HTTP/2.0 200 OK
+Access-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning
+X-Ratelimit-Limit: 5000
+X-Ratelimit-Remaining: 4983
+X-Ratelimit-Resource: core
+
+$ gh api repos/undeemed/firstmate/pulls/37 --jq .head.sha   # the exact command shape fm-pr-check.sh now runs
+ea31b0d0d7b86c446782da0fcf5074ad5b6cd981
