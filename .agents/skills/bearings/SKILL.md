@@ -86,6 +86,7 @@ Compose the payload from the same snapshot with the same ranking judgment as the
 Run `build` once after composing the payload.
 Its serve-first sequence publishes the board, establishes or resumes its Lavish session with `lavish-axi`, and only then binds and arms the polling source; use the session URL it prints in the chat digest.
 Never bind or arm the board before that session exists.
+Armed is not listening: before the digest promises the board, prove it with `bin/fm-procevent-lavish.sh listening "$(bin/fm-bearings-board.sh path)"` per the `process-event-sources` skill.
 Never run `lavish-axi poll` for the board yourself: the armed source's supervised runner owns the blocking poll, and the watcher's ordinary reconcile restarts it, so no conversational turn ever blocks on the board.
 
 ### Handling a board wake

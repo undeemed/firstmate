@@ -3,19 +3,31 @@
 #
 # Usage:
 #   fm-procevent-lavish.sh arm <artifact.html>
+#   fm-procevent-lavish.sh listening <artifact.html>
 #   fm-procevent-lavish.sh classify <result-file>
 #   fm-procevent-lavish.sh terminal <result-file>
 #   fm-procevent-lavish.sh answers <result-file>
+#   fm-procevent-lavish.sh autohandle <source-id> <sequence> <result-file>
+#   fm-procevent-lavish.sh self-announcing
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html>
 #   fm-procevent-lavish.sh poll <artifact.html>
 #
 # classify   Print the lifecycle state a handler should act on: feedback, ended,
-#            waiting, missing, or unknown.
+#            waiting, missing, poll-error, or unknown. `poll-error` is a poll
+#            that failed rather than a captain who said something, so a caller
+#            can tell a broken channel from real feedback without reading the
+#            payload; `unknown` stays for output this adapter cannot read at all.
+# listening  Prove this exact board is being polled RIGHT NOW, before telling the
+#            captain it is ready for answers. Exit 0 only when the source is
+#            armed, owned by a live runner, and that runner still has its poll
+#            process; exit 3 when the listener is alive between bounded retries;
+#            exit 1 for everything else. Armed is not listening, which is why
+#            `bin/fm-procevent.sh list` alone cannot answer this.
 # poll       The registered listener command `arm` publishes, not a command to
 #            run in a conversational turn. It runs the published blocking poll
-#            and prints its response verbatim, absorbing only the one exact
-#            transient interruption described below.
+#            and prints its response verbatim, absorbing only the transient
+#            interruption described below.
 # terminal   Exit 0 when the captured result means this Lavish source will never
 #            produce another result, so the runner may retire it; any other exit
 #            keeps it armed. This is the generic adapter contract bin/fm-procevent.sh
@@ -44,22 +56,42 @@
 # server-side events. It adds no periodic discovery, no timer fallback, and no
 # dependency on any unreleased capability.
 #
-# BOUNDED QUIET RETRY, owned here and nowhere else. A live listener can be cut
-# short by the server with exactly this two-line response while the session's
-# marks remain available:
+# BOUNDED QUIET RETRY, owned here and nowhere else. A live listener is cut short
+# whenever the one shared Lavish server on its fixed port goes away under it: any
+# `lavish-axi` invocation whose own version differs from the running server's
+# shuts that server down and starts its own, and `lavish-axi stop` and the idle
+# self-stop do the same. Every poll in flight then loses its response stream and
+# reports:
 #
 #   error: Lavish Editor poll response was interrupted
 #   code: SERVER_ERROR
+#   help[2]: ...                                # diagnostics, build-dependent
+#
+# Concurrent boards are NOT the cause: the server keys sessions and active polls
+# per file, so opening a second board never displaces the first, and session
+# state survives a server restart (docs/verification/process-event-sources.md).
+# Polling again is therefore the correct recovery.
 #
 # That is an internal retry, not news, so registering the raw poll made the
 # generic runner capture it and wake the whole fleet. `poll` therefore re-runs
-# the published poll up to POLL_RETRY_LIMIT times for that exact response, with
-# POLL_RETRY_DELAY_DEFAULT seconds between attempts. The match is exact and
-# deliberately narrow: real feedback, ended and missing sessions, any other
-# SERVER_ERROR, and the same interruption still standing after the bound is
-# spent are all printed straight through and captured normally. The retry is a
-# Lavish fact, so the generic runner in bin/fm-procevent.sh stays
+# the published poll up to POLL_RETRY_LIMIT times for that response, with
+# POLL_RETRY_DELAY_DEFAULT seconds between attempts. The match stays deliberately
+# narrow: those two exact leading lines, followed only by the vendor's own
+# `help[...]` diagnostic lines. Real feedback, ended and missing sessions, and
+# any other SERVER_ERROR are printed straight through and captured normally.
+# Matching that shape rather than a pinned byte count is what stops a later build
+# adding a diagnostics line from silently disabling the whole retry. The retry is
+# a Lavish fact, so the generic runner in bin/fm-procevent.sh stays
 # adapter-agnostic and learns nothing about it.
+#
+# BROKEN CHANNEL. When the bound is spent, the board really has stopped
+# listening, and that must never read as an ordinary result. `poll` then emits a
+# POLL_UNRECOVERABLE report naming the board and quoting the exact last server
+# response, `classify` reads it as `poll-error`, and this adapter's own
+# `autohandle` announces it as a broken channel naming that board instead of the
+# generic captured-result wake. The source stays armed, so ordinary supervision
+# starts a fresh listener on its next reconcile, and `listening` is how a caller
+# proves that actually happened.
 #
 # LOSS LIMITATION, stated plainly. The published poll destructively clears
 # feedback before returning it. A result lost after that clearing and before the
@@ -81,7 +113,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$SCRIPT_DIR/fm-procevent-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,69p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,101p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 
 # Canonical identity is physical, not the path string: Lavish itself keys a
 # session on the realpath of the artifact, so two names for one file are one
@@ -110,7 +142,7 @@ cmd_arm() {
   real=$(perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$artifact" 2>/dev/null) \
     || die "cannot resolve the artifact path: $artifact"
   # This adapter's own listener command, which runs the plain blocking form with
-  # no --timeout-ms so completion is a server event, and absorbs only the exact
+  # no --timeout-ms so completion is a server event, and absorbs only the
   # transient interruption. Registering raw poll output is what let that
   # interruption reach the runner as a captured result.
   "$SCRIPT_DIR/fm-procevent.sh" register lavish "$id" \
@@ -134,16 +166,20 @@ POLL_RETRY_LIMIT=12
 POLL_RETRY_DELAY_DEFAULT=5
 POLL_RETRY_DELAY_MAX=60
 
-# Exit 0 only for the exact two-line interruption, and nothing else. The whole
-# response must be those two lines with those exact bytes: whitespace variants,
-# a longer response that merely opens with them, and any other SERVER_ERROR are
-# genuine errors this adapter must never swallow.
+# Exit 10 only for the interruption, and nothing else. The response must open
+# with those two exact lines and may then carry only the vendor's own `help[...]`
+# diagnostic lines: a whitespace variant of either required line, any other
+# SERVER_ERROR, and any response that adds real content are genuine errors this
+# adapter must never swallow. Buffering is bounded, and a response that stops
+# matching is streamed on from the byte it diverged, so nothing is held back,
+# nothing is printed twice, and no unrelated response is buffered.
 poll_response_filter() {  # <response-file>
   perl -e '
     use strict;
     use warnings;
     my ($stage) = @ARGV;
-    my $expected = "error: Lavish Editor poll response was interrupted\ncode: SERVER_ERROR\n";
+    my $head = "error: Lavish Editor poll response was interrupted\ncode: SERVER_ERROR\n";
+    my $max = 8192;
     open my $staged, ">", $stage or exit 2;
     binmode STDIN;
     binmode STDOUT;
@@ -158,6 +194,26 @@ poll_response_filter() {  # <response-file>
         $offset += $written;
       }
     }
+    # Only the vendor diagnostics block may follow the two required lines.
+    sub tail_is_diagnostics {
+      my ($tail) = @_;
+      my @lines = split /\n/, $tail, -1;
+      my $partial = pop @lines;
+      for my $line (@lines) {
+        return 0 unless $line =~ /^help\[/ || $line =~ /^\s*$/;
+      }
+      return 1 if $partial eq "" || $partial =~ /^\s+$/;
+      return 1 if $partial =~ /^help\[/;
+      return 1 if index("help[", $partial) == 0;
+      return 0;
+    }
+    sub still_interruption {
+      my ($seen) = @_;
+      return 0 if length($seen) > $max;
+      return substr($head, 0, length $seen) eq $seen if length($seen) <= length($head);
+      return 0 unless substr($seen, 0, length $head) eq $head;
+      return tail_is_diagnostics(substr($seen, length $head));
+    }
     while (1) {
       my $count = sysread STDIN, my $chunk, 65536;
       exit 2 unless defined $count;
@@ -166,22 +222,36 @@ poll_response_filter() {  # <response-file>
         write_all(*STDOUT, $chunk);
         next;
       }
-      my $room = length($expected) + 1 - length($candidate);
-      my $take = length($chunk) < $room ? length($chunk) : $room;
-      my $prefix = substr($chunk, 0, $take);
-      $candidate .= $prefix;
-      write_all($staged, $prefix);
-      my $matches_prefix = length($candidate) <= length($expected)
-        && substr($expected, 0, length($candidate)) eq $candidate;
-      if (!$matches_prefix) {
+      $candidate .= $chunk;
+      if (still_interruption($candidate)) {
+        # Staged only while the response is still a candidate interruption, so
+        # a large unrelated response is streamed on instead of buffered here.
+        write_all($staged, $chunk);
+      } else {
         write_all(*STDOUT, $candidate);
-        write_all(*STDOUT, substr($chunk, $take));
         $streaming = 1;
       }
     }
-    exit 10 if !$streaming && $candidate eq $expected;
+    exit 10 if !$streaming
+      && length($candidate) >= length($head)
+      && substr($candidate, 0, length $head) eq $head;
     write_all(*STDOUT, $candidate) unless $streaming;
   ' "$1"
+}
+
+# The one thing this adapter says when the bounded retry genuinely failed: a
+# broken answer channel, naming the board, carrying the exact last server
+# response as bounded indented evidence. Indenting that quoted payload is what
+# keeps it out of every field this adapter reads at a line start, so a server
+# response can never forge the board or the verdict.
+poll_broken_channel_report() {  # <board> <attempts> <response-file>
+  printf 'error: the Lavish answer channel for this board stopped responding\n'
+  printf 'code: POLL_UNRECOVERABLE\n'
+  printf 'channel: broken\n'
+  printf 'board: %s\n' "$1"
+  printf 'attempts: %s\n' "$2"
+  printf 'last_response:\n'
+  head -c 2048 -- "$3" | head -n 20 | awk '{ print "  " $0 }'
 }
 
 # Seconds between retries. FM_LAVISH_POLL_RETRY_DELAY is a bounded test
@@ -234,7 +304,7 @@ cmd_poll() {
           attempt=$((attempt + 1))
           sleep "$delay"
         else
-          cat -- "$response"
+          poll_broken_channel_report "$artifact" "$((attempt + 1))" "$response"
           break
         fi
         ;;
@@ -277,11 +347,119 @@ cmd_classify() {
       sub(/^code:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print; exit }
     in_error { exit }
   ' "$file")
-  if [ "$error_code" = NOT_FOUND ] || [[ "$error_message" == "No active Lavish Editor session"* ]]; then
+  if [ -z "$error_message" ]; then
+    printf 'unknown\n'
+  elif [ "$error_code" = NOT_FOUND ] || [[ "$error_message" == "No active Lavish Editor session"* ]]; then
     printf 'missing\n'
   else
-    printf 'unknown\n'
+    # An error response is a poll that failed, never silence and never feedback.
+    printf 'poll-error\n'
   fi
+}
+
+# The board a broken-channel report names, read only as a top-level field ahead
+# of the indented server payload, so nothing inside that payload can forge it.
+report_board() {  # <result-file>
+  awk '
+    /^last_response:/ { exit }
+    /^board: / { sub(/^board: /, ""); print; exit }
+  ' "$1"
+}
+
+# Only the report this adapter mints itself counts as a broken channel: its
+# exact first line, with `code: POLL_UNRECOVERABLE` and `channel: broken` as
+# top-level fields ahead of the indented evidence, so a vendor payload captured
+# verbatim is never announced or acknowledged here.
+report_is_own_broken_channel() {  # <result-file>
+  awk '
+    NR == 1 { if ($0 != "error: the Lavish answer channel for this board stopped responding") { bad = 1; exit } next }
+    /^last_response:/ { exit }
+    $0 == "code: POLL_UNRECOVERABLE" { code = 1 }
+    $0 == "channel: broken" { channel = 1 }
+    END { exit (bad || !code || !channel) }
+  ' "$1"
+}
+
+# This adapter announces its own broken channel, so the runner publishes only
+# what is left unhandled afterwards (see bin/fm-procevent.sh's announcement seam).
+cmd_self_announcing() { return 0; }
+
+# Apply exactly one captured result: a recovery failure this adapter's own poll
+# reported. It is announced as a broken channel naming the board and then
+# acknowledged, so the reader is told the board stopped listening instead of
+# receiving an ordinary result wake to decode. Every other result - real
+# feedback, an ended or missing session, a single failed poll - is left
+# unhandled and announced exactly as before. The wake is appended BEFORE the
+# acknowledgement, so a crash between them leaves the result announced again
+# rather than silently retired.
+cmd_autohandle() {  # <source-id> <sequence> <result-file>
+  local id=${1-} seq=${2-} file=${3-} board
+  [ "$#" -eq 3 ] || usage
+  fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
+  case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer: $seq" ;; esac
+  [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
+  [ "$(cmd_classify "$file")" = poll-error ] || return 1
+  report_is_own_broken_channel "$file" || return 1
+  board=$(report_board "$file")
+  [ -n "$board" ] || return 1
+  fm_wake_append check "lavish-broken:$id:$seq" \
+    "check: lavish board stopped listening: ${board:0:256} (source $id sequence $seq)" || return 1
+  "$SCRIPT_DIR/fm-procevent.sh" handled "$id" "$seq" >/dev/null || return 1
+}
+
+# A live published poll for this exact board, read only from the owning
+# runner's own process group and only as a whole argv word: a foreign poll of
+# the same board, or of a superstring path, can never stand in for the owned
+# listener. This is the Lavish half of the liveness proof and the reason
+# `listening` can tell a board that is really being polled from one whose
+# listener is only registered: the generic runner can prove its own child is
+# running, but only this adapter knows that child must in turn be holding a
+# `lavish-axi poll` for this board.
+poll_process_pid() {  # <board> <runner-leader-pid>
+  local pid
+  pid=$(ps -eo pid=,pgid=,args= 2>/dev/null | FM_LAVISH_BOARD="$1" FM_LAVISH_RUNNER="$2" perl -ne '
+    my ($pid, $pgid, $args) = /^\s*(\d+)\s+(\d+)\s+(.*)$/ or next;
+    next unless $pgid == $ENV{FM_LAVISH_RUNNER};
+    next unless index($args, "lavish-axi") >= 0;
+    next unless $args =~ /(?:^|[ \t])poll(?:[ \t]|$)/;
+    next unless $args =~ /(?:^|[ \t])\Q$ENV{FM_LAVISH_BOARD}\E(?:[ \t]|$)/;
+    print "$pid\n";
+    last;
+  ')
+  [ -n "$pid" ] || return 1
+  printf '%s\n' "$pid"
+}
+
+# Prove this board is genuinely being polled right now, before a caller tells the
+# captain it is ready for answers. Ownership is the generic runner's to prove,
+# because none of it is Lavish-specific; the published poll for this board is
+# this adapter's.
+cmd_listening() {  # <artifact.html>
+  local artifact=${1-} id real detail poll_pid runner_pid status=0
+  [ -n "$artifact" ] || usage
+  [ "$#" -eq 1 ] || usage
+  id=$(cmd_source_id "$artifact") || exit 1
+  real=$(perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$artifact" 2>/dev/null) \
+    || die "cannot resolve the artifact path: $artifact"
+  detail=$("$SCRIPT_DIR/fm-procevent.sh" alive "$id" 2>&1) || status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'not-listening: %s\n' "$real"
+    printf 'detail: %s\n' "$detail"
+    return 1
+  fi
+  runner_pid=${detail##*runner=}
+  runner_pid=${runner_pid%%[!0-9]*}
+  [ -n "$runner_pid" ] || die "cannot read the owning runner from: $detail"
+  if ! poll_pid=$(poll_process_pid "$real" "$runner_pid"); then
+    # The listener is up but is not holding a poll this instant: a bounded retry
+    # between attempts. Not a dead channel, and still not something to promise
+    # the captain on.
+    printf 'recovering: %s (the listener holds no poll right now, between bounded retries)\n' "$real"
+    printf 'detail: %s\n' "$detail"
+    return 3
+  fi
+  printf 'listening: %s\n' "$real"
+  printf 'detail: %s poll-process=%s\n' "$detail" "$poll_pid"
 }
 
 # Whether a captured result ends this source, for the generic runner's automatic
@@ -386,12 +564,15 @@ cmd_answers() {
 
 case "${1-}" in
   arm)       shift; cmd_arm "$@" ;;
+  listening) shift; cmd_listening "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   poll)      shift; cmd_poll "$@" ;;
   source-id) shift; cmd_source_id "$@" ;;
   classify)  shift; cmd_classify "$@" ;;
   terminal)  shift; cmd_terminal "$@" ;;
   answers)   shift; cmd_answers "$@" ;;
+  autohandle) shift; cmd_autohandle "$@" ;;
+  self-announcing) shift; cmd_self_announcing "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;
 esac
