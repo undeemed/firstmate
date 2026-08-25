@@ -88,6 +88,13 @@ case " $* " in
     printf '%s\n' "${FM_TEST_GH_STATE:-OPEN}"
     ;;
 esac
+# The REST payload bin/fm-pr-merge.sh's squash guard reads before it applies the
+# implicit --squash: an ordinary single-topic PR, which that guard lets through.
+if [ "${1:-}" = api ]; then
+  case "${2:-}" in
+    */pulls/*) printf '%s\n' '{"commits":1,"changed_files":2,"head":{"ref":"fm/task-a"},"body":""}' ;;
+  esac
+fi
 SH
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
