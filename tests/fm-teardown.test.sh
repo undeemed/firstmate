@@ -255,7 +255,10 @@ land_on_origin_main() {
   rm -rf "$tmp"
 }
 
-# Override GitHub lookups to report PR 7 as merged with the supplied head.
+# Override GitHub lookups to report PR 7 as merged with the supplied head. The
+# head is answered on two shapes because two owners read it differently:
+# bin/fm-pr-check.sh reads the REST pull request resource for pr_head=, and
+# bin/fm-teardown.sh reads state and head together through gh pr view.
 add_gh_pr_merged_for_head() {
   local case_dir=$1 head=$2
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
@@ -270,6 +273,11 @@ exit 0
 SH
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
+if [ "\${1:-}" = api ]; then
+  case " \$* " in
+    *" --jq .head.sha "*) printf '%s\n' '$head' ; exit 0 ;;
+  esac
+fi
 case "\${1:-} \${2:-}" in
   "pr view")
     case " \$* " in

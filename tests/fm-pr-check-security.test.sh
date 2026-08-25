@@ -81,16 +81,25 @@ SH
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case " $* " in
-  *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
   *" state "*)
     [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
     [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
     printf '%s\n' "${FM_TEST_GH_STATE:-OPEN}"
     ;;
 esac
-# The REST payload bin/fm-pr-merge.sh's squash guard reads before it applies the
-# implicit --squash: an ordinary single-topic PR, which that guard lets through.
 if [ "${1:-}" = api ]; then
+  # The REST head read behind bin/fm-pr-check.sh's pr_head lookup. GraphQL
+  # `gh pr view --json headRefOid` is answered by nothing at all, so a return to
+  # it records no head.
+  case " $* " in
+    *" --jq .head.sha "*)
+      printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+      exit 0
+      ;;
+  esac
+  # The REST payload bin/fm-pr-merge.sh's squash guard reads before it applies
+  # the implicit --squash: an ordinary single-topic PR, which that guard lets
+  # through.
   case "${2:-}" in
     */pulls/*) printf '%s\n' '{"commits":1,"changed_files":2,"head":{"ref":"fm/task-a"},"body":""}' ;;
   esac
@@ -550,6 +559,13 @@ test_valid_recording_and_merge_derivation() {
   grep -qxF 'pr=https://github.com/my-org/repo_name.with-dots/pull/37' "$dir/home/state/task-a.meta" \
     || fail "canonical pr metadata was not exact"
   grep -qxF "pr_head=$expected" "$dir/home/state/task-a.meta" || fail "PR head metadata was not exact"
+  # The head is read from REST, addressed by the owner, repository, and number
+  # already parsed from the URL. `gh pr view` is GraphQL, whose budget the whole
+  # fleet shares, and bin/fm-pr-merge.sh runs this path on every task merge.
+  grep -qxF 'api repos/my-org/repo_name.with-dots/pulls/37 --jq .head.sha' "$dir/gh.log" \
+    || fail "PR head was not read from the REST pull request resource"
+  assert_no_grep 'pr view' "$dir/gh.log" "PR head was read with GraphQL gh pr view"
+  assert_no_grep 'graphql' "$dir/gh.log" "arming a PR watch made a GraphQL call"
   cmp -s "$POLL" "$dir/home/state/task-a.check.sh" || fail "published check was not byte-for-byte static"
   [ "$(file_mode "$dir/home/state/task-a.check.sh")" = 600 ] || fail "published check mode was not 0600"
   [ "$(file_mode "$dir/home/state/task-a.pr-poll")" = 600 ] || fail "published sidecar mode was not 0600"
@@ -2905,6 +2921,21 @@ EOF
     > "$state/task-a.pr-poll"
   out=$(FM_TEST_GLAB_STATE=merged run_poll "$dir")
   [ -z "$out" ] || fail "GitLab poll emitted for a sidecar whose project was swapped"
+
+  # Arming a GitLab watch stays on glab: no GitHub CLI call is made at all, and
+  # no pr_head is recorded, because plain glab exposes the head only inside JSON
+  # this path deliberately does not parse.
+  write_task_meta "$dir" task-d
+  : > "$dir/gh.log"
+  run_check_entry "$dir" task-d "$url" >/dev/null 2>/dev/null \
+    || fail "arming a GitLab watch with glab present failed"
+  grep -qxF "pr=$url" "$dir/home/state/task-d.meta" \
+    || fail "arming a GitLab watch did not record the canonical merge request URL"
+  assert_no_grep 'pr_head=' "$dir/home/state/task-d.meta" \
+    "arming a GitLab watch recorded a head"
+  [ ! -s "$dir/gh.log" ] || fail "arming a GitLab watch called the GitHub CLI"
+  fm_pr_poll_artifacts_valid "$dir/home/state" task-d "$POLL" \
+    || fail "arming a GitLab watch did not publish a valid poll"
 
   # Arming is where a missing CLI can still be reported, so it refuses there.
   write_task_meta "$dir" task-b

@@ -77,10 +77,12 @@ write_pull_json() {
 }
 
 # gh-axi mock recording every invocation to a log file, and gh mock answering
-# headRefOid for fm-pr-check.sh's pr_head lookup plus the REST pull payload the
-# squash guard reads. Every gh invocation is logged, so a test can prove the
-# merge path added no GraphQL call. A gh-api-fails marker in the case dir makes
-# the REST read fail. Args: case_dir head_sha
+# the REST head read behind fm-pr-check.sh's pr_head lookup plus the REST pull
+# payload the squash guard reads. GraphQL `gh pr view` is deliberately answered
+# by nothing, so a return to it records no head at all. Every gh invocation is
+# logged, so a test can prove the merge path added no GraphQL call. A
+# gh-api-fails marker in the case dir makes the REST reads fail.
+# Args: case_dir head_sha
 add_gh_mocks() {
   local case_dir=$1 head=$2
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
@@ -91,14 +93,14 @@ SH
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$case_dir/gh.log"
-case "\${1:-} \${2:-}" in
-  "pr view")
-    case " \$* " in
-      *headRefOid*) printf '%s\n' '$head' ; exit 0 ;;
-    esac
-    ;;
-esac
 if [ "\${1:-}" = api ]; then
+  case " \$* " in
+    *" --jq .head.sha "*)
+      [ ! -e "$case_dir/gh-api-fails" ] || exit 1
+      printf '%s\n' '$head'
+      exit 0
+      ;;
+  esac
   case "\${2:-}" in
     */pulls/*)
       [ ! -e "$case_dir/gh-api-fails" ] || exit 1
@@ -271,6 +273,12 @@ test_records_pr_and_head_before_merging() {
     "records-before-merge: pr= was not recorded"
   assert_grep 'pr_head=deadbeefcafefeed0000000000000000deadbeef' "$case_dir/state/task-x1.meta" \
     "records-before-merge: pr_head= was not recorded"
+  assert_grep 'api repos/example/repo/pulls/9 --jq .head.sha' "$case_dir/gh.log" \
+    "records-before-merge: pr_head= was not read from the REST pull request resource"
+  assert_no_grep 'pr view' "$case_dir/gh.log" \
+    "records-before-merge: the head was read with GraphQL gh pr view"
+  assert_no_grep 'graphql' "$case_dir/gh.log" \
+    "records-before-merge: a GraphQL call was introduced on the task merge path"
   grep -qxF 'pr merge 9 --repo example/repo --squash' "$case_dir/gh-axi.log" \
     || fail "records-before-merge: gh-axi pr merge was not invoked with number, --repo, and default --squash"
   pass "fm-pr-merge records pr= and pr_head= before invoking gh-axi pr merge"
@@ -990,8 +998,10 @@ test_merge_and_rebase_unaffected_by_squash_guard() {
       || fail "squash-guard-explicit-$method: --$method was not forwarded unchanged"
     assert_no_grep 'refusing to squash' "$case_dir/stderr" \
       "squash-guard-explicit-$method: an explicit --$method was refused"
-    assert_no_grep 'api repos/example/repo/pulls' "$case_dir/gh.log" \
-      "squash-guard-explicit-$method: an explicit merge method still spent a count read"
+    # The pr_head lookup reads the same REST resource, so the count read is
+    # identified by the whole line: it is the one with no --jq selector.
+    ! grep -qxF "api repos/example/repo/pulls/$number" "$case_dir/gh.log" \
+      || fail "squash-guard-explicit-$method: an explicit merge method still spent a count read"
     number=$((number + 1))
   done
   pass "fm-pr-merge leaves an explicit --merge or --rebase completely unguarded"
