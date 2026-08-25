@@ -496,6 +496,64 @@ test_flag_misuse_refuses() {
   pass "fm-send --resolve-key: --key, empty message, explicit targets, and malformed keys refuse loudly"
 }
 
+# End to end over the two scripts a worker and its supervisor actually use: take
+# the decision form straight out of a freshly generated brief (bin/fm-brief.sh),
+# have the worker file TWO decisions with it, and answer one. The scaffold is only
+# correct if the key it teaches is the key --resolve-key can close, and if the
+# second decision survives the first answer instead of sharing its record.
+test_scaffolded_decision_form_is_answerable_end_to_end() {
+  local dir fb log home rc out brief template first second
+  dir="$TMP_ROOT/scaffold-form"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home scaffold-form)
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" t20 some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "the ship scaffold could not be generated"
+  brief="$home/data/t20/brief.md"
+
+  # The literal line the worker is told to append, with the placeholders filled
+  # in exactly as a worker would. Nothing else about the form is assumed here.
+  template=$(grep -F 'append `needs-decision' "$brief" | head -1) \
+    || fail "the ship brief does not tell the worker how to open a decision"
+  template=${template#*append \`}
+  template=${template%%\`*}
+  case "$template" in
+    'needs-decision '*) ;;
+    *) fail "the scaffolded decision form is not a needs-decision line: '$template'" ;;
+  esac
+  first=${template//<slug>/api-shape}
+  first=${first//\{summary of options\}/pick REST or RPC}
+  second=${template//<slug>/db-choice}
+  second=${second//\{summary of options\}/pg or sqlite}
+
+  fm_write_meta "$home/state/t20.meta" "window=sess:fm-t20" "kind=ship"
+  printf '%s\n' "$first" > "$home/state/t20.status"
+  printf '%s\n' "$second" >> "$home/state/t20.status"
+  printf 'working: continuing while the answers land\n' >> "$home/state/t20.status"
+
+  out=$(drain_out "$home")
+  printf '%s' "$out" | grep -F '[key=api-shape]' >/dev/null \
+    || fail "a decision written from the scaffold did not list under its own key: $out"
+  printf '%s' "$out" | grep -F '[key=db-choice]' >/dev/null \
+    || fail "the second scaffolded decision did not list under its own key: $out"
+  if printf '%s' "$out" | grep -F 'KEY SYNTAX' >/dev/null; then
+    fail "the scaffolded form tripped the stated-key guard: $out"
+  fi
+
+  run_send "$fb" "$home" "$log" t20 --resolve-key api-shape "go with REST"; rc=$?
+  expect_code 0 "$rc" "answering a decision written from the scaffold should succeed"
+
+  out=$(drain_out "$home")
+  if printf '%s' "$out" | grep -F '[key=api-shape]' >/dev/null; then
+    fail "the answered decision is still open: $out"
+  fi
+  printf '%s' "$out" | grep -F '[key=db-choice]' >/dev/null \
+    || fail "answering one decision also closed the other: $out"
+  pass "a decision written verbatim from the scaffold is answerable by its own key"
+}
+
+
 test_answer_send_closes_open_decision
 test_answer_close_is_self_announced
 test_colon_first_key_position_is_answerable
@@ -509,3 +567,4 @@ test_remote_secondmate_answer_closes_locally
 test_remote_reply_corr_tag_does_not_block_resolve_key
 test_remote_transport_failure_does_not_close
 test_flag_misuse_refuses
+test_scaffolded_decision_form_is_answerable_end_to_end

@@ -873,6 +873,58 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+# The scaffolds are where a worker learns to name a decision. A "[key=<slug>]"
+# token stated later in the line is message text to the fold, so the decision
+# files under the shared "default" key, cannot be answered by its own key, and
+# collides with every other unkeyed decision on that task
+# (bin/fm-classify-lib.sh owns that grammar). Every generated variant must
+# therefore show the working position, on the opening line AND on the matching
+# resolved line.
+test_every_scaffold_states_the_key_before_the_colon() {
+  local home brief id
+  home="$TMP_ROOT/key-position-home"
+  mkdir -p "$home/data"
+
+  for id_mode in "brief-key-a1:no-mistakes" "brief-key-a2:direct-PR" "brief-key-a3:local-only"; do
+    id=${id_mode%%:*}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_mode##*:}" >/dev/null 2>&1 \
+      || fail "$id: ship scaffold failed"
+    brief="$home/data/$id/brief.md"
+    assert_grep "append \`needs-decision [key=<slug>]: {summary of options}\`" "$brief" \
+      "$id: ship brief does not show the key before the colon"
+    assert_grep "append \`resolved [key=<slug>]: {how it cleared}\`" "$brief" \
+      "$id: ship brief does not show the keyed resolved form"
+    assert_no_grep "append \`needs-decision: {summary of options}\`" "$brief" \
+      "$id: ship brief still teaches the unkeyed opening form"
+  done
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-key-a4 some-proj --scout >/dev/null 2>&1 \
+    || fail "scout scaffold failed"
+  brief="$home/data/brief-key-a4/brief.md"
+  assert_grep "append \`needs-decision [key=<slug>]: {summary of options}\`" "$brief" \
+    "scout brief does not show the key before the colon"
+  assert_grep "append \`resolved [key=<slug>]: {how it cleared}\`" "$brief" \
+    "scout brief does not show the keyed resolved form"
+  assert_no_grep "append \`needs-decision: {summary of options}\`" "$brief" \
+    "scout brief still teaches the unkeyed opening form"
+
+  FM_SECONDMATE_CHARTER='own the fixture domain' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-key-a5 --secondmate some-proj >/dev/null 2>&1 \
+    || fail "secondmate charter scaffold failed"
+  brief="$home/data/brief-key-a5/brief.md"
+  assert_grep "\`needs-decision [key=<slug>]: {summary}\`" "$brief" \
+    "secondmate charter does not show the key before the colon"
+  assert_grep "append \`resolved [key=<slug>]: {how it cleared}\`" "$brief" \
+    "secondmate charter does not show the keyed resolved form"
+
+  for id in brief-key-a1 brief-key-a4 brief-key-a5; do
+    assert_grep 'must sit BEFORE the colon' "$home/data/$id/brief.md" \
+      "$id: brief does not state the position rule the fold enforces"
+  done
+  pass "fm-brief.sh: every scaffold states a decision key before the colon"
+}
+
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -896,3 +948,4 @@ test_ship_and_scout_declare_every_stop
 test_every_scaffold_carries_the_progress_contract
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
+test_every_scaffold_states_the_key_before_the_colon

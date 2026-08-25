@@ -2,7 +2,8 @@
 # Present durable watcher wake records, drop records naming a retired worker,
 # optionally acknowledge handled records, annotate every unread line for validated
 # signal status keys, surface unread informational status lines, OPEN DECISIONS,
-# and captain-call record divergence, then assert liveness.
+# stated decision keys the fold could not use as written, and captain-call record
+# divergence, then assert liveness.
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
@@ -179,6 +180,58 @@ EOF
   printf "OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'\n" || return 1
 }
 
+# Print the KEY SYNTAX section: every newly appended decision line whose stated
+# "[key=...]" token the fold cannot use as written. It exists because that loss
+# is invisible in the listing above - the note still shows the literal token, so
+# the entry reads as correctly keyed while the fold placed it under "default" (or
+# skipped it), and the first symptom is fm-send refusing the answer. Warning is
+# the only available shape: workers append status with a plain `echo`, so there
+# is no write path to refuse at (contract: bin/fm-classify-lib.sh "stated-key
+# syntax guard"). Bounded and silent like the sections above.
+print_key_syntax_section() {
+  local snapshot=$1 rows task reason line item_bytes=220 global_bytes=1500
+  local output='' used=0 shown=0 omitted=0 bytes hint
+
+  rows=$(scan_key_syntax_warnings_snapshot "$STATE" "$snapshot") || return 1
+  if [ -z "$rows" ]; then
+    commit_key_syntax_markers "$STATE" "$snapshot"
+    return 0
+  fi
+
+  while IFS=$(printf '\t') read -r task reason line; do
+    [ -n "$task" ] || continue
+    case "$reason" in
+      unplaced-key) hint='key token past the note head, so this line folded under "default"' ;;
+      invalid-slug) hint='key slug outside A-Za-z0-9._-, so the fold skipped this line entirely' ;;
+      late-key) hint='key token after the colon: honored, but write it before the colon' ;;
+      *) hint="$reason" ;;
+    esac
+    line="$task $hint: $line"
+    fm_cap_line_var "$line" $((item_bytes - 1))
+    line=$FM_LINE_CAP_LINE
+    bytes=$(( ${#line} + 1 ))
+    if [ $((used + bytes)) -gt "$global_bytes" ]; then
+      omitted=$((omitted + 1))
+      continue
+    fi
+    output="$output$line
+"
+    used=$((used + bytes))
+    shown=$((shown + 1))
+  done <<EOF
+$rows
+EOF
+
+  [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || return 0
+  printf 'KEY SYNTAX (a stated decision key the fold could not use as written - not re-printed after this presentation):\n' || return 1
+  printf '%s' "$output" || return 1
+  if [ "$omitted" -gt 0 ]; then
+    printf 'KEY SYNTAX: %d more omitted (byte cap)\n' "$omitted" || return 1
+  fi
+  printf 'KEY SYNTAX: the documented position is before the colon - needs-decision [key=<slug>]: <summary>; steer the worker, and answer an affected decision by the key the open listing above actually shows.\n' || return 1
+  commit_key_syntax_markers "$STATE" "$snapshot"
+}
+
 # Print the RECORD DIVERGENCE section: every captain call whose two records
 # contradict each other - the status log says a key was resolved outright while
 # the task held for the captain is still open. Nothing here closes anything; the
@@ -246,6 +299,7 @@ print_status_sections() {
   acknowledged=$(status_acknowledge_presented_snapshot "$STATE" "$snapshot" "$fully_presented") || return 1
   print_unread_status_section "$snapshot" || return 1
   print_open_decisions_section "$snapshot" || return 1
+  print_key_syntax_section "$snapshot" || return 1
   print_record_divergence_section || return 1
   status_commit_presentation_snapshot "$STATE" "$acknowledged"
 }
