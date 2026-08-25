@@ -331,6 +331,39 @@ test_rows_omitted_by_the_byte_cap_rewarn_next_drain() {
   pass "rows omitted by the byte cap re-warn next drain, then go quiet"
 }
 
+# A stale marker can outlive its task (a retire that died between its manifest
+# update and its rm -f) and later match a rebuilt log through task-ID and inode
+# reuse; an in-place O_TRUNC rewrite reproduces that matched-identity state
+# (temp+mv would change the inode and defang this test). With the recorded
+# offset past the shorter rebuilt file's end, the drain must re-warn from byte
+# 0 rather than silently skip every bad line in the rebuilt log - for a
+# rejected slug this section is the decision's only surface.
+test_marker_offset_past_file_end_rewarns_instead_of_skipping() {
+  local dir state statusfile out i
+  dir=$(make_case key-syntax-stale-offset)
+  state="$dir/state"
+  statusfile="$state/task24.status"
+  out="$dir/drain.out"
+  printf 'needs-decision: pick REST or RPC [key=api-shape]\n' > "$statusfile"
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    printf 'working: routine progress line %s with some padding\n' "$i" >> "$statusfile"
+  done
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "bootstrap drain failed"
+  grep -F 'KEY SYNTAX' "$out" >/dev/null \
+    || fail "the bootstrap drain did not record the bad line as warned: $(cat "$out")"
+
+  printf 'needs-decision: choose blue or green [key=deploy]\n' > "$statusfile"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
+    || fail "drain failed on a marker offset past the file end"
+  grep -F 'KEY SYNTAX' "$out" >/dev/null \
+    || fail "a marker offset past the file end silently skipped the rebuilt log: $(cat "$out")"
+  grep -F 'task24' "$out" | grep -F 'choose blue or green' >/dev/null \
+    || fail "the rebuilt log's own bad line was not the one re-warned: $(cat "$out")"
+  pass "a marker offset past the file's end re-warns the rebuilt log instead of skipping it"
+}
+
 
 test_buried_decision_still_surfaces
 test_over_long_decision_note_is_capped_with_a_marker
@@ -345,3 +378,4 @@ test_misplaced_key_is_reported_once
 test_rejected_slug_is_warned_even_though_it_never_lists_as_open
 test_documented_key_position_is_never_warned_about
 test_rows_omitted_by_the_byte_cap_rewarn_next_drain
+test_marker_offset_past_file_end_rewarns_instead_of_skipping
