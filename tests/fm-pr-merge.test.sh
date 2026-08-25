@@ -24,6 +24,9 @@
 #   (o) glab or jq absent refuses before any state is recorded
 #   (p) --sha in extra GitLab args fails fast, and still forwards on GitHub
 #   (q) a GitLab refusal still leaves pr= recorded and the merge poll armed
+#   (r) the implicit --squash default is refused on a stacked PR, naming the
+#       counts it read live from REST, while a small PR still squashes, an
+#       explicit method still wins, and GitLab is never consulted for counts
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -64,8 +67,20 @@ make_case() {
   printf '%s\n' "$case_dir"
 }
 
+# write_pull_json <case_dir> [commits] [changed_files] [head_ref] [body]
+# The REST pull payload the squash guard reads at merge time. The defaults
+# describe an ordinary single-topic PR, which must still squash by default.
+write_pull_json() {
+  local case_dir=$1 commits=${2:-1} files=${3:-3} head_ref=${4:-fm/task-x1} body=${5:-}
+  printf '{"commits":%s,"changed_files":%s,"head":{"ref":"%s"},"body":"%s"}\n' \
+    "$commits" "$files" "$head_ref" "$body" > "$case_dir/pull.json"
+}
+
 # gh-axi mock recording every invocation to a log file, and gh mock answering
-# headRefOid for fm-pr-check.sh's pr_head lookup. Args: case_dir head_sha
+# headRefOid for fm-pr-check.sh's pr_head lookup plus the REST pull payload the
+# squash guard reads. Every gh invocation is logged, so a test can prove the
+# merge path added no GraphQL call. A gh-api-fails marker in the case dir makes
+# the REST read fail. Args: case_dir head_sha
 add_gh_mocks() {
   local case_dir=$1 head=$2
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
@@ -75,6 +90,7 @@ exit 0
 SH
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/gh.log"
 case "\${1:-} \${2:-}" in
   "pr view")
     case " \$* " in
@@ -82,15 +98,27 @@ case "\${1:-} \${2:-}" in
     esac
     ;;
 esac
+if [ "\${1:-}" = api ]; then
+  case "\${2:-}" in
+    */pulls/*)
+      [ ! -e "$case_dir/gh-api-fails" ] || exit 1
+      cat "$case_dir/pull.json"
+      exit 0
+      ;;
+  esac
+fi
 exit 0
 SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+  : > "$case_dir/gh.log"
+  write_pull_json "$case_dir"
 }
 
 # gh-axi mock that fails the merge call but succeeds everything else, so a
 # real merge failure is distinguishable from the recording step.
 add_gh_mocks_merge_fails() {
   local case_dir=$1
+  add_gh_mocks "$case_dir" cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
@@ -99,11 +127,7 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
-  cat > "$case_dir/fakebin/gh" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+  chmod +x "$case_dir/fakebin/gh-axi"
 }
 
 # glab mock recording every invocation together with the GITLAB_HOST it was
@@ -810,6 +834,236 @@ test_github_still_forwards_sha_arg() {
   pass "fm-pr-merge leaves GitHub extra-arg handling unchanged, including --sha"
 }
 
+# --- squash-safety guard on the implicit default ----------------------------
+# A squash collapses every commit on the PR into one, so the implicit default
+# has to know what it is about to flatten. The counts come from one live REST
+# read; an explicit merge method skips the guard entirely.
+
+# The stacked shape whose ancestry a default squash destroyed: many commits
+# across many files, carried on one pull request.
+STACK_COMMITS=249
+STACK_FILES=379
+
+test_default_squash_refused_for_stacked_pr() {
+  local case_dir rc
+  case_dir=$(make_case squash-guard-stack)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1010101010101010101010101010101010101010
+  write_pull_json "$case_dir" "$STACK_COMMITS" "$STACK_FILES" fm/ladder-rung-17
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/241 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "squash-guard-stack: fm-pr-merge should refuse to squash a stacked PR by default"
+  assert_grep "it carries $STACK_COMMITS commits and $STACK_FILES changed files" "$case_dir/stderr" \
+    "squash-guard-stack: the refusal did not name the counts it actually read"
+  assert_grep "flatten those $STACK_COMMITS commits into one commit and destroy their ancestry permanently" \
+    "$case_dir/stderr" "squash-guard-stack: the refusal did not state the consequence"
+  assert_grep 'pass --squash to squash it anyway' "$case_dir/stderr" \
+    "squash-guard-stack: the refusal did not say how to proceed deliberately"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "squash-guard-stack: the merge was attempted despite the refusal"
+  assert_grep 'api repos/example/repo/pulls/241' "$case_dir/gh.log" \
+    "squash-guard-stack: the counts were not read from REST at merge time"
+  assert_no_grep 'graphql' "$case_dir/gh.log" \
+    "squash-guard-stack: a GraphQL call was introduced on the merge path"
+  pass "fm-pr-merge refuses the default squash on a stacked PR and names the counts"
+}
+
+test_squash_guard_boundary_is_more_than_the_threshold() {
+  local case_dir rc
+  # At the threshold the default still squashes, one commit past it refuses, so
+  # the gate is "more than", not "at least", and neither side is vacuous.
+  case_dir=$(make_case squash-guard-at-threshold)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1818181818181818181818181818181818181818
+  write_pull_json "$case_dir" 15 100
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/249 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "squash-guard-at-threshold: a PR exactly at the threshold should still squash"
+  grep -qxF 'pr merge 249 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "squash-guard-at-threshold: the default --squash was not applied at the threshold"
+
+  case_dir=$(make_case squash-guard-past-threshold)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1919191919191919191919191919191919191919
+  write_pull_json "$case_dir" 16 100
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/250 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "squash-guard-past-threshold: one commit past the threshold should refuse"
+  assert_grep 'it carries 16 commits and 100 changed files' "$case_dir/stderr" \
+    "squash-guard-past-threshold: the refusal did not name the counts it actually read"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "squash-guard-past-threshold: the merge was attempted despite the refusal"
+  pass "fm-pr-merge squashes at the guard threshold and refuses one commit past it"
+}
+
+test_default_squash_refused_on_changed_file_threshold() {
+  local case_dir rc
+  case_dir=$(make_case squash-guard-files)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1212121212121212121212121212121212121212
+  # Few commits, but a change far too broad to flatten without being asked.
+  write_pull_json "$case_dir" 3 400
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/242 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "squash-guard-files: fm-pr-merge should refuse on the changed-file threshold"
+  assert_grep 'it carries 3 commits and 400 changed files' "$case_dir/stderr" \
+    "squash-guard-files: the refusal did not name the counts it actually read"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "squash-guard-files: the merge was attempted despite the refusal"
+  pass "fm-pr-merge refuses the default squash when the changed-file count is too large"
+}
+
+test_single_commit_pr_still_squashes_by_default() {
+  local case_dir
+  case_dir=$(make_case squash-guard-single-commit)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1313131313131313131313131313131313131313
+  write_pull_json "$case_dir" 1 11
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/243 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "squash-guard-single-commit: an ordinary single-commit PR should still merge"
+
+  grep -qxF 'pr merge 243 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "squash-guard-single-commit: the default --squash was not applied as before"
+  assert_no_grep 'refusing to squash' "$case_dir/stderr" \
+    "squash-guard-single-commit: a single-commit PR was refused"
+  assert_no_grep 'graphql' "$case_dir/gh.log" \
+    "squash-guard-single-commit: a GraphQL call was introduced on the merge path"
+  pass "fm-pr-merge still squashes a single-commit PR by default, exactly as before"
+}
+
+test_explicit_squash_overrides_the_refusal() {
+  local case_dir
+  case_dir=$(make_case squash-guard-explicit)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1414141414141414141414141414141414141414
+  write_pull_json "$case_dir" "$STACK_COMMITS" "$STACK_FILES"
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/244 -- --squash \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "squash-guard-explicit: an explicit --squash should still squash a stacked PR"
+
+  grep -qxF 'pr merge 244 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "squash-guard-explicit: an explicit --squash was not forwarded"
+  assert_no_grep 'refusing to squash' "$case_dir/stderr" \
+    "squash-guard-explicit: an explicit --squash was refused"
+  pass "fm-pr-merge lets an explicit --squash override the stacked-PR refusal"
+}
+
+test_merge_and_rebase_unaffected_by_squash_guard() {
+  local case_dir method number=245
+  for method in merge rebase; do
+    case_dir=$(make_case "squash-guard-explicit-$method")
+    mkdir -p "$case_dir/wt"
+    add_gh_mocks "$case_dir" 1515151515151515151515151515151515151515
+    write_pull_json "$case_dir" "$STACK_COMMITS" "$STACK_FILES"
+    : > "$case_dir/gh-axi.log"
+
+    run_pr_merge "$case_dir" task-x1 "https://github.com/example/repo/pull/$number" -- "--$method" \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" \
+      || fail "squash-guard-explicit-$method: --$method should be unaffected by the squash guard"
+
+    grep -qxF "pr merge $number --repo example/repo --$method" "$case_dir/gh-axi.log" \
+      || fail "squash-guard-explicit-$method: --$method was not forwarded unchanged"
+    assert_no_grep 'refusing to squash' "$case_dir/stderr" \
+      "squash-guard-explicit-$method: an explicit --$method was refused"
+    assert_no_grep 'api repos/example/repo/pulls' "$case_dir/gh.log" \
+      "squash-guard-explicit-$method: an explicit merge method still spent a count read"
+    number=$((number + 1))
+  done
+  pass "fm-pr-merge leaves an explicit --merge or --rebase completely unguarded"
+}
+
+test_unreadable_commit_count_refuses_the_default_squash() {
+  local case_dir rc
+  case_dir=$(make_case squash-guard-unreadable)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1616161616161616161616161616161616161616
+  : > "$case_dir/gh-api-fails"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/247 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "squash-guard-unreadable: an unverifiable count should not be squashed by default"
+  assert_grep 'its commit count could not be read' "$case_dir/stderr" \
+    "squash-guard-unreadable: the refusal did not name the unreadable count"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "squash-guard-unreadable: the merge was attempted on an unverified count"
+  pass "fm-pr-merge refuses the default squash when the commit count cannot be read"
+}
+
+test_stack_named_branch_warns_but_still_merges() {
+  local case_dir
+  case_dir=$(make_case squash-guard-stack-hint)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1717171717171717171717171717171717171717
+  # Under both thresholds, so the counts allow the squash and only the soft
+  # branch-name signal remains: it warns, it does not gate.
+  write_pull_json "$case_dir" 4 9 fm/stack-rung-02
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/248 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "squash-guard-stack-hint: the count check is the hard gate, so this should merge"
+
+  grep -qxF 'pr merge 248 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "squash-guard-stack-hint: the default --squash was not applied"
+  assert_grep 'the head branch "fm/stack-rung-02" names a stack' "$case_dir/stderr" \
+    "squash-guard-stack-hint: a stack-named branch produced no warning"
+  pass "fm-pr-merge warns on a stack-named branch while keeping the counts as the hard gate"
+}
+
+test_gitlab_untouched_by_squash_guard() {
+  local case_dir rc merge_line
+  case_dir=$(make_gitlab_case gitlab-no-squash-guard)
+  # Any GitHub count read would fail here, so a merge that still succeeds proves
+  # the GitLab path never consults one: it imposes no squash to guard.
+  : > "$case_dir/gh-api-fails"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "gitlab-no-squash-guard: the GitLab path should be unaffected by the squash guard"
+  merge_line=$(glab_merge_line "$case_dir/glab.log")
+  [ "$merge_line" = "GITLAB_HOST=$MR_HOST mr merge 7 -R $MR_PROJECT_URL --sha $MR_HEAD --yes" ] \
+    || fail "gitlab-no-squash-guard: unexpected merge invocation: '$merge_line'"
+  assert_no_grep 'refusing to squash' "$case_dir/stderr" \
+    "gitlab-no-squash-guard: a squash refusal reached the GitLab path"
+  assert_no_grep 'api repos' "$case_dir/gh.log" \
+    "gitlab-no-squash-guard: the GitLab path spent a GitHub count read"
+  pass "fm-pr-merge leaves the GitLab merge path untouched by the squash guard"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -834,6 +1088,15 @@ test_gitlab_unreadable_state_refuses
 test_gitlab_invalid_head_refuses
 test_gitlab_missing_tool_refuses_before_recording
 test_gitlab_head_override_args_refuse_before_recording
+test_default_squash_refused_for_stacked_pr
+test_default_squash_refused_on_changed_file_threshold
+test_squash_guard_boundary_is_more_than_the_threshold
+test_single_commit_pr_still_squashes_by_default
+test_explicit_squash_overrides_the_refusal
+test_merge_and_rebase_unaffected_by_squash_guard
+test_unreadable_commit_count_refuses_the_default_squash
+test_stack_named_branch_warns_but_still_merges
+test_gitlab_untouched_by_squash_guard
 
 # --- pipeline-raised PR class (fm-pr-merge.sh --pipeline <url>) --------------
 # The pipeline class has no task meta; it gates on live forge state read through
@@ -842,6 +1105,16 @@ test_gitlab_head_override_args_refuse_before_recording
 # and never invokes `gh-axi pr merge`.
 
 PIPELINE_HEAD_SHA=1111111111111111111111111111111111111111
+
+# pipeline_pull_json <case_dir> [state] [base] [mergeable_state] [commits] [files]
+# The one pull payload the pipeline class reads. The squash guard reuses that
+# same payload, so the gate fields and the counts live in one fixture.
+pipeline_pull_json() {
+  local case_dir=$1 state=${2:-open} base=${3:-main} mstate=${4:-clean}
+  local commits=${5:-1} files=${6:-4}
+  printf '{"state":"%s","base":{"ref":"%s"},"mergeable_state":"%s","head":{"sha":"%s"},"commits":%s,"changed_files":%s,"body":""}\n' \
+    "$state" "$base" "$mstate" "$PIPELINE_HEAD_SHA" "$commits" "$files" > "$case_dir/fx/pull.json"
+}
 
 # Write the gh (api) + gh-axi (merge) mocks and green default fixtures. Tests
 # override individual fixtures, or delete one to simulate a forge read failure.
@@ -869,7 +1142,7 @@ exit 0
 SH
   chmod +x "$case_dir/fakebin/gh" "$case_dir/fakebin/gh-axi"
   printf '%s\n' '{"default_branch":"main"}' > "$fx/repo.json"
-  printf '%s\n' "{\"state\":\"open\",\"base\":{\"ref\":\"main\"},\"mergeable_state\":\"clean\",\"head\":{\"sha\":\"$PIPELINE_HEAD_SHA\"}}" > "$fx/pull.json"
+  pipeline_pull_json "$case_dir"
   printf '%s\n' '{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"success"}]}' > "$fx/checks.json"
   printf '%s\n' '[]' > "$fx/reviews.json"
 }
@@ -915,7 +1188,7 @@ test_pipeline_refuses_non_clean() {
   local case_dir
   case_dir=$(make_case pipeline-dirty)
   add_pipeline_mocks "$case_dir"
-  printf '%s\n' "{\"state\":\"open\",\"base\":{\"ref\":\"main\"},\"mergeable_state\":\"dirty\",\"head\":{\"sha\":\"$PIPELINE_HEAD_SHA\"}}" > "$case_dir/fx/pull.json"
+  pipeline_pull_json "$case_dir" open main dirty
   expect_pipeline_refusal "$case_dir" pipeline-dirty
   pass "fm-pr-merge --pipeline refuses a PR whose mergeable_state is not clean"
 }
@@ -1055,6 +1328,38 @@ test_pipeline_refuses_match_head_commit_override() {
   pass "fm-pr-merge --pipeline refuses caller-supplied --match-head-commit overrides"
 }
 
+test_pipeline_refuses_stacked_default_squash() {
+  local case_dir
+  case_dir=$(make_case pipeline-stack)
+  add_pipeline_mocks "$case_dir"
+  pipeline_pull_json "$case_dir" open main clean 249 379
+  expect_pipeline_refusal "$case_dir" pipeline-stack
+  assert_grep 'it carries 249 commits and 379 changed files' "$case_dir/stderr" \
+    "pipeline-stack: the refusal did not name the counts it actually read"
+  assert_absent "$case_dir/state/pr-merge-audit.log" \
+    "pipeline-stack: a merge was audited despite the squash refusal"
+  pass "fm-pr-merge --pipeline refuses the default squash on a stacked PR"
+}
+
+test_pipeline_explicit_squash_merges_a_stack() {
+  local case_dir rc
+  case_dir=$(make_case pipeline-stack-explicit)
+  add_pipeline_mocks "$case_dir"
+  pipeline_pull_json "$case_dir" open main clean 249 379
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 -- --squash \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "pipeline-stack-explicit: an explicit --squash should still merge a green stacked PR"
+  grep -qxF "pr merge 9 --repo example/repo --match-head-commit $PIPELINE_HEAD_SHA --squash" "$case_dir/gh-axi.log" \
+    || fail "pipeline-stack-explicit: an explicit --squash was not forwarded with the gated head pin"
+  pass "fm-pr-merge --pipeline lets an explicit --squash override the stacked-PR refusal"
+}
+
 test_pipeline_refuses_auto_extra_arg() {
   local case_dir rc
   case_dir=$(make_case pipeline-auto-override)
@@ -1092,3 +1397,5 @@ test_pipeline_refuses_unknown_conclusion
 test_pipeline_refuses_malformed_reviews_payload
 test_pipeline_refuses_match_head_commit_override
 test_pipeline_refuses_auto_extra_arg
+test_pipeline_refuses_stacked_default_squash
+test_pipeline_explicit_squash_merges_a_stack
