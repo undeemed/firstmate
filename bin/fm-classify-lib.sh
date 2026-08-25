@@ -315,16 +315,16 @@ _fm_key_syntax_verbs() {  # -> space-separated verbs whose keys matter here
 # key the fold cannot use as written. Returns 1 (printing nothing) for a line
 # with no token, a non-decision verb, or the documented before-colon position.
 status_line_key_syntax_problem() {  # <status-line> -> reason
-  local line=$1 verb want slug
+  local line=$1 verb want slug matched=0
   case "$line" in
     *'[key='*) ;;
     *) return 1 ;;
   esac
   verb=$(status_line_verb "$line")
   for want in $(_fm_key_syntax_verbs); do
-    [ "$verb" = "$want" ] && { verb=match; break; }
+    [ "$verb" = "$want" ] && { matched=1; break; }
   done
-  [ "$verb" = match ] || return 1
+  [ "$matched" -eq 1 ] || return 1
   if _fm_key_before_colon "$line"; then
     slug=${line%%:*}
     slug=${slug#*\[key=}
@@ -1170,15 +1170,19 @@ $snapshot
 EOF
 }
 
-# Fleet-wide stated-key syntax warnings: one "<task>\t<reason>\t<status-line>"
-# row per not-yet-warned line whose stated key the fold cannot use as written
-# (status_line_key_syntax_problem above). Bounded by a private per-task byte
+# Fleet-wide stated-key syntax warnings: one
+# "<task>\t<line-end>\t<reason>\t<status-line>" row per not-yet-warned line
+# whose stated key the fold cannot use as written
+# (status_line_key_syntax_problem above), where <line-end> is the byte offset
+# just past that line in the status file. Bounded by a private per-task byte
 # marker rather than the presentation cursor, because that cursor deliberately
 # holds still while only routine lines are unread - a warning tied to it would
 # repeat every drain for as long as the decision stayed open. commit_key_syntax_
-# markers below advances the marker once the caller has printed the rows, so a
-# turn that dies before printing warns again next time. Prints nothing when
-# every new line places its key correctly, which is the common case.
+# markers below advances the marker once the caller has printed the rows, and
+# the caller uses <line-end> to pull a task's marker back to its last shown row
+# when its byte cap omitted any, so a turn that dies before printing - or a row
+# the cap dropped - warns again next time. Prints nothing when every new line
+# places its key correctly, which is the common case.
 _fm_key_syntax_marker_path() {  # <status-file>
   local dir base
   dir=$(dirname "$1")
@@ -1200,7 +1204,8 @@ _fm_key_syntax_offset() {  # <status-file> -> offset
   printf '%s' "$offset"
 }
 scan_key_syntax_warnings_snapshot() {  # <state> <snapshot>
-  local state=$1 snapshot=$2 task endpoint ident f start size chunk line reason rc=0
+  local state=$1 snapshot=$2 task endpoint ident f start size chunk line reason rc=0 pos lineend
+  local LC_ALL=C
   while IFS=$(printf '\t') read -r task endpoint ident; do
     [ -n "$task" ] || continue
     f="$state/$task.status"
@@ -1213,10 +1218,14 @@ scan_key_syntax_warnings_snapshot() {  # <state> <snapshot>
     start=$(_fm_key_syntax_offset "$f")
     [ "$start" -lt "$endpoint" ] || continue
     chunk=$(_fm_status_read_span "$f" "$start" "$((endpoint - start))") || return 1
+    pos=$start
     while IFS= read -r line || [ -n "$line" ]; do
+      lineend=$((pos + ${#line} + 1))
+      [ "$lineend" -le "$endpoint" ] || lineend=$endpoint
+      pos=$lineend
       [ -n "$line" ] || continue
       reason=$(status_line_key_syntax_problem "$line") || continue
-      printf '%s\t%s\t%s\n' "$task" "$reason" "$line" || { rc=1; break; }
+      printf '%s\t%s\t%s\t%s\n' "$task" "$lineend" "$reason" "$line" || { rc=1; break; }
     done <<EOF
 $chunk
 EOF
@@ -1228,8 +1237,10 @@ EOF
 }
 
 # Record that every line up to each task's captured endpoint has been warned
-# about. Called only after the rows are printed. A marker that cannot be written
-# is not fatal: the next drain re-warns, which is the safe direction.
+# about. Called only after the rows are printed, with a snapshot the caller has
+# already pulled back to the last shown row for any task whose rows its byte
+# cap omitted. A marker that cannot be written is not fatal: the next drain
+# re-warns, which is the safe direction.
 commit_key_syntax_markers() {  # <state> <snapshot>
   local state=$1 snapshot=$2 task endpoint ident f marker tmp
   while IFS=$(printf '\t') read -r task endpoint ident; do
