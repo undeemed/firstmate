@@ -1,0 +1,51 @@
+== Acceptance 4: the guard catches a [key=...] token written after the colon ==
+
+$ worker writes the WRONG form (token past the note head) and an invalid slug
+needs-decision: pick REST or RPC [key=api-shape]
+needs-decision [key=bad slug!]: can I use spaces
+
+$ bin/fm-wake-drain.sh (drain 1: KEY SYNTAX section fires, names task, line, and reason)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t99 needs-decision: pick REST or RPC [key=api-shape]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+KEY SYNTAX (a stated decision key the fold could not use as written - not re-printed once recorded as warned):
+t98 key slug outside A-Za-z0-9._-, so the fold skipped this line entirely: needs-decision [key=bad slug!]: can I use spaces
+t99 key token past the note head, so this line folded under "default": needs-decision: pick REST or RPC [key=api-shape]
+KEY SYNTAX: the documented position is before the colon - needs-decision [key=<slug>]: <summary>; steer the worker, and answer an affected decision by the key the open listing above actually shows.
+
+$ the original trap, demonstrated: --resolve-key api-shape refuses because the fold registered 'default'
+exit=1
+
+$ bin/fm-wake-drain.sh (drain 2: same bad lines, warning does NOT repeat)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t99 needs-decision: pick REST or RPC [key=api-shape]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+$ worker appends a NEW bad line to t99; drain 3 warns again for the new append only
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t99 needs-decision: pg or sqlite [key=db-choice]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+KEY SYNTAX (a stated decision key the fold could not use as written - not re-printed once recorded as warned):
+t99 key token past the note head, so this line folded under "default": needs-decision: pg or sqlite [key=db-choice]
+KEY SYNTAX: the documented position is before the colon - needs-decision [key=<slug>]: <summary>; steer the worker, and answer an affected decision by the key the open listing above actually shows.
+
+$ control: a correctly keyed decision produces OPEN DECISIONS but NO KEY SYNTAX warning
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t97 [key=cache-ttl] needs-decision: 60s or 300s
+t99 needs-decision: pg or sqlite [key=db-choice]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+$ the refusal itself (stderr), for the misplaced form on t99
+error: --resolve-key 'api-shape': no open decision or blocker with that key in /tmp/fm-demo/home/state/t99.status, and no captain-held task 'api-shape' or 't99-decision-api-shape' still open (already closed or mistyped). Re-check the OPEN DECISIONS listing, then resend without that key or with the right one; nothing was sent.
+(fm-send exited 1; the answer was refused before anything was sent)
+
+$ the literal reported form: token at the note head (needs-decision: [key=x] ...)
+needs-decision: [key=late-form] pick A or B
+
+$ bin/fm-wake-drain.sh (the key IS honored per issue #2109, and the guard still steers to the documented position)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t96 [key=late-form] needs-decision: pick A or B
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+KEY SYNTAX (a stated decision key the fold could not use as written - not re-printed once recorded as warned):
+t96 key token after the colon: honored, but write it before the colon: needs-decision: [key=late-form] pick A or B
+KEY SYNTAX: the documented position is before the colon - needs-decision [key=<slug>]: <summary>; steer the worker, and answer an affected decision by the key the open listing above actually shows.
