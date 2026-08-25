@@ -36,6 +36,45 @@ Note that `lavish-axi <anything> --help` exits 0 for any argument, including a n
 
 The adapter depends on none of this: it uses only the published poll shape above.
 
+## The Lavish answer channel: concurrency, interruption, and liveness
+
+Measured on 2026-08-24 on Linux (7.0.0-14-generic) with `lavish-axi` 0.1.52 installed, on a scratch port and scratch `LAVISH_AXI_STATE_DIR` so no live board was involved.
+
+**Concurrent boards are supported.**
+The server keys a session and its active polls per file, and two boards were polled at once with neither displacing the other.
+Opening a second artifact left the first board's poll process alive, with the same PID, no captured result, and no wake.
+
+**Losing the shared server is what kills a poll.**
+A blocking poll receives its response as a streamed body, so when the single shared server on the fixed port goes away mid-stream the client cannot parse a response and reports:
+
+```text
+$ lavish-axi poll <board> > out 2>err     # server stopped while this was blocked
+$ cat out
+error: Lavish Editor poll response was interrupted
+code: SERVER_ERROR
+help[2]: Run `lavish-axi server --verbose` or inspect `~/.lavish-axi/server.log` ...,Re-run the last `lavish-axi poll <html-file>` command after the server is healthy
+```
+
+Every `lavish-axi` invocation compares its own version with the running server's and, when they differ, shuts that server down and starts its own; `lavish-axi stop` and the idle self-stop do the same.
+That is why interruption clusters coincided with another artifact being opened: the opening CLI was a different build, not a concurrency limit.
+Session state is file-backed and survives the restart, so polling again is correct recovery and the adapter's bounded retry is the fix.
+
+**The payload shape drifted, and a byte-exact match had already stopped working.**
+The `help[2]` line above is present in 0.1.52 and absent from the two-line response 0.1.45 returned, so the adapter matches the two required lines followed only by `help[...]` diagnostics.
+
+**Liveness needs a process, not a record.**
+`bin/fm-procevent.sh list` reports registration and ownership, which is why an armed board with no live poll could still read as healthy.
+`bin/fm-procevent.sh alive <source-id>` adds the runner's own live process, and `bin/fm-procevent-lavish.sh listening <artifact.html>` adds a live published poll for that exact board.
+
+Regressions: `tests/fm-procevent.test.sh` pins the logic portably (both interruption shapes retried quietly, the exhausted channel announced as a named broken channel and never as feedback, `poll-error` classification, and liveness failing once the poll process is gone).
+`tests/fm-lavish-poll-channel-live-e2e.test.sh` is the opt-in guard that re-measures the two vendor facts above against the installed build; run it after every `lavish-axi` upgrade with `FM_LAVISH_POLL_CHANNEL_LIVE_E2E=1`, and refresh this section from its result:
+
+```text
+$ FM_LAVISH_POLL_CHANNEL_LIVE_E2E=1 bash tests/fm-lavish-poll-channel-live-e2e.test.sh
+ok - lavish-axi 0.1.52 polls concurrent boards without displacing one another
+ok - lavish-axi 0.1.52's real poll interruption is absorbed and the board keeps listening
+```
+
 ## Why an ended Lavish review is terminal
 
 Re-verified on 2026-08-01 against the same installed build.
