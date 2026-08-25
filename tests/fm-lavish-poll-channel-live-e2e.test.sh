@@ -48,9 +48,6 @@ command -v perl >/dev/null 2>&1 || {
 	exit 0
 }
 
-LAVISH_VERSION=$(lavish-axi --version 2>/dev/null | tr -d '[:space:]')
-[ -n "$LAVISH_VERSION" ] || fail "lavish-axi did not report a version"
-
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-lavish-channel.XXXXXX")
 SCRATCH_PORT=$((41000 + ($$ % 2000)))
 [ "$SCRATCH_PORT" -ne 4387 ] || fail "refusing to run on the default Lavish port"
@@ -78,6 +75,9 @@ cleanup() {
 	exit "$status"
 }
 trap cleanup EXIT
+
+LAVISH_VERSION=$(lavish-axi --version 2>/dev/null | tr -d '[:space:]')
+[ -n "$LAVISH_VERSION" ] || fail "lavish-axi did not report a version"
 
 listening_state() { # prints "<exit> <output>" for board A
 	local out status=0

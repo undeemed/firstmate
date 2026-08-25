@@ -366,6 +366,20 @@ report_board() {  # <result-file>
   ' "$1"
 }
 
+# Only the report this adapter mints itself counts as a broken channel: its
+# exact first line, with `code: POLL_UNRECOVERABLE` and `channel: broken` as
+# top-level fields ahead of the indented evidence, so a vendor payload captured
+# verbatim is never announced or acknowledged here.
+report_is_own_broken_channel() {  # <result-file>
+  awk '
+    NR == 1 { if ($0 != "error: the Lavish answer channel for this board stopped responding") { bad = 1; exit } next }
+    /^last_response:/ { exit }
+    $0 == "code: POLL_UNRECOVERABLE" { code = 1 }
+    $0 == "channel: broken" { channel = 1 }
+    END { exit (bad || !code || !channel) }
+  ' "$1"
+}
+
 # This adapter announces its own broken channel, so the runner publishes only
 # what is left unhandled afterwards (see bin/fm-procevent.sh's announcement seam).
 cmd_self_announcing() { return 0; }
@@ -385,6 +399,7 @@ cmd_autohandle() {  # <source-id> <sequence> <result-file>
   case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer: $seq" ;; esac
   [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
   [ "$(cmd_classify "$file")" = poll-error ] || return 1
+  report_is_own_broken_channel "$file" || return 1
   board=$(report_board "$file")
   [ -n "$board" ] || return 1
   fm_wake_append check "lavish-broken:$id:$seq" \
@@ -392,18 +407,22 @@ cmd_autohandle() {  # <source-id> <sequence> <result-file>
   "$SCRIPT_DIR/fm-procevent.sh" handled "$id" "$seq" >/dev/null || return 1
 }
 
-# A live published poll for this exact board, read from the process table. This
-# is the Lavish half of the liveness proof and the reason `listening` can tell a
-# board that is really being polled from one whose listener is only registered:
-# the generic runner can prove its own child is running, but only this adapter
-# knows that child must in turn be holding a `lavish-axi poll` for this board.
-poll_process_pid() {  # <board>
+# A live published poll for this exact board, read only from the owning
+# runner's own process group and only as a whole argv word: a foreign poll of
+# the same board, or of a superstring path, can never stand in for the owned
+# listener. This is the Lavish half of the liveness proof and the reason
+# `listening` can tell a board that is really being polled from one whose
+# listener is only registered: the generic runner can prove its own child is
+# running, but only this adapter knows that child must in turn be holding a
+# `lavish-axi poll` for this board.
+poll_process_pid() {  # <board> <runner-leader-pid>
   local pid
-  pid=$(ps -eo pid=,args= 2>/dev/null | FM_LAVISH_BOARD="$1" perl -ne '
-    my ($pid, $args) = /^\s*(\d+)\s+(.*)$/ or next;
+  pid=$(ps -eo pid=,pgid=,args= 2>/dev/null | FM_LAVISH_BOARD="$1" FM_LAVISH_RUNNER="$2" perl -ne '
+    my ($pid, $pgid, $args) = /^\s*(\d+)\s+(\d+)\s+(.*)$/ or next;
+    next unless $pgid == $ENV{FM_LAVISH_RUNNER};
     next unless index($args, "lavish-axi") >= 0;
-    next unless index($args, " poll ") >= 0;
-    next unless index($args, $ENV{FM_LAVISH_BOARD}) >= 0;
+    next unless $args =~ /(?:^|[ \t])poll(?:[ \t]|$)/;
+    next unless $args =~ /(?:^|[ \t])\Q$ENV{FM_LAVISH_BOARD}\E(?:[ \t]|$)/;
     print "$pid\n";
     last;
   ')
@@ -416,7 +435,7 @@ poll_process_pid() {  # <board>
 # because none of it is Lavish-specific; the published poll for this board is
 # this adapter's.
 cmd_listening() {  # <artifact.html>
-  local artifact=${1-} id real detail poll_pid status=0
+  local artifact=${1-} id real detail poll_pid runner_pid status=0
   [ -n "$artifact" ] || usage
   [ "$#" -eq 1 ] || usage
   id=$(cmd_source_id "$artifact") || exit 1
@@ -428,7 +447,10 @@ cmd_listening() {  # <artifact.html>
     printf 'detail: %s\n' "$detail"
     return 1
   fi
-  if ! poll_pid=$(poll_process_pid "$real"); then
+  runner_pid=${detail##*runner=}
+  runner_pid=${runner_pid%%[!0-9]*}
+  [ -n "$runner_pid" ] || die "cannot read the owning runner from: $detail"
+  if ! poll_pid=$(poll_process_pid "$real" "$runner_pid"); then
     # The listener is up but is not holding a poll this instant: a bounded retry
     # between attempts. Not a dead channel, and still not something to promise
     # the captain on.
