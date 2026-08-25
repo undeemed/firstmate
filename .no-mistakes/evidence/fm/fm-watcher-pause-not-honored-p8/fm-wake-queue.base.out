@@ -1,0 +1,3 @@
+ok - an abandoned same-process lock hold is reclaimed; a parent's live hold is not
+ok - foreign secondmate queue stalls notify once, remain byte-stable, and stay quiet when empty or healthy
+not ok - a mid-turn mate holding one young row was reported as a stalled wake loop: check: secondmate wake-loop stalled: mate=mate row=7 age=12s

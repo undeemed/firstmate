@@ -1,0 +1,32 @@
+Round 2 diagnosis: full-suite fm-watch-triage flakiness on this box is /tmp quota exhaustion, not the change.
+
+What happened
+- Full run 1 (fm-watch-triage.round2.out): stopped at test 23, "not ok - drain after the wedge escalation failed" (drain exit nonzero, stderr swallowed by the test).
+- Full run 2 (fm-watch-triage.round2.rerun.out): stopped at test 22, "not ok - watcher exited for a stale terminal-looking status the run-step overrides (should absorb)" with EMPTY watcher output.
+- Two consecutive full runs failed at two DIFFERENT, ADJACENT tests. Round 1 of this pipeline ran the identical suite text fully green (fm-watch-triage.test.out, 71 ok, no failures), and the author reports both suites fully green.
+
+Isolation evidence (all at HEAD 1b77d0a, load average 17-21 on 8 cores)
+- test_nonterminal_stale_provably_working_absorbed_then_escalated: 3/3 ok isolated.
+- test_stale_terminal_status_overridden_by_active_run: 3/3 ok isolated.
+- Both tests together in suite order, drain stderr un-swallowed: 10/10 ok.
+- test_paused_authoritative_working_preserves_wedge_timer: 3/3 ok isolated after its one quota-window failure.
+
+The mechanism, caught red-handed
+- During an 8-test intent-subset run, the 8th test failed with the raw error visible:
+    tests/tmp-intent.test.sh: line 1897: printf: write error: Disk quota exceeded
+    bin/fm-wake-lib.sh: line 451: [: : integer expected
+- Minutes later the SHELL ITSELF failed the same way on trivial commands:
+    /bin/bash: line 1: pwd: write error: Disk quota exceeded
+- /tmp is tmpfs mounted with the usrquota option (findmnt: rw,nosuid,nodev,size=12010844k,nr_inodes=1048576,inode64,usrquota).
+- /dev/sda1 has 118G free and inodes are at 7 percent, so this is a per-user quota, not disk-full.
+- /tmp swung from 9.2G used to 5.4G used within minutes as sibling sessions churned scratch data; EDQUOT flaps with that churn.
+- The suites write their scratch state under /tmp (per-test temp dirs). When a watcher, drain, or test fixture write hits EDQUOT mid-suite, the symptom is exactly what both full runs showed: a drain hard-exiting nonzero, or a watcher dying silently with empty output.
+
+Why this is not the change under test
+- The failing tests and the drain code path are byte-identical at base 49c760c and were green in Round 1 at the same product code (the only commit since is the fm-wake-queue budget fix, which touched no product code and no triage test).
+- Every failing test passes repeatedly (16/16 across reruns) whenever the quota window is open.
+- The changed suite, tests/fm-wake-queue.test.sh, ran fully green twice this round (30/30 each) including the Round 1 flaker test_stale_enqueue_before_suppressor.
+
+Impact
+- Any long-running suite on this box can fail spuriously when sibling sessions fill the ubuntu user's /tmp quota. Remote CI on a dedicated runner does not share this hazard.
+- Not fixable from inside this worktree: the 9.2G peak belongs to other live sessions' files, and raising the tmpfs quota needs root.

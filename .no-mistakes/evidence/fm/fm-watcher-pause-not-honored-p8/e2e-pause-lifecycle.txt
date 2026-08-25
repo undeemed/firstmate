@@ -1,0 +1,30 @@
+
+== SCENARIO 1: crew declared 'paused: holding for the upstream tool release'; pane is idle.
+
+== Watcher runs one poll cycle (resurface threshold 999s, pause is fresh).
+   watcher is still running after a full poll cycle (it did NOT wake the captain)
+   watcher stdout: (empty - no wake reason printed)
+   durable wake queue: (empty)
+   .paused-test_fm-e2e-held marker recorded: pause honored
+   no wedge timer started (a pause is not a wedge)
+   RESULT: PASS - a fresh declared pause is honored (absorbed, no wake, no wedge timer)
+
+== SCENARIO 2: same pause, now 500s old with resurface threshold 240s. The pause is bounded:
+
+== the watcher must re-surface it as an 'awaiting external' recheck, never a possible wedge.
+   watcher exited with:
+   | stale: test:fm-e2e-held (paused 502s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; next recheck of this unchanged wait not before 480s)
+   fm-wake-drain.sh (what the captain's agent reads):
+   | 1787644893	1	stale	test:fm-e2e-held	stale: test:fm-e2e-held (paused 502s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; next recheck of this unchanged wait not before 480s)
+   RESULT: PASS - an aged pause re-surfaces on the bounded cadence as an awaiting-external recheck
+
+== SCENARIO 3: a crew ends its turn with NO pause and NO running pipeline (it stopped).
+
+== The watcher must surface that finish instead of absorbing it (the swallowed-finish fix).
+   watcher exited with:
+   | signal: /tmp/fm-e2e-pause.pzmeSk/e2e-stopped/state/task.turn-ended
+   fm-wake-drain.sh:
+   | 1787644899	2	signal	task.turn-ended	signal: /tmp/fm-e2e-pause.pzmeSk/e2e-stopped/state/task.turn-ended
+   RESULT: PASS - a stopped crew's finish is surfaced and durably queued
+
+== ALL THREE SCENARIOS PASSED
