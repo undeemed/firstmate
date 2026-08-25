@@ -335,6 +335,111 @@ test_zero_changed_files_exits_clean() {
   pass "fm-lint.sh exits 0 with a note when the local branch has no changed lint targets"
 }
 
+# The ShellCheck memory ceiling. bin/fm-teardown.sh once needed more than 6 GiB
+# of address space to lint (14.4 GB RSS and all of swap on the reporting box),
+# because --external-sources inlines a module once per `# shellcheck source=`
+# directive and that root imported the same module graph three times. These
+# cases pin both halves of the fix: the heavy roots now fit inside the ceiling,
+# and a root that does not fit fails loudly by name instead of being skipped or
+# eating the machine.
+
+# The heaviest canonical roots, largest ShellCheck source graph first.
+FM_LINT_HEAVY_ROOTS=(
+  bin/fm-teardown.sh
+  tests/fm-pending-reply.test.sh
+  bin/fm-spawn.sh
+  bin/fm-send.sh
+)
+
+test_rejects_a_malformed_memory_ceiling() {
+  local out rc=0
+  out=$(FM_LINT_MEMORY_LIMIT_KIB=6GiB "$LINT" --list-files 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] \
+    || fail "a malformed FM_LINT_MEMORY_LIMIT_KIB must fail closed with exit 2, got $rc"
+  assert_contains "$out" "FM_LINT_MEMORY_LIMIT_KIB" "the malformed-ceiling refusal did not name the setting"
+  pass "fm-lint.sh fails closed on a malformed memory ceiling"
+}
+
+test_heavy_roots_lint_within_the_memory_ceiling() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): heavy-root memory ceiling check"
+    return
+  fi
+  local out rc=0
+  # The default ceiling, stated explicitly so this pins the bound rather than
+  # whatever the default happens to become. Before the source-graph fix
+  # bin/fm-teardown.sh could not be linted at this ceiling at all.
+  out=$(FM_LINT_MEMORY_LIMIT_KIB=6291456 "$LINT" "${FM_LINT_HEAVY_ROOTS[@]}" 2>&1) || rc=$?
+  assert_not_contains "$out" "memory ceiling" "a heavy canonical root no longer fits the 6 GiB ShellCheck memory ceiling"
+  [ "$rc" -eq 0 ] \
+    || fail "linting the heavy canonical roots inside the 6 GiB ceiling failed (exit $rc)"$'\n'"$out"
+  pass "fm-lint.sh lints the heaviest canonical roots inside the 6 GiB memory ceiling"
+}
+
+# fm_lint_write_oversized_root <path>: a self-contained root whose ShellCheck
+# analysis needs more than a 200 MiB ceiling, with no dependency on how big any
+# real repository script happens to be today.
+fm_lint_write_oversized_root() {
+  local path=$1 i=0
+  {
+    printf '#!/usr/bin/env bash\nset -eu\n'
+    while [ "$i" -lt 2000 ]; do
+      # shellcheck disable=SC2016 # The fixture body is emitted verbatim, not expanded here.
+      printf 'fixture_fn_%s() { printf "%%s\\n" "$1"; }\n' "$i"
+      i=$((i + 1))
+    done
+    printf 'fixture_fn_0 ok\n'
+  } > "$path"
+}
+
+test_memory_ceiling_names_the_root_it_could_not_lint() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): memory ceiling failure check"
+    return
+  fi
+  local tmp big out rc=0
+  tmp=$(fm_test_tmproot fm-lint-mem-refuse)
+  mkdir -p "$tmp"
+  big="$tmp/oversized.sh"
+  fm_lint_write_oversized_root "$big"
+
+  out=$(FM_LINT_MEMORY_LIMIT_KIB=204800 FM_LINT_JOBS=1 "$LINT" "$big" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "exceeding the ShellCheck memory ceiling must fail, not pass silently"$'\n'"$out"
+  assert_contains "$out" "$big" "the memory-ceiling failure did not name the root it could not lint"
+  assert_contains "$out" "memory ceiling" "the memory-ceiling failure did not say what the bound was"
+  assert_contains "$out" "204800" "the memory-ceiling failure did not report the ceiling it enforced"
+  pass "fm-lint.sh fails loudly and names the root it could not lint within the ceiling"
+}
+
+test_memory_ceiling_still_reports_the_roots_that_fit() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): partial-shard reporting check"
+    return
+  fi
+  local tmp big bad out rc=0
+  tmp=$(fm_test_tmproot fm-lint-mem-partial)
+  mkdir -p "$tmp"
+  big="$tmp/oversized.sh"
+  fm_lint_write_oversized_root "$big"
+  bad="$tmp/bad.sh"
+  cat > "$bad" <<'SH'
+#!/usr/bin/env bash
+foo() {
+  local a= b=
+  echo "$a$b"
+}
+foo
+SH
+  # One root that cannot fit the ceiling and one small root with a genuine
+  # finding: the ceiling must not cost the shard its other diagnostics.
+  out=$(FM_LINT_MEMORY_LIMIT_KIB=204800 FM_LINT_JOBS=1 "$LINT" "$big" "$bad" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the ceiling run must still fail"$'\n'"$out"
+  assert_contains "$out" "$big" "the memory-ceiling failure did not name the oversized root"
+  assert_contains "$out" "SC1007" "the ceiling failure suppressed a real finding in a root that fits"
+  pass "fm-lint.sh still reports findings for the roots that fit under the ceiling"
+}
+
 test_list_files_respects_changed_mode() {
   local tmp fakebin diff_file listed
   tmp=$(fm_test_tmproot fm-lint-list-changed)
@@ -899,3 +1004,7 @@ test_main_branch_forces_full_lint
 test_explicit_path_bypasses_changed_logic
 test_zero_changed_files_exits_clean
 test_list_files_respects_changed_mode
+test_rejects_a_malformed_memory_ceiling
+test_memory_ceiling_names_the_root_it_could_not_lint
+test_memory_ceiling_still_reports_the_roots_that_fit
+test_heavy_roots_lint_within_the_memory_ceiling
