@@ -95,6 +95,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 mkdir -p "$STATE"
 
 # The native event fast-path and only its true dependencies have one narrow
@@ -176,7 +177,56 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
 # (fm-classify-lib.sh) backs the away-mode daemon; while state/.afk exists the
 # daemon owns triage, so this watcher reverts to one-shot (enqueue + exit on every
 # wake) and never double-triages - and never runs the costly provably-working read.
-STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provably-working stale escalates as a possible wedge
+# Idle secs before a provably-working stale escalates as a possible wedge.
+# Per home, because the longest LEGITIMATE silence is a property of the work that
+# home runs: a home whose gate run takes 17 minutes crosses a 240s threshold four
+# or more times per run, and an alarm that is structurally guaranteed to be wrong
+# trains its reader to skim it. Precedence: FM_STALE_ESCALATE_SECS in the
+# environment, then config/stale-escalate-secs, then the unchanged 240s default.
+# The environment wins because the harness extension that launches this watcher
+# sets no such variable, so a deliberate per-process override stays authoritative
+# over the home's standing file. A malformed file is reported and ignored rather
+# than wedging the watcher or silently changing the cadence.
+# docs/configuration.md "Stale escalation threshold" owns the operator contract,
+# including the rule that the value is SIZED just above the home's real gate-run
+# time and never used to mute this alarm class.
+STALE_ESCALATE_SECS_DEFAULT=240
+STALE_ESCALATE_SECS_FILE="$CONFIG/stale-escalate-secs"
+
+# Print the configured threshold held by <file>: 0 with the value on stdout, 1
+# when the file is absent or holds no value line, 2 when its first value line is
+# not one positive whole number in plain decimal digits.
+stale_escalate_configured() { # <file>
+	local file=$1 line value
+	[ -f "$file" ] || return 1
+	while IFS= read -r line || [ -n "$line" ]; do
+		case "$line" in '#'*) continue ;; esac
+		value=${line#"${line%%[![:space:]]*}"}
+		value=${value%"${value##*[![:space:]]}"}
+		[ -n "$value" ] || continue
+		case "$value" in '' | *[!0-9]* | 0[0-9]*) return 2 ;; esac
+		[ "$value" -gt 0 ] || return 2
+		printf '%s' "$value"
+		return 0
+	done <"$file"
+	return 1
+}
+
+if [ -n "${FM_STALE_ESCALATE_SECS:-}" ]; then
+	STALE_ESCALATE_SECS=$FM_STALE_ESCALATE_SECS
+else
+	_stale_escalate_configured=$(stale_escalate_configured "$STALE_ESCALATE_SECS_FILE")
+	_stale_escalate_rc=$?
+	case "$_stale_escalate_rc" in
+	0) STALE_ESCALATE_SECS=$_stale_escalate_configured ;;
+	2)
+		echo "warning: ignoring malformed config/stale-escalate-secs (want one positive whole number of seconds); using ${STALE_ESCALATE_SECS_DEFAULT}s" >&2
+		STALE_ESCALATE_SECS=$STALE_ESCALATE_SECS_DEFAULT
+		;;
+	*) STALE_ESCALATE_SECS=$STALE_ESCALATE_SECS_DEFAULT ;;
+	esac
+	unset _stale_escalate_configured _stale_escalate_rc
+fi
 # A busy pane is unconditional proof of liveness with no built-in duration bound,
 # so a hung foreground call can remain hidden even while its rendered busy
 # footer changes every poll. BUSY_TURN_MAX_SECS bounds how long any busy pane
