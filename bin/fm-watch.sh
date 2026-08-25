@@ -94,7 +94,7 @@
 #                          inactive terminal outcome that still lacks its durable
 #                          upstream receipt
 #   check: secondmate wake-loop stalled: mate=<id> row=<seq> age=<seconds>s
-#     depth=<rows> (next report of an unchanged backlog in <seconds>s)
+#     depth=<rows> (unchanged backlog not reported again before <seconds>s)
 #                          the oldest valid row in an endpoint-recorded local
 #                          secondmate home's durable wake queue exceeded
 #                          FM_SECONDMATE_WAKE_STALL_SECS while the mate was not
@@ -451,10 +451,17 @@ secondmate_queue_depth() {  # <queue-path>
 
 # 0 while <task>'s recorded endpoint is PROVABLY mid-turn, through the same
 # semantic busy contract every other liveness read here uses (bin/fm-busy-lib.sh).
-# Only an exact busy verdict counts: idle, unknown, and dead all return 1, so a mate
-# whose state cannot be read is treated as NOT mid-turn and its aged row still
-# reports. Called only on a row that already crossed the age threshold and is still
-# inside the mid-turn bounds, never on every poll.
+# Classifies through fm_busy_classify_meta, which never produces the dead verdict
+# (only fm_busy_classify_live applies the endpoint-gone override): only an exact
+# busy verdict counts as mid-turn, and every other verdict, including idle and an
+# unreadable or missing one, returns 1 so the aged row still reports. A mate whose
+# endpoint is gone while a leftover busy record still reads open classifies busy
+# and is absorbed as mid-turn, which stays bounded by
+# FM_SECONDMATE_WAKE_STALL_DEPTH and FM_SECONDMATE_WAKE_STALL_BEHIND_SECS, after
+# which it reports regardless; registered mates with a missing or dead endpoint
+# are owned by the separate startup secondmate-liveness check. Called only on a
+# row that already crossed the age threshold and is still inside the mid-turn
+# bounds, never on every poll.
 secondmate_mid_turn() {  # <meta> <task>
   local meta=$1 task=$2 backend target tail40 verdict
   target=$(fm_backend_target_of_meta "$meta" 2>/dev/null) || return 1
@@ -552,7 +559,7 @@ EOF
       continue
     fi
     notify_key="secondmate-wake-loop-$task-$row_key"
-    reason="check: secondmate wake-loop stalled: mate=$task row=$seq age=${age}s depth=$depth (next report of an unchanged backlog in ${repeat}s)"
+    reason="check: secondmate wake-loop stalled: mate=$task row=$seq age=${age}s depth=$depth (unchanged backlog not reported again before ${repeat}s)"
     queued=$(fm_wake_queued_keys check)
     if ! printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1; then
       fm_wake_append check "$notify_key" "$reason" || return 1
@@ -783,10 +790,10 @@ handle_paused_stale() {  # <window> <task> <hash>
   interval=$(decayed_interval "$age" "$PAUSE_RESURFACE_SECS" "$PAUSE_BACKOFF_MAX_SECS")
   if status_is_captain_held "$(last_status_line "$statusf")"; then
     detail="captain-held, awaiting the captain"
-    reason="captain-held ${age}s, awaiting the captain - verified hold transfer, rechecked on a long cadence not a wedge; answer the held decision or release the hold; next recheck of this unchanged hold in ${interval}s"
+    reason="captain-held ${age}s, awaiting the captain - verified hold transfer, rechecked on a long cadence not a wedge; answer the held decision or release the hold; next recheck of this unchanged hold not before ${interval}s"
   else
     detail="paused, awaiting external"
-    reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; next recheck of this unchanged wait in ${interval}s"
+    reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; next recheck of this unchanged wait not before ${interval}s"
   fi
   resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$interval"
   triage_log "absorbed stale ($detail, age ${age}s): $win"
