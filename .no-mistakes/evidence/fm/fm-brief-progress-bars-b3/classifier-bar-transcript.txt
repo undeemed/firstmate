@@ -1,0 +1,27 @@
+=== Classifier behavior with progress bars (bin/fm-classify-lib.sh, unmodified by this change) ===
+
+--- Case 1: terminal done line alone ---
+done: PR https://example.test/pr/1 checks green
+last_status_line -> done: PR https://example.test/pr/1 checks green
+captain-relevant: YES
+
+--- Case 2: same done line, then a STACKED bar block appended after it (the hazard the scaffold forbids) ---
+done: PR https://example.test/pr/1 checks green
+Agent repair   [██░░░░░░░░░░░░]  10%
+Batch 7        [████████████░░]  88%
+Root cause     step 3, total unknown - still narrowing
+last_status_line -> Root cause     step 3, total unknown - still narrowing
+captain-relevant: NO  <- the done: event is now HIDDEN from supervision
+
+--- Case 3: the scaffold-sanctioned form - ONE status line ending with a compact inline bar ---
+done: PR https://example.test/pr/1 checks green, steps 6/6 [██████████████] 100%
+last_status_line -> done: PR https://example.test/pr/1 checks green, steps 6/6 [██████████████] 100%
+captain-relevant: YES  <- inline bar leaves the terminal verb visible
+
+--- Case 4: keyed-decision fold is inert to bar lines ---
+needs-decision [key=api-shape]: pick REST or RPC
+Agent repair   [██░░░░░░░░░░░░]  10%
+Batch 7        [████████████░░]  88%
+status_open_decisions -> [api-shape	needs-decision	pick REST or RPC]
+(appended: resolved [key=api-shape]: REST)
+status_open_decisions -> [] (empty = decision still resolves cleanly through the bars)
