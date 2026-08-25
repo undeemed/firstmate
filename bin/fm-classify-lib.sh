@@ -1190,8 +1190,9 @@ _fm_key_syntax_marker_path() {  # <status-file>
   printf '%s/.%s.key-syntax-cursor' "$dir" "${base%.status}"
 }
 # Byte offset already warned about for <status-file>. A missing marker, a
-# changed status identity (rotated or recreated file), or malformed content
-# reads as 0, which re-warns rather than silently skipping a bad line.
+# changed status identity (rotated or recreated file), malformed content, or an
+# offset past the current file end reads as 0, which re-warns rather than
+# silently skipping a bad line.
 _fm_key_syntax_offset() {  # <status-file> -> offset
   local f=$1 marker ident recorded offset extra size
   marker=$(_fm_key_syntax_marker_path "$f")
