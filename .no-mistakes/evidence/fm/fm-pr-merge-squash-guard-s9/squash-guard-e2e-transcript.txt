@@ -1,0 +1,69 @@
+E2E transcript: fm-pr-merge.sh squash guard on a stacked PR
+PR payload served by the mocked forge (REST repos/undeemed/tetanus/pulls/241):
+{"commits":249,"changed_files":379,"head":{"ref":"fm/stack-pwsh-repl-rung-17"},"body":"Top of a stacked ladder."}
+
+=== 1. PRE-CHANGE script (cfca1dc), default flags - the incident: 249-commit stack silently squashed ===
+$ fm-pr-merge.sh task-x1 https://github.com/undeemed/tetanus/pull/241
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+armed: state/task-x1.check.sh
+exit code: 0
+--- gh-axi calls (the merge command actually issued) ---
+pr merge 241 --repo undeemed/tetanus --squash
+--- gh calls (forge reads on the merge path) ---
+pr view https://github.com/undeemed/tetanus/pull/241 --json headRefOid -q .headRefOid
+graphql calls: 0
+
+=== 2. NEW script (703116a), default flags - the guard refuses and names the counts ===
+$ fm-pr-merge.sh task-x1 https://github.com/undeemed/tetanus/pull/241
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+armed: state/task-x1.check.sh
+error: refusing to squash https://github.com/undeemed/tetanus/pull/241 by default - it carries 249 commits and 379 changed files
+  squashing would flatten those 249 commits into one commit and destroy their ancestry permanently
+  the head branch "fm/stack-pwsh-repl-rung-17" names a stack
+  pass --squash to squash it anyway, or --merge or --rebase to keep the commits
+exit code: 1
+--- gh-axi calls (the merge command actually issued) ---
+--- gh calls (forge reads on the merge path) ---
+pr view https://github.com/undeemed/tetanus/pull/241 --json headRefOid -q .headRefOid
+api repos/undeemed/tetanus/pulls/241
+graphql calls: 0
+
+=== 3. NEW script, explicit -- --squash - explicit method still wins ===
+$ fm-pr-merge.sh task-x1 https://github.com/undeemed/tetanus/pull/241 -- --squash
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+armed: state/task-x1.check.sh
+exit code: 0
+--- gh-axi calls (the merge command actually issued) ---
+pr merge 241 --repo undeemed/tetanus --squash
+--- gh calls (forge reads on the merge path) ---
+pr view https://github.com/undeemed/tetanus/pull/241 --json headRefOid -q .headRefOid
+graphql calls: 0
+
+=== 4. NEW script, ordinary single-topic PR (1 commit, 2 files), default flags - still squashes exactly as today ===
+PR payload now: {"commits":1,"changed_files":2,"head":{"ref":"fm/task-x1"},"body":"One fix."}
+$ fm-pr-merge.sh task-x1 https://github.com/undeemed/tetanus/pull/241
+armed: state/task-x1.check.sh
+exit code: 0
+--- gh-axi calls (the merge command actually issued) ---
+pr merge 241 --repo undeemed/tetanus --squash
+--- gh calls (forge reads on the merge path) ---
+pr view https://github.com/undeemed/tetanus/pull/241 --json headRefOid -q .headRefOid
+api repos/undeemed/tetanus/pulls/241
+graphql calls: 0
+
+=== 5. NEW script, the 249-commit stack again with explicit -- --merge - non-squash methods unaffected ===
+$ fm-pr-merge.sh task-x1 https://github.com/undeemed/tetanus/pull/241 -- --merge
+armed: state/task-x1.check.sh
+exit code: 0
+--- gh-axi calls (the merge command actually issued) ---
+pr merge 241 --repo undeemed/tetanus --merge
+--- gh calls (forge reads on the merge path) ---
+pr view https://github.com/undeemed/tetanus/pull/241 --json headRefOid -q .headRefOid
+graphql calls: 0
+
