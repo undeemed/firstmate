@@ -1,0 +1,28 @@
+### 1. Generate a real crewmate (ship) brief with bin/fm-brief.sh
+the brief teaches:  needs-decision [key=<slug>]: {summary of options}
+
+### 2. A worker follows the scaffold verbatim, filing TWO decisions on one task
+$ cat state/t20.status
+needs-decision [key=api-shape]: pick REST or RPC
+needs-decision [key=db-choice]: pg or sqlite
+working: continuing while the answers land
+
+### 3. Supervisor drain: both decisions list under their OWN keys
+$ bin/fm-wake-drain.sh
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t20 [key=api-shape] needs-decision: pick REST or RPC
+t20 [key=db-choice] needs-decision: pg or sqlite
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+### 4. Answer ONE of them through the real bin/fm-send.sh --resolve-key
+$ bin/fm-send.sh t20 --resolve-key api-shape "go with REST"
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+exit code: 0
+--- last line appended to the task ledger (state/t20.status) ---
+resolved [key=api-shape]: answered: go with REST
+
+### 5. Drain again: api-shape is closed, db-choice is STILL open
+$ bin/fm-wake-drain.sh
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t20 [key=db-choice] needs-decision: pg or sqlite
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'

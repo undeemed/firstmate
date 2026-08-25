@@ -1,0 +1,28 @@
+### 1. What the OLD scaffold teaches (base bin/fm-brief.sh)
+45:   append `needs-decision: {summary of options}` and stop. Firstmate will reply with the decision.
+47:   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append `resolved: {how it cleared}` yourself (same `[key=<slug>]` if you opened it with one) as you resume.
+85:Keep the append itself ONE line, and never append a stacked bar block to the status file: supervision reads the LAST line of that file, so trailing bar lines would hide the `done:`, `blocked:`, or `needs-decision:` verb the append exists to deliver.
+
+### 2. A worker follows it: summary first, [key=x] token where the old text suggests
+$ cat state/t40.status
+needs-decision: pick A or B [key=x]
+needs-decision: ship now or wait [key=y]
+
+### 3. Base drain: the listing still SHOWS the literal tokens, so it looks correctly keyed - but no [key=...] fold columns and no warning
+$ bin/fm-wake-drain.sh   (base)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t40 needs-decision: ship now or wait [key=y]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+### 4. Answering by the key the listing appears to show REFUSES with a misleading message
+$ bin/fm-send.sh t40 --resolve-key x "go with A"   (base)
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: --resolve-key 'x': no open decision or blocker with that key in /tmp/fm-base-repro.ysih/home/state/t40.status, and no captain-held task 'x' or 't40-decision-x' still open (already closed or mistyped). Re-check the OPEN DECISIONS listing, then resend without that key or with the right one; nothing was sent.
+exit code: 1
+
+### 5. One bare resolved line closes BOTH decisions at once (they shared the hidden "default" record)
+$ bin/fm-wake-drain.sh   (base)
+(empty - BOTH open decisions vanished after a single unkeyed resolution)
+
+### 6. Cross-check of the stale premise: the note-head form 'needs-decision: [key=z] ...' IS honored at base
+t41 [key=z] needs-decision: choose z now
