@@ -1149,6 +1149,38 @@ assert_present "$REMOTE_HOME" "unsafe pending-replies retirement removed the rem
 assert_present "$TMP_ROOT/external-pending/escape" "unsafe retirement removed an external pending reply"
 rm -f "$PARENT/state/pending-replies"
 mv "$PARENT/state/pending-replies.safe" "$PARENT/state/pending-replies"
+
+# A routed reply that is genuinely still open refuses non-forced retirement,
+# while a record settled without an answer (closed_unacknowledged) does not.
+unresolved_corr=$(FM_HOME="$PARENT" bash -c '
+  . "$1"
+  fm_pending_reply_create "$2" "$2/state" ios "still waiting on this routed reply"
+' _ "$ROOT/bin/fm-pending-reply-lib.sh" "$PARENT") \
+  || fail "could not seed an unresolved routed reply"
+unresolved_rec="$PARENT/state/pending-replies/$unresolved_corr"
+if remote_env "$ROOT/bin/fm-teardown.sh" ios > "$TMP_ROOT/teardown-unresolved.out" 2>&1; then
+  fail "remote retirement ignored an unresolved routed reply"
+fi
+assert_grep 'still has an unresolved routed reply' "$TMP_ROOT/teardown-unresolved.out" \
+  "unresolved routed-reply retirement lost its refusal message"
+assert_present "$REMOTE_HOME" "unresolved routed-reply retirement removed the remote home"
+FM_HOME="$PARENT" bash -c '
+  . "$1"
+  fm_pending_reply_set "$2" phase closed_unacknowledged
+  fm_pending_reply_set "$2" closed_reason escalation-window-elapsed
+  fm_pending_reply_set "$2" unacknowledged_epoch 1
+' _ "$ROOT/bin/fm-pending-reply-lib.sh" "$unresolved_rec" \
+  || fail "could not settle the routed reply without an answer"
+printf 'kind=ship\n' > "$REMOTE_HOME/state/child.meta"
+if remote_env "$ROOT/bin/fm-teardown.sh" ios > "$TMP_ROOT/teardown-settled.out" 2>&1; then
+  fail "settled routed-reply fixture lost its in-flight child guard"
+fi
+if grep -q 'still has an unresolved routed reply' "$TMP_ROOT/teardown-settled.out"; then
+  fail "a routed reply settled without an answer still refused retirement"
+fi
+assert_present "$REMOTE_HOME" "settled routed-reply retirement removed the remote home"
+rm -f "$REMOTE_HOME/state/child.meta"
+pass "settled-without-answer routed replies stop blocking remote retirement"
 retired_wake_corr=$(FM_HOME="$PARENT" bash -c '
   . "$1"
   fm_pending_reply_create "$2" "$2/state" ios "New routed work is in your backlog."
