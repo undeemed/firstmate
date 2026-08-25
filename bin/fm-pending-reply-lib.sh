@@ -19,7 +19,7 @@
 #
 # Record location (parent FM_HOME):
 #   state/pending-replies/<corr_id>
-#   state/pending-replies/archive/<corr_id>   settled records past retention
+#   state/pending-replies-archive/<corr_id>   settled records past retention
 # One more durable input, owned by bin/fm-procevent-remote-reply.sh and read
 # here: state/remote-replies/<task_id>.caught-up, the remote reply mirror's
 # watermark (see the remote reply-channel freshness section below).
@@ -199,11 +199,13 @@ fm_pending_reply_path() {  # <state-dir> <corr_id>
   printf '%s/%s' "$(fm_pending_reply_dir "$1")" "$2"
 }
 
-# Where reaped settled records are retained. Deliberately a child of the record
-# directory, so one FM_PENDING_REPLY_DIR_OVERRIDE relocates both and every
-# record glob in this library skips it on the same [ -f ] test it already makes.
+# Where reaped settled records are retained. Deliberately a sibling of the
+# record directory: bin/fm-teardown.sh's remote-retirement validator refuses
+# ANY entry in the record directory that is not a regular non-symlink file, so
+# the archive must live outside it. It is still derived from the record
+# directory itself, so one FM_PENDING_REPLY_DIR_OVERRIDE relocates both.
 fm_pending_reply_archive_dir() {  # <state-dir>
-  printf '%s/archive' "$(fm_pending_reply_dir "$1")"
+  printf '%s-archive' "$(fm_pending_reply_dir "$1")"
 }
 
 # Privacy-safe correlation id: 16 lowercase hex chars (64 bits of entropy).

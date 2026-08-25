@@ -1313,6 +1313,8 @@ test_settled_records_are_archived_on_the_retention_policy() {
   export FM_PENDING_REPLY_NOW=$((8000 + 21600 + 601))
   [ "$(fm_pending_reply_reap "$state")" = 2 ] \
     || fail "exactly the two records past retention should be archived"
+  [ -z "$(find "$(fm_pending_reply_dir "$state")" -mindepth 1 -type d)" ] \
+    || fail "reaping must leave no directory entry inside the record directory"
   [ ! -e "$(fm_pending_reply_path "$state" "$resolved")" ] \
     || fail "a resolved record past retention should leave the live directory"
   [ -f "$archive/$resolved" ] || fail "a reaped record must be archived, never deleted"

@@ -639,7 +639,7 @@ remote_secondmate_teardown() {
 			task_id=$(fm_meta_get "$rec" task_id)
 			[ "$task_id" = "$ID" ] || continue
 			phase=$(fm_meta_get "$rec" phase)
-			[ "$phase" = resolved ] || {
+			fm_pending_reply_phase_is_terminal "$phase" || {
 				echo "REFUSED: remote secondmate $ID still has an unresolved routed reply" >&2
 				return 1
 			}
