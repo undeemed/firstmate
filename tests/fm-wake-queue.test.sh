@@ -403,6 +403,10 @@ test_retirement_purges_dotted_id_seen_markers() {
 # plain drain-and-handle turn that runs no other supervision script. It must warn
 # when work is in flight with no live watcher, and stay silent right after a
 # normal fire from a live watcher with a fresh beacon, so it never false-alarms.
+# Budgets here are deliberately asymmetric: a checkpoint that is SUPPOSED to wake
+# returns the moment it does, so a generous --seconds only removes false negatives
+# on a loaded box, while a checkpoint asserted to stay silent pays its whole budget
+# on every run and stays short.
 test_secondmate_foreign_queue_stall_is_one_shot_and_read_only() {
   local dir state sub fakebin out row_before row_after stall_count
   dir=$(make_case secondmate-foreign-stall)
@@ -488,6 +492,126 @@ SH
   ! grep -F 'secondmate wake-loop stalled' "$dir/watch-healthy.out" >/dev/null \
     || fail "a healthy foreign queue produced a stall notification"
   pass "foreign secondmate queue stalls notify once, remain byte-stable, and stay quiet when empty or healthy"
+}
+
+# --- a mate that is merely mid-turn is not a stalled wake loop ---------------
+# Measured 2026-08-24: this check was loud in the wrong place and silent in the
+# right one. Two mates were reported repeatedly while holding ZERO undrained rows -
+# they were mid-turn, and each newly arriving row aged past the threshold before
+# the mate reached it, so every arrival bought its own alarm. A third mate holding
+# 90 undrained rows whose oldest was 331 minutes old raised nothing at all, because
+# the per-row marker already covered its oldest row. Both halves are pinned here:
+# the mid-turn excuse must hold for a shallow, young backlog, and must end at the
+# depth and age bounds however busy the endpoint looks.
+test_secondmate_mid_turn_mate_is_not_reported_as_stalled() {
+  local dir state sub fakebin gen out
+  dir=$(make_case secondmate-mid-turn)
+  state="$dir/state"
+  sub="$dir/secondmate"
+  mkdir -p "$sub/state" "$sub/data"
+  printf 'mate\n' > "$sub/.fm-secondmate-home"
+  printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=pi\nbackend=tmux\nhome=%s\n' \
+    "$sub" > "$state/mate.meta"
+  printf '%s\t7\tcheck\trouted\tcheck: routed row\n' "$(( $(date +%s) - 10 ))" > "$sub/state/.wake-queue"
+  # The mate's endpoint is provably mid-turn, through the same semantic busy
+  # contract every other liveness read uses.
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" mate) || fail "could not arm the mate busy record"
+  "$ROOT/bin/fm-busy-event.sh" apply "$state" mate busy --gen "$gen" --source pi-ext --event agent-start \
+    >/dev/null || fail "could not record the mate as mid-turn"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 3 > "$out" 2> "$dir/watch.err" || true
+  ! grep -F 'secondmate wake-loop stalled' "$out" >/dev/null \
+    || fail "a mid-turn mate holding one young row was reported as a stalled wake loop: $(cat "$out")"
+  [ ! -s "$state/.wake-queue" ] || fail "a mid-turn mate published a durable stall notification"
+
+  # The excuse is bounded by the oldest row's age: the same busy endpoint, the same
+  # single row, but past FM_SECONDMATE_WAKE_STALL_BEHIND_SECS it must report.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=5 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$dir/watch-behind.out" 2> "$dir/watch-behind.err" || true
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=7' "$dir/watch-behind.out" >/dev/null \
+    || fail "a busy mate past the behind bound stayed silent: $(cat "$dir/watch-behind.out")"
+  pass "a mid-turn mate is not reported as a stalled wake loop until it is measurably behind"
+}
+
+# A mate that IS behind must keep reporting. The per-row marker and receipt used to
+# veto every later report of the same row, which is exactly how a mate holding 90
+# rows for hours produced silence. They now date the last report instead, so an
+# unchanged backlog repeats on a decaying, bounded interval.
+test_secondmate_deep_backlog_reports_depth_and_keeps_escalating() {
+  local dir state sub fakebin out epoch seq gen
+  dir=$(make_case secondmate-deep-backlog)
+  state="$dir/state"
+  sub="$dir/secondmate"
+  mkdir -p "$sub/state" "$sub/data"
+  printf 'mate\n' > "$sub/.fm-secondmate-home"
+  printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=pi\nbackend=tmux\nhome=%s\n' \
+    "$sub" > "$state/mate.meta"
+  epoch=$(( $(date +%s) - 4000 ))
+  : > "$sub/state/.wake-queue"
+  seq=1
+  while [ "$seq" -le 12 ]; do
+    printf '%s\t%s\tcheck\trouted-%s\tcheck: routed row %s\n' \
+      "$(( epoch + seq ))" "$seq" "$seq" "$seq" >> "$sub/state/.wake-queue"
+    seq=$((seq + 1))
+  done
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" mate) || fail "could not arm the mate busy record"
+  "$ROOT/bin/fm-busy-event.sh" apply "$state" mate busy --gen "$gen" --source pi-ext --event agent-start \
+    >/dev/null || fail "could not record the mate as mid-turn"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+
+  # Depth alone ends the mid-turn excuse, and the report carries it.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=999999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$out" 2> "$dir/watch.err" || true
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=1' "$out" >/dev/null \
+    || fail "a mate holding a deep backlog stayed silent: $(cat "$out")"
+  grep -F 'depth=12' "$out" >/dev/null \
+    || fail "the stall report did not carry the queue depth: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err" \
+    || fail "parent drain failed after the deep-backlog report"
+  ack_drain_err "$state" "$dir/drain.err" \
+    || fail "deep-backlog report could not be acknowledged"
+
+  # Inside the repeat interval the same unchanged backlog stays quiet.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=999999 \
+    FM_SECONDMATE_WAKE_STALL_REPEAT_SECS=999 FM_SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 3 > "$dir/watch-quiet.out" 2> "$dir/watch-quiet.err" || true
+  ! grep -F 'secondmate wake-loop stalled' "$dir/watch-quiet.out" >/dev/null \
+    || fail "an acknowledged report repeated inside its interval: $(cat "$dir/watch-quiet.out")"
+  [ ! -s "$state/.wake-queue" ] || fail "an acknowledged report was re-published inside its interval"
+
+  # Past the repeat interval the still-behind mate reports again, rather than being
+  # silenced forever by the first report of that same oldest row.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=999999 \
+    FM_SECONDMATE_WAKE_STALL_REPEAT_SECS=1 FM_SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS=1 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$dir/watch-again.out" 2> "$dir/watch-again.err" || true
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=1' "$dir/watch-again.out" >/dev/null \
+    || fail "a mate still hours behind was permanently silenced by its first report: $(cat "$dir/watch-again.out")"
+  [ -s "$state/.wake-queue" ] || fail "the repeat report was not durable"
+  pass "a mate holding a deep, hours-old backlog reports its depth and keeps reporting on a bounded interval"
 }
 
 test_secondmate_stall_marker_rejects_symlink() {
@@ -1169,6 +1293,8 @@ test_historical_annotation_skips_announced_status() {
 
 test_self_held_lock_reclaims_instead_of_deadlocking
 test_secondmate_foreign_queue_stall_is_one_shot_and_read_only
+test_secondmate_mid_turn_mate_is_not_reported_as_stalled
+test_secondmate_deep_backlog_reports_depth_and_keeps_escalating
 test_secondmate_stall_marker_rejects_symlink
 test_acknowledged_stall_publication_survives_pre_marker_crash
 test_empty_prefix_mate_preserves_other_mate_receipt
