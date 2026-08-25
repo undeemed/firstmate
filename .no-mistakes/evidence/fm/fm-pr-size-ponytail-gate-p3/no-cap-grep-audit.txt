@@ -1,0 +1,29 @@
+# Repo-wide audit: no PR line cap remains (worktree at 6d321de, .git excluded)
+
+=== grep -rniE "line cap|changed lines|~500|500 lines|under 500" (excl .git) ===
+AGENTS.md:365:There is no line cap: before opening a PR, run `/ponytail-review` on the diff, cut everything it names, and re-run it until it answers `Lean already. Ship.`
+bin/fm-peek.sh:9:# 100-line cap. An unreachable host or unreadable endpoint fails loudly naming
+tests/fm-classify-decision-key.test.sh:409:    || fail "an inline bar made a nonterminal working line captain-relevant"
+tests/fm-classify-decision-key.test.sh:439:    || fail "the supported single-line inline bar broke last-line captain relevance"
+bin/fm-line-cap-lib.sh:2:# Shared per-line cap for agent-facing digest lines.
+tests/fm-session-start.test.sh:1124:  assert_contains "$out" "each capped at 220 characters" "the status tail header does not disclose its per-line cap"
+tests/fm-backend-tmux-smoke.test.sh:134:  *tag-line-1$'\n'*) fail "a 3-line capture should not still see the very first numbered line"$'\n'"$small" ;;
+tests/fm-backend-tmux-smoke.test.sh:138:  *) fail "a 3-line capture should still contain the most recent output"$'\n'"$small" ;;
+tests/fm-backend-tmux-smoke.test.sh:143:  *) fail "a 200-line capture should reach back far enough to see the first numbered line"$'\n'"$large" ;;
+tests/fm-secondmate-harness.test.sh:1766:    "beta must not inline captain-shared either"
+tests/fm-tmux-submit-busy.test.sh:206:    || fail "a failed idle-baseline capture must not let a later busy footer confirm delivery, got '$(cat "$vfile")'"
+tests/fm-tmux-submit-busy.test.sh:209:  pass "fm_tmux_submit_core: failed baseline capture disables busy unknown conversion"
+
+=== classification of remaining hits ===
+AGENTS.md:365 is the NEW rule itself ("There is no line cap").
+bin/fm-line-cap-lib.sh, bin/fm-peek.sh, tests/fm-session-start.test.sh: per-line CHARACTER caps for digest/peek output - unrelated.
+tests/fm-backend-tmux-smoke.test.sh, fm-classify-decision-key, fm-secondmate-harness, fm-tmux-submit-busy: pane-capture line counts / "inline captain" phrases - unrelated.
+
+=== "500" in markdown surfaces ===
+Only AGENTS.md:74 "7,500 estimated tokens" (startup-memory budget) - unrelated to PR size.
+
+=== "oversized" / "stacked" ===
+Hits only in digest-truncation docs (docs/configuration.md, docs/sessionstart-nudge.md), UI skills (toasts/sheets), fm-pr-merge stacked-PR squash-guard code+tests, and fm-brief progress-bar "stacked lines" - none is a PR size cap.
+
+=== ponytail references ===
+AGENTS.md:365 is the only ponytail reference in the repo (bin/fm-brief.sh has none - its scaffold change is deliberately filed as a separate task per intent).
