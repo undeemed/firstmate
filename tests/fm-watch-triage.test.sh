@@ -1556,7 +1556,7 @@ test_declared_pause_recheck_cadence_decays_and_stays_bounded() {
 		fail "a declared wait past its decayed interval was never rechecked"
 	}
 	grep -F "awaiting external" "$out" >/dev/null || fail "the decayed recheck was not labeled a declared-wait recheck: $(cat "$out")"
-	grep -F "next recheck of this unchanged wait in 480s" "$out" >/dev/null ||
+	grep -F "next recheck of this unchanged wait not before 480s" "$out" >/dev/null ||
 		fail "the recheck did not name its decayed next interval: $(cat "$out")"
 	grep -F "possible wedge" "$out" >/dev/null && fail "a decayed recheck was mislabeled a possible wedge"
 	ack_stopped_cycle "$state" || fail "could not acknowledge the decayed recheck"
@@ -1594,7 +1594,7 @@ test_declared_pause_recheck_cadence_decays_and_stays_bounded() {
 		reap "$pid"
 		fail "a days-old declared wait stopped reporting entirely at the ceiling"
 	}
-	grep -F "next recheck of this unchanged wait in 600s" "$out" >/dev/null ||
+	grep -F "next recheck of this unchanged wait not before 600s" "$out" >/dev/null ||
 		fail "the ceiling did not bound the decayed interval: $(cat "$out")"
 	unset FM_FAKE_CREW_STATE
 	pass "an unchanged declared wait is rechecked on a decaying interval bounded by its ceiling"
