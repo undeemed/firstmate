@@ -1,0 +1,50 @@
+ok - fm-pr-merge records pr= and pr_head= before invoking gh-axi pr merge
+ok - fm-pr-merge propagates a real merge failure without silently succeeding
+ok - fm-pr-merge forwards extra flags to gh-axi pr merge after the -- separator
+ok - fm-pr-merge refuses before merging when task meta is missing
+ok - fm-pr-merge refuses malformed PR URLs before calling gh-axi
+ok - fm-pr-merge refuses unsafe PR URL segments before recording state
+ok - fm-pr-merge refuses repo override args before recording state
+ok - fm-pr-merge refuses a bundled short-option repo override and forwards other short flags
+ok - fm-pr-merge does not add default --squash when the caller passes an explicit merge method
+ok - fm-pr-merge respects --method=<value> as an explicit merge method
+ok - fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments
+ok - fm-pr-merge leaves GitHub extra-arg handling unchanged, including --sha
+ok - fm-pr-merge merges a GitLab merge request through glab instead of refusing it
+ok - fm-pr-merge takes the GitLab instance from the URL rather than assuming one
+ok - fm-pr-merge imposes no merge method on GitLab, leaving the project's own one
+ok - fm-pr-merge forwards extra flags to glab mr merge after the -- separator
+ok - fm-pr-merge propagates a real glab merge failure without silently succeeding
+ok - fm-pr-merge refuses on each GitLab pre-merge condition independently
+ok - fm-pr-merge reports every failing GitLab condition, not only the first
+ok - fm-pr-merge reports a stale recorded head and verifies the live one
+ok - fm-pr-merge refuses an unreadable GitLab merge request state rather than merging blind
+ok - fm-pr-merge refuses a GitLab head commit it cannot validate
+ok - fm-pr-merge refuses before recording anything when glab or jq is absent
+ok - fm-pr-merge refuses a GitLab head override before recording state
+ok - fm-pr-merge refuses the default squash on a stacked PR and names the counts
+ok - fm-pr-merge refuses the default squash when the changed-file count is too large
+ok - fm-pr-merge squashes at the guard threshold and refuses one commit past it
+ok - fm-pr-merge still squashes a single-commit PR by default, exactly as before
+ok - fm-pr-merge lets an explicit --squash override the stacked-PR refusal
+ok - fm-pr-merge leaves an explicit --merge or --rebase completely unguarded
+ok - fm-pr-merge refuses the default squash when the commit count cannot be read
+ok - fm-pr-merge warns on a stack-named branch while keeping the counts as the hard gate
+ok - fm-pr-merge leaves the GitLab merge path untouched by the squash guard
+ok - fm-pr-merge --pipeline merges a green PR pinned to head and writes an audit line
+ok - fm-pr-merge --pipeline refuses a PR whose mergeable_state is not clean
+ok - fm-pr-merge --pipeline refuses a PR with a non-green check
+ok - fm-pr-merge --pipeline refuses a PR with a still-running check
+ok - fm-pr-merge --pipeline refuses when checks exceed one verifiable page
+ok - fm-pr-merge --pipeline refuses when a reviewer's CHANGES_REQUESTED is only followed by a COMMENTED review
+ok - fm-pr-merge --pipeline fails closed when the reviews API read fails
+ok - fm-pr-merge --pipeline refuses when reviews fill one verifiable page
+ok - fm-pr-merge --pipeline refuses a malformed checks payload instead of merging
+ok - fm-pr-merge --pipeline refuses a checks payload without total_count instead of merging
+ok - fm-pr-merge --pipeline refuses a completed check with a null conclusion
+ok - fm-pr-merge --pipeline refuses a completed check with an unrecognized conclusion
+ok - fm-pr-merge --pipeline refuses a non-array reviews payload instead of merging
+ok - fm-pr-merge --pipeline refuses caller-supplied --match-head-commit overrides
+ok - fm-pr-merge --pipeline refuses caller-supplied --auto in extra args
+ok - fm-pr-merge --pipeline refuses the default squash on a stacked PR
+ok - fm-pr-merge --pipeline lets an explicit --squash override the stacked-PR refusal

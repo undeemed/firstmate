@@ -1,0 +1,6 @@
+ok - raw-byte parser accepts canonical URLs and rejects the complete adversarial matrix
+ok - GitLab merge requests are followed on any instance and never wake falsely
+ok - an armed merge poll survives later metadata writes and names real ambiguity distinctly
+ok - validated merged polls notify once and retire before the next watcher cycle
+ok - merged poll retirement preserves every persistent secondmate lifecycle artifact
+not ok - template-update recovery wake failed: 
