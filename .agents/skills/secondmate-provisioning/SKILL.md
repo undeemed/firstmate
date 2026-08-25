@@ -237,7 +237,7 @@ Run `bin/fm-teardown.sh <id>` for `kind=secondmate` only when the captain or mai
 
 The safety check is the secondmate's own home.
 Teardown refuses while its `state/*.meta` contains in-flight work.
-A remote route delegates the same guard to its configured host and additionally refuses while the primary has a pending handoff outbox or unresolved routed reply.
+A remote route delegates the same guard to its configured host and additionally refuses while the primary has a pending handoff outbox or a routed reply that is not yet settled (`bin/fm-pending-reply-lib.sh`).
 SSH exit 255 preserves the route and local records because remote completion is unknown.
 When safe, teardown kills the direct endpoint, removes the `data/secondmates.md` route, clears the main home metadata, and removes the retired secondmate home.
 Removing a leased home releases its durable treehouse lease via `treehouse return`, so the pool slot is freed for reuse rather than left leased forever.
