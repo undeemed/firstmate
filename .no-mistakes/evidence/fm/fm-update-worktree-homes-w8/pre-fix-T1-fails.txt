@@ -1,0 +1,7 @@
+# Regression proof: tests/fm-startup-origin-sync.test.sh run against the PRE-FIX code
+# (git archive of base commit 1acdb13 + the new test file copied in; tests/lib.sh identical at base and target)
+# Command: bash /tmp/prefix-1acdb13/tests/fm-startup-origin-sync.test.sh   -> exit 1
+
+not ok - primary did not advance to the landed commit
+
+# Same test at target commit 64a94e6: all 8 cases pass (see post-fix-origin-sync-pass.txt)

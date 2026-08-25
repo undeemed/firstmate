@@ -1,0 +1,9 @@
+ok - T1 a commit landed on origin reaches the primary and every live home in one ordinary startup
+ok - T2 a dirty primary is left untouched and its drift is reported, not silent
+ok - T3 a primary on a feature branch is left alone and its drift is still reported
+ok - T4 a home holding unlanded work is left untouched and reported as behind
+ok - T5 a seeded secondmate home neither fetches origin nor advances itself at startup
+ok - T6 a detect-only (read-only) session performs no instruction refresh
+ok - T7 a second startup on an already-current primary is quiet
+ok - T8 a landed commit with origin unreachable is reported as unknown drift, and nothing moves
+# all fm-startup-origin-sync tests passed
