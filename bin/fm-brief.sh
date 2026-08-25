@@ -53,6 +53,15 @@
 # stopping - pause or blocked, including a finished block with nothing queued -
 # before it goes quiet, because a still pane with no declared state costs
 # supervision a deep inspection to tell apart from a wedge.
+# Every scaffold also carries the same progress-visibility contract: stacked
+# ASCII progress bars in the worker's OWN output, every percentage derived from
+# a real done/total count it can name, and no bar at all when there is no
+# countable denominator. It does not loosen the status protocol: a status append
+# stays one sparse supervisor-actionable line, a bar is never a reason to
+# append, and a stacked bar block must never be appended to a status file,
+# because every supervisor reads that file's LAST line
+# (bin/fm-classify-lib.sh last_status_line) and trailing bar lines would hide
+# the done:/blocked:/needs-decision: verb the append exists to deliver.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -182,6 +191,51 @@ shell_quote() {
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 
+# Progress-visibility contract, byte-identical in every scaffold so a worker's
+# progress reporting never depends on which kind of brief it received. Built
+# with a QUOTED heredoc so its backticks, braces, and box-drawing cells reach
+# the reading agent verbatim; the interpolating brief heredocs below expand
+# "$PROGRESS_SECTION" once and never rescan its bytes.
+IFS= read -r -d '' PROGRESS_SECTION <<'EOF' || true
+# Progress - do not be a black box
+The status protocol above owns WHEN you append a status line.
+This owns what your own working output shows in between, so a supervisor can see where the work actually is without asking.
+
+While working on anything with more than a couple of steps, print ASCII progress bars in your own output.
+Exact format, fixed width so stacked lines read as a table:
+
+```
+Agent repair   [██░░░░░░░░░░░░]  10%
+Batch 7        [████████████░░]  88%
+Whole build    [████░░░░░░░░░░]  34%
+```
+
+- Label left-aligned and padded to the widest label in the group.
+- Bar is exactly 14 cells between `[` and `]`, `█` filled and `░` empty, filled cells = `round(percent * 14 / 100)`.
+- Percent right-aligned in 3 characters, then `%`, separated from the bar by two spaces.
+- Show the tracks that exist, innermost first: the unit of work in hand, its parent batch, then the whole job. One track is fine; never invent a hierarchy to fill lines.
+
+Print a group when progress genuinely moves - a step completing, a batch finishing - not on every line, and not on a timer.
+Re-print the whole group each time rather than a single changed line, so the latest block always shows the full picture.
+A bar never replaces the substance: it sits with the sentence that says what happened and what is next.
+
+**Every percentage must come from a real count you can name**: tests passed over total, files migrated over total, steps done over planned, subtasks merged over opened.
+Derive it as `done / total`, and be ready to say what the two numbers were.
+
+**Never invent a number to look busy.** A fabricated 34% is worse than no bar, because it reads as measurement and a supervisor will act on it.
+When there is no countable denominator, print the honest shape instead and omit the bar entirely:
+
+```
+Root cause     step 3, total unknown - still narrowing
+```
+
+Bars never change WHEN you append status, and a bar is never a reason to append one: status stays sparse supervisor-actionable events.
+Keep the append itself ONE line, and never append a stacked bar block to the status file: supervision reads the LAST line of that file, so trailing bar lines would hide the `done:`, `blocked:`, or `needs-decision:` verb the append exists to deliver.
+A status line you were already going to append may end with one compact inline bar built from the same real count, for example:
+`working: fix implemented, tests 34/40 [████████████░░]  85%`
+EOF
+PROGRESS_SECTION=${PROGRESS_SECTION%$'\n'}
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -252,6 +306,8 @@ When a keyed phase ends without another reportable state, append \`resolved [key
 \`resolved\` separately closes an escalated decision or blocker, and only a \`resolved\` line carrying that decision's exact key closes it: a later \`done\` or \`working\` event never does, even when the answer is what started that work.
 The main firstmate's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main firstmate, append \`resolved: {how it cleared}\` yourself (keyed with \`[key=<slug>]\` if you opened it with one) as your domain resumes.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
+
+$PROGRESS_SECTION
 
 # Definition of done
 You are persistent by default. Do not exit just because your queue is empty.
@@ -344,6 +400,8 @@ The report is the only thing that survives, so anything worth keeping must be in
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+
+$PROGRESS_SECTION
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -466,6 +524,8 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+
+$PROGRESS_SECTION
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
