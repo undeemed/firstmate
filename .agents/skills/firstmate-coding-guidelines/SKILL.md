@@ -122,6 +122,8 @@ Run `bin/fm-doc-audience-check.sh`; it enforces classification, README setup rou
 - When a task names a specific tool, implement the work with that tool, or explicitly flag the substitution and its new dependency footprint for review before shipping.
 - Colocate tests with the existing pattern in `tests/`, name them `<subject>.test.sh`, and extend an existing script rather than inventing a new runner.
 - Tests must exercise behavior through an executable or public interface and must never assert implementation-source bytes, including through parsers, regexes, snapshots, or indirect wrappers.
+- Pin a fixture's harness by clearing every identity marker `bin/fm-harness.sh` recognizes and then setting only the wanted one; setting a single marker is not a pin, because a marker tested earlier in that order (today `CURSOR_AGENT`, `CURSOR_INVOKED_AS`, `OMPCODE`) that the host runner carries silently wins.
+- When adding a new identity marker to `bin/fm-harness.sh`, scrub it in every fixture that pins a harness in the same change, exactly as the launch scrub in `bin/fm-spawn.sh` does.
 - A maintainer-verification record under `docs/verification/` records active empirical facts, not assumptions or task chronology.
 - Include the date, version, exact commands run, and exact output needed to support the current guarantee.
 - Keep incident chronology and delivery evidence in private task reports or PR evidence unless a concise rationale is required to maintain a current safety boundary.
