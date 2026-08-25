@@ -125,6 +125,7 @@ The file is read as its first line that is not blank and not a `#` comment, whic
 A malformed value is reported on the watcher's standard error and ignored in favour of the 240-second default, so a typo never changes the cadence silently and never wedges the watcher.
 Size the value just above the longest silence the home's real work produces - about `1200` for a project whose full gate run takes 17 minutes - and never large enough to mute the alarm class, because a wedge alarm on a quiet-looking lane is what catches a lane that is failing rather than working.
 The file is per home and is not inherited by secondmate homes, because the legitimate silence it describes is a property of the work that home actually runs.
+The key paces the watcher only - while away mode is active, the away-mode supervisor daemon owns triage and still escalates a persisted stale on the 240-second default, which this per-home override does not cover.
 `bin/fm-watch.sh`'s header owns the exact parsing and the escalation behavior the threshold paces.
 
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)

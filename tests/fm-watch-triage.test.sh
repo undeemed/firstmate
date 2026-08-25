@@ -1038,7 +1038,7 @@ test_stale_threshold_absent_override_keeps_240s() {
 test_stale_threshold_config_sets_the_interval() {
 	local dir
 	dir=$(threshold_case stale-threshold-config 500)
-	printf '1200\n' >"$dir/config/stale-escalate-secs"
+	printf '\t1200 \n' >"$dir/config/stale-escalate-secs"
 	if threshold_run "$dir"; then
 		fail "a 500s idle pane escalated under a 1200s override: $(cat "$dir/watch.out")"
 	fi
@@ -1061,6 +1061,26 @@ test_stale_threshold_malformed_override_reports_and_defaults() {
 	grep -F "possible wedge" "$dir/watch.out" >/dev/null || fail "a malformed override did not fall back to the 240s default"
 	grep -F "config/stale-escalate-secs" "$dir/watch.err" >/dev/null || fail "a malformed override was ignored silently: $(cat "$dir/watch.err")"
 	pass "a malformed config/stale-escalate-secs is reported and falls back to 240s"
+}
+
+test_stale_threshold_interior_whitespace_is_malformed() {
+	local dir
+	dir=$(threshold_case stale-threshold-interior-space 500)
+	printf '240 300\n' >"$dir/config/stale-escalate-secs"
+	threshold_run "$dir" || fail "an interior-space override was accepted instead of defaulting to 240s: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null || fail "an interior-space override did not fall back to the 240s default"
+	grep -F "config/stale-escalate-secs" "$dir/watch.err" >/dev/null || fail "an interior-space override was accepted silently: $(cat "$dir/watch.err")"
+	pass "an interior-space config/stale-escalate-secs is reported and falls back to 240s"
+}
+
+test_stale_threshold_leading_zero_is_malformed() {
+	local dir
+	dir=$(threshold_case stale-threshold-leading-zero 500)
+	printf '01200\n' >"$dir/config/stale-escalate-secs"
+	threshold_run "$dir" || fail "a leading-zero override was accepted instead of defaulting to 240s: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null || fail "a leading-zero override did not fall back to the 240s default"
+	grep -F "config/stale-escalate-secs" "$dir/watch.err" >/dev/null || fail "a leading-zero override was accepted silently: $(cat "$dir/watch.err")"
+	pass "a leading-zero config/stale-escalate-secs is reported and falls back to 240s"
 }
 
 test_stale_threshold_environment_beats_the_file() {
@@ -3426,6 +3446,8 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_stale_threshold_absent_override_keeps_240s
 test_stale_threshold_config_sets_the_interval
 test_stale_threshold_malformed_override_reports_and_defaults
+test_stale_threshold_interior_whitespace_is_malformed
+test_stale_threshold_leading_zero_is_malformed
 test_stale_threshold_environment_beats_the_file
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active

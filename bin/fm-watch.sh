@@ -195,15 +195,16 @@ STALE_ESCALATE_SECS_FILE="$CONFIG/stale-escalate-secs"
 
 # Print the configured threshold held by <file>: 0 with the value on stdout, 1
 # when the file is absent or holds no value line, 2 when its first value line is
-# not a positive base-10 integer.
+# not one positive whole number in plain decimal digits.
 stale_escalate_configured() { # <file>
 	local file=$1 line value
 	[ -f "$file" ] || return 1
 	while IFS= read -r line || [ -n "$line" ]; do
 		case "$line" in '#'*) continue ;; esac
-		value=$(printf '%s' "$line" | tr -d '[:space:]')
+		value=${line#"${line%%[![:space:]]*}"}
+		value=${value%"${value##*[![:space:]]}"}
 		[ -n "$value" ] || continue
-		case "$value" in '' | *[!0-9]*) return 2 ;; esac
+		case "$value" in '' | *[!0-9]* | 0[0-9]*) return 2 ;; esac
 		[ "$value" -gt 0 ] || return 2
 		printf '%s' "$value"
 		return 0
