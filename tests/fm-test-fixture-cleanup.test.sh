@@ -79,22 +79,37 @@ test_cleanup_registry_resists_precreation() {
   pass "the cleanup registry cannot be injected through path precreation"
 }
 
-test_fixture_registration_failure_rolls_back_root() {
-  local harness failure_tmp registry_dir output leaked_root
+test_fixture_registration_failure_is_fatal_and_rolls_back() {
+  local harness failure_tmp registry_dir child_out child_err child_status leaked_root
   harness=$(fm_test_tmproot fm-test-cleanup-registration-harness)
   failure_tmp="$harness/tmp"
   registry_dir="$harness/registry-dir"
+  child_out="$harness/child-out"
+  child_err="$harness/child-err"
   mkdir -p "$failure_tmp" "$registry_dir"
 
-  if output=$(TMPDIR="$failure_tmp" FM_TEST_CLEANUP_REGISTRY="$registry_dir" \
-    fm_test_tmproot fm-test-cleanup-registration-failure 2>/dev/null); then
-    fail "fm_test_tmproot succeeded after its cleanup registry rejected registration"
-  fi
-  [ -z "$output" ] || fail "fm_test_tmproot published an unregistered fixture root"
+  # The registry override is a directory, so recording the new root must fail.
+  # fm_test_tmproot's contract for that failure is fatal-to-the-test-process
+  # (SIGTERM to $$): its caller reads the root through a command substitution,
+  # where a plain non-zero return is an invisible empty string. Drive the
+  # failure in a separate bash process so the blast radius is that child, and
+  # observe the contract from outside.
+  TMPDIR="$failure_tmp" bash -c '
+    . "$1"
+    d=$(FM_TEST_CLEANUP_REGISTRY="$2" fm_test_tmproot fm-test-cleanup-registration-failure)
+    printf "survived:%s\n" "$d"
+  ' _ "$LIB" "$registry_dir" > "$child_out" 2> "$child_err"
+  child_status=$?
+
+  [ "$child_status" -eq 143 ] || \
+    fail "a failed fixture registration did not terminate the owning test process (exit $child_status, want 143)"
+  [ ! -s "$child_out" ] || fail "fm_test_tmproot published a fixture root after its registration failed"
+  assert_contains "$(cat "$child_err")" "could not record the fixture root" \
+    "the fatal registration failure did not report loudly on stderr"
   for leaked_root in "$failure_tmp"/fm-test-cleanup-registration-failure.*; do
     [ ! -e "$leaked_root" ] || fail "fm_test_tmproot leaked a root after registration failed"
   done
-  pass "failed fixture registration rolls back the new root"
+  pass "failed fixture registration kills the owning test process and rolls back the root"
 }
 
 test_orphan_sweep_respects_fixture_ownership() {
@@ -147,5 +162,5 @@ test_orphan_sweep_respects_fixture_ownership() {
 test_fixture_root_gone_after_normal_exit
 test_fixture_root_gone_after_sigterm
 test_cleanup_registry_resists_precreation
-test_fixture_registration_failure_rolls_back_root
+test_fixture_registration_failure_is_fatal_and_rolls_back
 test_orphan_sweep_respects_fixture_ownership
