@@ -1,0 +1,48 @@
+== 1. armed but nothing polling yet ==
+registered: lavish-9bfede6ded0750a6 (lavish)
+armed: lavish-9bfede6ded0750a6
+artifact: /tmp/fm-lavish-demo.laKQak/decisions-board.html
+
+$ bin/fm-procevent.sh list (still shows the source as registered)
+SOURCE                       ADAPTER      OWNER      PENDING
+lavish-9bfede6ded0750a6      lavish       none       0
+(exit 0)
+
+$ bin/fm-procevent-lavish.sh listening /tmp/fm-lavish-demo.laKQak/decisions-board.html
+not-listening: /tmp/fm-lavish-demo.laKQak/decisions-board.html
+detail: not-listening: lavish-9bfede6ded0750a6 (registered with no live owner)
+(exit 1)
+
+== 2. reconcile starts the listener; poll is genuinely alive ==
+
+$ bin/fm-procevent.sh alive lavish-9bfede6ded0750a6
+listening: lavish-9bfede6ded0750a6 runner=2085070 source-process=2085468
+(exit 0)
+
+$ bin/fm-procevent-lavish.sh listening /tmp/fm-lavish-demo.laKQak/decisions-board.html
+listening: /tmp/fm-lavish-demo.laKQak/decisions-board.html
+detail: listening: lavish-9bfede6ded0750a6 runner=2085070 source-process=2085468 poll-process=2085530
+(exit 0)
+
+== 3. the poll process dies; list still shows the source, listening does not lie ==
+
+$ bin/fm-procevent.sh list
+SOURCE                       ADAPTER      OWNER      PENDING
+lavish-9bfede6ded0750a6      lavish       none       0
+(exit 0)
+
+$ bin/fm-procevent.sh alive lavish-9bfede6ded0750a6
+not-listening: lavish-9bfede6ded0750a6 (registered with no live owner)
+(exit 1)
+
+$ bin/fm-procevent-lavish.sh listening /tmp/fm-lavish-demo.laKQak/decisions-board.html
+not-listening: /tmp/fm-lavish-demo.laKQak/decisions-board.html
+detail: not-listening: lavish-9bfede6ded0750a6 (registered with no live owner)
+(exit 1)
+
+== 4. a listener between bounded retries reports recovering (exit 3) ==
+
+$ bin/fm-procevent-lavish.sh listening /tmp/fm-lavish-demo.laKQak/decisions-board.html
+recovering: /tmp/fm-lavish-demo.laKQak/decisions-board.html (the listener holds no poll right now, between bounded retries)
+detail: listening: lavish-9bfede6ded0750a6 runner=2088791 source-process=2089143
+(exit 3)
