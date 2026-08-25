@@ -1,0 +1,2 @@
+# Host identity markers present in the test session environment
+CLAUDECODE=1
