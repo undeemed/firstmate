@@ -224,6 +224,18 @@ changed_instr() {
   printf '%s' "$out"
 }
 
+# " (N commit(s) behind)" when the target is genuinely behind its fast-forward
+# base, and empty otherwise. Every skip below carries it, because a skip has to
+# say that real commits are being LEFT behind: a silent skip is how a whole fleet
+# kept running yesterday's instructions while every report still looked healthy.
+ff_behind_note() {
+  local dir=$1 base=$2 behind
+  behind=$(git -C "$dir" rev-list --count "HEAD..$base" 2>/dev/null) || return 0
+  case "$behind" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$behind" -gt 0 ] || return 0
+  printf ' (%s commit(s) behind)' "$behind"
+}
+
 dirty_status() {
   local dir=$1 ignore_seed_marker=${2:-no}
   if [ "$ignore_seed_marker" = yes ]; then
@@ -267,7 +279,9 @@ live_secondmate_meta_records() {
 #                  for a worktree of this same repo; a standalone clone that lacks
 #                  it is skipped rather than fetched.
 # Guards are identical in both modes: ff-only (never force/merge/stash); skip a
-# dirty, diverged, or wrong-branch target and leave its work untouched.
+# dirty, diverged, or wrong-branch target and leave its work untouched. A skip
+# that leaves real commits behind says how many, so drift stays visible even
+# where it cannot be repaired.
 FF_STATUS=""
 FF_INSTR=""
 ff_target() {
@@ -312,16 +326,16 @@ ff_target() {
 
   cur=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null || echo "")
   if [ -z "$cur" ] && [ "$allow_detached" != yes ]; then
-    echo "$label: skipped: detached HEAD, expected $default"
+    echo "$label: skipped: detached HEAD, expected $default$(ff_behind_note "$dir" "$base")"
     return 0
   fi
   if [ -n "$cur" ] && [ "$cur" != "$default" ]; then
-    echo "$label: skipped: on $cur, expected $default"
+    echo "$label: skipped: on $cur, expected $default$(ff_behind_note "$dir" "$base")"
     return 0
   fi
 
   if [ -n "$(dirty_status "$dir" "$ignore_seed_marker")" ]; then
-    echo "$label: skipped: dirty working tree"
+    echo "$label: skipped: dirty working tree$(ff_behind_note "$dir" "$base")"
     return 0
   fi
 
@@ -339,14 +353,14 @@ ff_target() {
     return 0
   fi
   if ! git -C "$dir" merge-base --is-ancestor HEAD "$base" 2>/dev/null; then
-    echo "$label: skipped: diverged from $base"
+    echo "$label: skipped: diverged from $base$(ff_behind_note "$dir" "$base")"
     return 0
   fi
 
   instr=$(changed_instr "$dir" "$base")
   before=$(git -C "$dir" rev-parse --short HEAD)
   if ! out=$(git -C "$dir" merge --ff-only "$base" 2>&1); then
-    echo "$label: skipped: fast-forward failed: $(first_line "$out")"
+    echo "$label: skipped: fast-forward failed: $(first_line "$out")$(ff_behind_note "$dir" "$base")"
     return 0
   fi
   after=$(git -C "$dir" rev-parse --short HEAD)

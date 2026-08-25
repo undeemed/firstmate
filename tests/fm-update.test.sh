@@ -5,7 +5,8 @@
 # The guarantees under test mirror fm-fleet-sync.sh and prime directive #3:
 #   - The running firstmate repo (on its default branch) fast-forwards from
 #     origin; a leased secondmate home (detached HEAD on the default branch)
-#     fast-forwards the same way.
+#     fast-forwards the same way, including when the update is run from INSIDE
+#     that home, while an ordinary checkout found detached is still refused.
 #   - FAST-FORWARD ONLY: a dirty, diverged, offline, or wrong-branch target is
 #     skipped and reported, never forced or stashed, so unlanded work survives.
 #   - The update is a single-parent fast-forward (never a merge commit) and a
@@ -269,6 +270,48 @@ test_firstmate_detached_head_skipped() {
   pass "T10 firstmate detached HEAD is skipped"
 }
 
+# --- T12: /updatefirstmate run INSIDE a seeded secondmate home -------------
+# A home is a leased worktree at a detached HEAD by design, so the update must
+# advance the home it is run from instead of refusing it for that very layout.
+test_update_inside_secondmate_home_advances_it() {
+  local w out
+  w=$(new_world t12)
+  add_sm "$w" sm1
+  bump_origin "$w" instr
+
+  out=$(FM_ROOT_OVERRIDE="$w/sm1" FM_HOME="$w/sm1" "$UPDATE" 2>/dev/null)
+
+  assert_contains "$out" "firstmate: updated " "the home it runs in is fast-forwarded"
+  assert_contains "$out" "reread-firstmate: yes" "an instruction change still asks for a re-read"
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$(git -C "$w/sm1" rev-parse origin/main)" ] \
+    || fail "secondmate home HEAD not at origin/main"
+  git -C "$w/sm1" symbolic-ref -q HEAD >/dev/null && fail "the home is no longer detached"
+  [ "$(git -C "$w/sm1" rev-list --parents -n1 HEAD | wc -w | tr -d ' ')" -eq 2 ] \
+    || fail "the home's tip is not a single-parent fast-forward"
+  # The shared default branch and the primary checkout are untouched by it.
+  [ "$(git -C "$w/main" rev-parse HEAD)" != "$(git -C "$w/main" rev-parse origin/main)" ] \
+    || fail "updating from inside a home also moved the primary checkout"
+  pass "T12 /updatefirstmate run inside a seeded secondmate home advances that home"
+}
+
+# --- T13: a dirty seeded home is still refused, its work intact ------------
+test_update_inside_dirty_secondmate_home_skipped() {
+  local w out before
+  w=$(new_world t13)
+  add_sm "$w" sm1
+  bump_origin "$w" instr
+  printf 'uncommitted local edit\n' >> "$w/sm1/AGENTS.md"
+  before=$(git -C "$w/sm1" rev-parse HEAD)
+
+  out=$(FM_ROOT_OVERRIDE="$w/sm1" FM_HOME="$w/sm1" "$UPDATE" 2>/dev/null)
+
+  assert_contains "$out" "firstmate: skipped: dirty working tree" "a dirty home is still refused"
+  assert_contains "$out" "commit(s) behind" "the refusal reports that the home is behind"
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$before" ] || fail "dirty home HEAD moved"
+  grep -q 'uncommitted local edit' "$w/sm1/AGENTS.md" || fail "dirty edit was discarded"
+  pass "T13 a dirty seeded home is refused and reported as behind, never forced"
+}
+
 test_unsafe_secondmate_home_skipped_before_git_update() {
   local w out bad before
   w=$(new_world t11)
@@ -299,6 +342,8 @@ test_idempotent_already_current
 test_registry_backstop_dedup_and_self_exclusion
 test_firstmate_wrong_branch_skipped
 test_firstmate_detached_head_skipped
+test_update_inside_secondmate_home_advances_it
+test_update_inside_dirty_secondmate_home_skipped
 test_unsafe_secondmate_home_skipped_before_git_update
 
 echo "# all fm-update tests passed"

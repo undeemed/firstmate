@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, NETWORK_CHECKS, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, or FMX - or when a standalone bin/fm-bootstrap.sh or bin/fm-startup-network.sh run prints one of those lines.
+  Use whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FIRSTMATE_SYNC, FLEET_SYNC, NETWORK_CHECKS, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, or FMX - or when a standalone bin/fm-bootstrap.sh or bin/fm-startup-network.sh run prints one of those lines.
   A silent bootstrap section, or a BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -35,6 +35,14 @@ When any diagnostic needs captain attention, report the plain consequence and re
 - `STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>` - the visible startup-memory budget is not a safe one-line positive decimal file; do not infer the default or propagate it.
   Correct the local primary file, then rerun session start so the normal convergence path can deliver the validated value to secondmate homes.
 - `CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>` - the optional dispatch profile file exists but failed low-cost bootstrap validation; stop profile-based dispatch, report the actionable error, and require correction of the malformed schema, unverified harness name, or invalid harness/effort pair rather than falling back around it or selecting a bad profile.
+- `FIRSTMATE_SYNC: primary checkout updated <a>..<b> (instructions changed: <paths>) - re-read AGENTS.md before acting further in this session` - the startup instruction refresh fast-forwarded this checkout from origin and the loaded instruction surface changed under you.
+  Re-read `AGENTS.md` before acting further, exactly as after `/updatefirstmate`, because the file this session started from is no longer the current one.
+  Every live secondmate home converged to the same commit in that run, and each one whose instructions changed was nudged to re-read; a home that could not be advanced reports itself separately as `SECONDMATE_SYNC:`.
+- `FIRSTMATE_SYNC: primary checkout is <n> commit(s) behind origin/<branch> and was left untouched (<reason>)` - a landed instruction change cannot reach this home, and the reason is named: the checkout is dirty, on a feature branch, diverged, or otherwise not fast-forwardable.
+  This is fleet-wide, not local: every secondmate home converges to this checkout, so the whole fleet keeps running these instructions until it is resolved.
+  Resolve the named reason without touching unlanded work - a dirty or diverged primary holds someone's commits - then rerun session start, or `bin/fm-update.sh` for the same fast-forward on demand.
+  A `may be running stale instructions - origin could not be read` variant means the fetch failed or the origin ref could not be resolved, so the drift cannot be measured and the last known origin ref may itself be stale; treat this checkout as possibly stale until a run with origin reachable confirms it.
+  A `could not confirm ...` variant means the behind count itself could not be computed; treat it the same way.
 - `FLEET_SYNC: <repo>: skipped: <reason>` - a benign one-off skip (offline, no origin, local-only); bootstrap continued, investigate only if it blocks work.
   A skip can also report the bounded fleet-refresh timeout (`FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT`, or a fleet-size-aware default with a 20 second floor); a timeout never blocks startup.
 - `FLEET_SYNC: <repo>: recovered: <detail>` - the clone had drifted onto a clean detached HEAD holding no unique commits and the sync self-healed it (re-attached the default branch and fast-forwarded); no action needed, it is reported only so the self-heal is visible.
