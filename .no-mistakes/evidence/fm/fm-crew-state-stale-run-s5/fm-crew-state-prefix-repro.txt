@@ -1,0 +1,14 @@
+not ok - a superseded failed run must never be the current state (unexpected: 'state: failed')
+--- output ---
+state: failed · source: run-step · run failed
+PREFIX-FAIL: test_superseded_failed_run_is_not_current
+not ok - ambiguity must not resolve to a false failure (unexpected: 'state: failed')
+--- output ---
+state: failed · source: run-step · run failed
+PREFIX-FAIL: test_unbindable_current_run_reports_unknown
+not ok - the superseded failed run must not win (unexpected: 'state: failed')
+--- output ---
+state: failed · source: run-step · run failed
+PREFIX-FAIL: test_pipeline_head_binds_via_submitted_head
+ok - a genuinely failed current run is still reported as failed
+PREFIX-PASS: test_genuinely_failed_current_run_still_reports_failed

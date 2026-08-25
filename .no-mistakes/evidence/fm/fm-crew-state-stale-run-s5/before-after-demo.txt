@@ -1,0 +1,13 @@
+== fm-crew-state.sh reader answer, incident scenario (task busy, newer run validating in managed clone, older run failed at this worktree head) ==
+
+--- BEFORE the fix (base 49c760c) ---
+[scenario: newer run validating in managed clone, older run failed at this head, pane busy]
+state: failed · source: run-step · run failed
+[scenario: same, but no live pane evidence at all]
+state: failed · source: run-step · run failed
+
+--- AFTER the fix (target d7ba8c2) ---
+[scenario: newer run validating in managed clone, older run failed at this head, pane busy]
+state: working · source: pane · harness busy (claude-hook)
+[scenario: same, but no live pane evidence at all]
+state: unknown · source: run-step · cannot tell which run is current: this branch's current run (running) reports head 1abfd08d, which this checkout has never seen
