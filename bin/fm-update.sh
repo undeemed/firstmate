@@ -14,7 +14,9 @@
 # store, so a single fetch refreshes them all; standalone-clone homes are
 # fetched on their own. Secondmate homes are leased at a detached HEAD on the
 # default branch, so a fast-forward there advances HEAD only and never touches
-# any other worktree's checkout or the shared `main` branch.
+# any other worktree's checkout or the shared `main` branch. That is also why
+# running this script from INSIDE a seeded secondmate home updates that home:
+# there, the detached HEAD is the designed layout, not an unexpected state.
 #
 # The fast-forward mechanics live in bin/fm-ff-lib.sh (base_mode "origin" here);
 # the same library drives the local-HEAD secondmate sync used by fm-spawn.sh and
@@ -50,8 +52,22 @@ fi
 
 # --- main firstmate repo ---------------------------------------------------
 
+# A seeded secondmate home is itself a leased worktree at a detached HEAD on the
+# default branch, so running /updatefirstmate INSIDE one must advance that home
+# rather than refuse it for the exact layout it is supposed to have. The seed
+# marker (bin/fm-home-seed.sh) is the only thing that relaxes the guard: an
+# ordinary checkout found detached is still an unexpected state and is skipped.
+# The relaxation is placement only - the update stays fast-forward-only, still
+# refuses a dirty or diverged home, and still moves HEAD alone.
+self_allow_detached=no
+self_ignore_seed_marker=no
+if [ -f "$FM_ROOT/$SUB_HOME_MARKER" ] && [ ! -L "$FM_ROOT/$SUB_HOME_MARKER" ]; then
+  self_allow_detached=yes
+  self_ignore_seed_marker=yes
+fi
+
 reread_firstmate="no"
-ff_target "$FM_ROOT" "firstmate" origin no no
+ff_target "$FM_ROOT" "firstmate" origin "$self_allow_detached" "$self_ignore_seed_marker"
 if [ "$FF_STATUS" = "updated" ] && [ -n "$FF_INSTR" ]; then
   reread_firstmate="yes"
 fi
