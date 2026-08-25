@@ -1,0 +1,13 @@
+ln: Already exists
+ok - fm-teardown removes the dir pointed to by tasktmp= in meta
+ln: Already exists
+ok - fm-teardown skips gracefully when tasktmp= is absent (backward compat)
+ln: Already exists
+ok - fm-teardown skips gracefully when tasktmp= points to a nonexistent dir
+ln: Already exists
+ok - fm-teardown removes a tasktmp recorded on the shared temporary filesystem
+ok - fm_tasktmp_root prefers FM_TASKTMP_ROOT and fm_tasktmp_dir nests fm-<id> under it
+ok - fm_tasktmp_root refuses a relative FM_TASKTMP_ROOT instead of guessing
+ok - fm_tasktmp_root falls back to XDG_CACHE_HOME then HOME, never to /tmp
+ok - fm_tasktmp_root refuses rather than falling back to a temporary filesystem
+ok - fm_tasktmp_dir refuses without a task id
