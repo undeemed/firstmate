@@ -285,10 +285,11 @@ SECONDMATE_WAKE_STALL_REPEAT_SECS=${FM_SECONDMATE_WAKE_STALL_REPEAT_SECS:-300}
 SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS=${FM_SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS:-3600}
 # A crew that declared a pause is idling on a known external wait, so its stale
 # pane is absorbed rather than wedge-escalated.
-# A captain-held or paused crew whose agent has confidently exited uses the same
-# bounded cadence, while a live or ambiguously read agent still surfaces once; a
-# secondmate earns the cadence on its declaration alone, because its endpoint
-# liveness is deliberately never read (pause_state_class owns that split).
+# When authoritative crew state cannot name that wait at all, a crew whose agent
+# has confidently exited still earns the same bounded cadence, while a live or
+# ambiguously read agent surfaces once; a secondmate earns the cadence on its
+# declaration alone, because its endpoint liveness is deliberately never read
+# (pause_state_class owns that split).
 # These cases re-surface once for a recheck, first after PAUSE_RESURFACE_SECS - far
 # longer than the wedge threshold, but finite so a forgotten hold cannot rot invisibly.
 PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
@@ -802,7 +803,7 @@ handle_paused_stale() {  # <window> <task> <hash>
 # the expected external wait. The caller has already confirmed liveness through
 # the busy verdict, so this exception does not suppress undeclared wedges or
 # alter the separate non-busy classification. handle_paused_stale keeps the
-# exception bounded by re-surfacing it once per PAUSE_RESURFACE_SECS. Away mode
+# exception bounded by its decaying re-surface cadence. Away mode
 # remains daemon-owned and receives the undecorated wake identity for its own
 # classification.
 busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-file>
