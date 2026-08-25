@@ -8,6 +8,11 @@
 The current candidate timings came from the 2026-08-20 concurrent proof recorded in [fm-test-isolation-proof.md](fm-test-isolation-proof.md).
 The proof ran 24 candidates with four workers and no failures.
 
+One row is known stale since that proof.
+`tests/fm-lint.test.sh` measured 133 s on 2026-08-24, not the 9766 ms below, because it gained the ShellCheck memory-ceiling pin recorded in [verification/lint-memory.md](verification/lint-memory.md), which lints the heaviest canonical roots for real.
+That moves `portable-parallel-1` to roughly 258 s against a 10-minute job timeout.
+Like the serial-lane hints below, a stale duration costs balance rather than coverage, so the row is left as the proof measured it until the next concurrent proof replaces the whole archive.
+
 | duration_ms | script |
 |---:|---|
 | 45356 | `tests/fm-backend-herdr.test.sh` |
