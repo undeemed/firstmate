@@ -104,8 +104,10 @@ wait_poll_cycle() { # <state> <pid> [limit-ticks]
 # it is still starting and reports a spurious "did not surface" failure. A
 # generous budget can only remove that false negative - a watcher that never
 # exits still fails the assertion when the budget runs out.
+# The same reasoning applies to every wait for a marker the watcher writes after
+# that startup work, so those budgets are 100 ticks too.
 wait_numeric_file() {
-	local file=$1 limit=${2:-30} i=0 value
+	local file=$1 limit=${2:-100} i=0 value
 	while [ "$i" -lt "$limit" ]; do
 		value=$(cat "$file" 2>/dev/null || true)
 		case "$value" in
@@ -956,6 +958,146 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated() {
 	pass "provably-working non-terminal stale is absorbed on first sight, then wedge-escalated past the threshold"
 }
 
+# --- per-home wedge threshold (config/stale-escalate-secs) -------------------
+# The threshold must be settable per home without editing a tracked script,
+# because the longest LEGITIMATE silence is a property of the work that home runs:
+# a home whose gate run silences a lane for 17 minutes escalates four or more
+# times per run against the 240s default. These cases drive the real watcher over
+# one already-backdated wedge timer and assert what the configured value does to
+# the escalate-or-absorb decision.
+
+# Prepare a provably-working, non-terminal stale pane whose wedge timer is already
+# <age> seconds old, and echo the case directory.
+threshold_case() { # <name> <age>
+	local name=$1 age=$2 dir state capture_file window key pane_hash
+	dir=$(make_case "$name")
+	state="$dir/state"
+	capture_file="$dir/pane.txt"
+	window="test:fm-quiet"
+	mkdir -p "$dir/config"
+	printf 'idle building output' >"$capture_file"
+	printf 'window=%s\nkind=ship\n' "$window" >"$state/quiet.meta"
+	printf 'working: still compiling\n' >"$state/quiet.status"
+	printf '%s' "$(seen_sig "$state/quiet.status")" >"$state/.seen-quiet_status"
+	key=$(printf '%s' "$window" | tr ':/.' '___')
+	pane_hash=$(hash_text "idle building output")
+	printf '%s' "$pane_hash" >"$state/.hash-$key"
+	printf '2\n' >"$state/.count-$key"
+	# The stale hash was already classified and its idle timer already recorded, so
+	# this run enters the wedge timer directly (the phase-B shape above).
+	printf '%s' "$pane_hash" >"$state/.stale-$key"
+	threshold_backdate "$dir" "$age"
+	printf '%s\n' "$dir"
+}
+
+# Age <dir>'s wedge timer to exactly <age> seconds.
+threshold_backdate() { # <dir> <age>
+	echo $(($(date +%s) - $2)) >"$1/state/.stale-since-test_fm-quiet"
+}
+
+# Run one watcher over <dir> with the given environment assignments; 0 when it
+# wedge-escalated, 1 when it absorbed. FM_STALE_ESCALATE_SECS is unset unless a
+# caller passes it, so a value in the test runner's own environment cannot decide
+# the case under test.
+threshold_run() { # <dir> [env assignments...]
+	local dir=$1 pid
+	shift
+	: >"$dir/watch.out"
+	: >"$dir/watch.err"
+	env -u FM_STALE_ESCALATE_SECS "PATH=$dir/fakebin:$PATH" \
+		FM_FAKE_TMUX_WINDOW=test:fm-quiet "FM_FAKE_TMUX_CAPTURE=$dir/pane.txt" \
+		"FM_FAKE_CREW_STATE=state: working · source: run-step · ci running" \
+		"FM_STATE_OVERRIDE=$dir/state" "FM_CONFIG_OVERRIDE=$dir/config" \
+		"FM_CREW_STATE_BIN=$dir/fakebin/fm-crew-state.sh" \
+		FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+		"$@" "$WATCH" >"$dir/watch.out" 2>"$dir/watch.err" &
+	pid=$!
+	local rc=0
+	wait_for_exit "$pid" 100 || {
+		reap "$pid"
+		rc=1
+	}
+	# Every run of a case ends its watcher cycle - by escalating, or by the test
+	# stopping an absorbing watcher. Acknowledge that stop, or the NEXT run of the
+	# same case wakes on the resurfaced recovery record instead of on the threshold
+	# under test.
+	ack_stopped_cycle "$dir/state" || fail "could not acknowledge the watcher stop"
+	return "$rc"
+}
+
+test_stale_threshold_absent_override_keeps_240s() {
+	local dir
+	dir=$(threshold_case stale-threshold-absent 500)
+	[ ! -e "$dir/config/stale-escalate-secs" ] || fail "case seeded an override it must not have"
+	threshold_run "$dir" || fail "a 500s idle pane did not escalate on the unchanged 240s default: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null || fail "escalation did not flag a possible wedge"
+	[ ! -s "$dir/watch.err" ] || fail "an absent override warned: $(cat "$dir/watch.err")"
+	pass "an absent config/stale-escalate-secs keeps the 240s escalation threshold"
+}
+
+test_stale_threshold_config_sets_the_interval() {
+	local dir
+	dir=$(threshold_case stale-threshold-config 500)
+	printf '\t1200 \n' >"$dir/config/stale-escalate-secs"
+	if threshold_run "$dir"; then
+		fail "a 500s idle pane escalated under a 1200s override: $(cat "$dir/watch.out")"
+	fi
+	[ ! -s "$dir/watch.out" ] || fail "absorbed pane printed a wake reason: $(cat "$dir/watch.out")"
+	[ ! -s "$dir/state/.wake-queue" ] || fail "absorbed pane enqueued a wake"
+	[ ! -s "$dir/watch.err" ] || fail "a valid override warned: $(cat "$dir/watch.err")"
+	# The override is the interval itself, not a blanket absorb: past it the same
+	# pane still escalates.
+	threshold_backdate "$dir" 1300
+	threshold_run "$dir" || fail "a 1300s idle pane did not escalate under a 1200s override: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null || fail "escalation past the override did not flag a possible wedge: $(cat "$dir/watch.out")"
+	pass "config/stale-escalate-secs sets the escalation interval with no tracked-script edit"
+}
+
+test_stale_threshold_malformed_override_reports_and_defaults() {
+	local dir
+	dir=$(threshold_case stale-threshold-malformed 500)
+	printf '# how long a gate run is quiet\ntwenty minutes\n' >"$dir/config/stale-escalate-secs"
+	threshold_run "$dir" || fail "a malformed override wedged the watcher instead of defaulting: $(cat "$dir/watch.err")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null || fail "a malformed override did not fall back to the 240s default"
+	grep -F "config/stale-escalate-secs" "$dir/watch.err" >/dev/null || fail "a malformed override was ignored silently: $(cat "$dir/watch.err")"
+	pass "a malformed config/stale-escalate-secs is reported and falls back to 240s"
+}
+
+test_stale_threshold_interior_whitespace_is_malformed() {
+	local dir
+	dir=$(threshold_case stale-threshold-interior-space 500)
+	printf '240 300\n' >"$dir/config/stale-escalate-secs"
+	threshold_run "$dir" || fail "an interior-space override was accepted instead of defaulting to 240s: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null || fail "an interior-space override did not fall back to the 240s default"
+	grep -F "config/stale-escalate-secs" "$dir/watch.err" >/dev/null || fail "an interior-space override was accepted silently: $(cat "$dir/watch.err")"
+	pass "an interior-space config/stale-escalate-secs is reported and falls back to 240s"
+}
+
+test_stale_threshold_leading_zero_is_malformed() {
+	local dir
+	dir=$(threshold_case stale-threshold-leading-zero 500)
+	printf '01200\n' >"$dir/config/stale-escalate-secs"
+	threshold_run "$dir" || fail "a leading-zero override was accepted instead of defaulting to 240s: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null || fail "a leading-zero override did not fall back to the 240s default"
+	grep -F "config/stale-escalate-secs" "$dir/watch.err" >/dev/null || fail "a leading-zero override was accepted silently: $(cat "$dir/watch.err")"
+	pass "a leading-zero config/stale-escalate-secs is reported and falls back to 240s"
+}
+
+test_stale_threshold_environment_beats_the_file() {
+	local dir
+	dir=$(threshold_case stale-threshold-env 500)
+	printf '1200\n' >"$dir/config/stale-escalate-secs"
+	threshold_run "$dir" FM_STALE_ESCALATE_SECS=240 ||
+		fail "a 240s environment override lost to a 1200s file: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null || fail "environment-driven escalation did not flag a possible wedge"
+	threshold_backdate "$dir" 500
+	printf '60\n' >"$dir/config/stale-escalate-secs"
+	if threshold_run "$dir" FM_STALE_ESCALATE_SECS=999999; then
+		fail "a 999999s environment override lost to a 60s file: $(cat "$dir/watch.out")"
+	fi
+	pass "FM_STALE_ESCALATE_SECS wins over config/stale-escalate-secs in both directions"
+}
+
 # --- non-terminal stale, crew NOT provably working: surfaced immediately ------
 # The key requirement: a crew with no running pipeline that has gone quiet (and is
 # not busy) has stopped - it may be done via interactive menus, waiting, or wedged.
@@ -1522,7 +1664,7 @@ test_paused_authoritative_working_preserves_wedge_timer() {
 		FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
 		FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >"$out" &
 	pid=$!
-	wait_numeric_file "$state/.stale-since-$key" 30 || {
+	wait_numeric_file "$state/.stale-since-$key" 100 || {
 		reap "$pid"
 		fail "authoritative working state did not start wedge tracking"
 	}
@@ -1681,7 +1823,13 @@ wedge_probe() { # <state> <age-secs> <escalations-recorded> [VAR=value...]
 		. "$1"
 		since_file="$FM_STATE_OVERRIDE/.probe-since"
 		esc_file="$FM_STATE_OVERRIDE/.probe-escalations"
-		echo $(( $(date +%s) - $2 )) > "$since_file"
+		# Freeze the clock for this probe. Backdating against a live clock makes
+		# the age observed by wedge_timer_check one second larger whenever the
+		# second ticks between the two reads, which turns every exact boundary
+		# case here (239 vs 240) into a coin flip on a loaded machine.
+		probe_now=$(date +%s)
+		date() { if [ "${1:-}" = +%s ]; then printf "%s\n" "$probe_now"; else command date "$@"; fi; }
+		echo $(( probe_now - $2 )) > "$since_file"
 		printf "%s\n" "$3" > "$esc_file"
 		fm_wake_append() { return 0; }
 		triage_log() { :; }
@@ -2233,7 +2381,7 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer() {
 		FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
 		FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >"$out" &
 	pid=$!
-	wait_numeric_file "$state/.stale-since-$key" 30 || {
+	wait_numeric_file "$state/.stale-since-$key" 100 || {
 		reap "$pid"
 		fail "matching stale suppressor with missing timer did not initialize stale-since"
 	}
@@ -2254,7 +2402,7 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer() {
 		FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
 		FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >"$out" &
 	pid=$!
-	wait_numeric_file "$state/.stale-since-$key" 30 || {
+	wait_numeric_file "$state/.stale-since-$key" 100 || {
 		reap "$pid"
 		fail "matching stale suppressor with corrupt timer did not repair stale-since"
 	}
@@ -2515,7 +2663,7 @@ test_timer_repair_drops_a_finished_write_deferral_chain() {
 		FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
 		FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >"$out" &
 	pid=$!
-	wait_numeric_file "$state/.stale-since-$key" 30 ||
+	wait_numeric_file "$state/.stale-since-$key" 100 ||
 		{
 			reap "$pid"
 			fail "the corrupt idle-window timer was not repaired"
@@ -3295,6 +3443,12 @@ test_actionable_signal_surfaced
 test_terminal_stale_surfaced
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
+test_stale_threshold_absent_override_keeps_240s
+test_stale_threshold_config_sets_the_interval
+test_stale_threshold_malformed_override_reports_and_defaults
+test_stale_threshold_interior_whitespace_is_malformed
+test_stale_threshold_leading_zero_is_malformed
+test_stale_threshold_environment_beats_the_file
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_wedge_escalation_interval_grows_and_is_bounded
