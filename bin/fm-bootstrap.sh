@@ -310,7 +310,14 @@ firstmate_origin_sync() {
     *)
       reason=${line#firstmate: skipped: }
       case "$reason" in
+        *' commit(s) behind)') reason=${reason% (*} ;;
+      esac
+      case "$reason" in
         'no origin remote'|'not a directory'|'not a git repo') return 0 ;;
+        'fetch failed'|'cannot determine default branch'|'origin/'*' does not exist')
+          echo "FIRSTMATE_SYNC: primary checkout may be running stale instructions - origin could not be read ($reason), so the drift cannot be measured and the last known origin ref may itself be stale; every secondmate home converges to this checkout, so the whole fleet may be running stale instructions"
+          return 0
+          ;;
       esac
       default=$(default_branch "$FM_ROOT" 2>/dev/null || echo main)
       behind=$(git -C "$FM_ROOT" rev-list --count "HEAD..origin/$default" 2>/dev/null || true)

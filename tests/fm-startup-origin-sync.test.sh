@@ -319,6 +319,32 @@ test_second_run_is_quiet() {
   pass "T7 a second startup on an already-current primary is quiet"
 }
 
+# --- T8: a landed commit with origin unreachable is reported, never silent --
+test_unreachable_origin_reported_not_silent() {
+  local w before out
+  w=$(new_world offline)
+  add_sm "$w" sm1
+  land_on_origin "$w" >/dev/null
+  before=$(head_of "$w/main")
+  printf 'offline home edit\n' >> "$w/sm1/README.md"
+  git -C "$w/main" remote set-url origin "$w/missing-origin.git"
+
+  out=$(run_startup "$w" "$w/main")
+
+  [ "$(head_of "$w/main")" = "$before" ] || fail "an offline startup moved the primary"
+  [ "$(head_of "$w/sm1")" = "$before" ] || fail "an offline startup moved a home"
+  grep -q 'offline home edit' "$w/sm1/README.md" || fail "a home's uncommitted work was touched"
+  assert_contains "$out" "FIRSTMATE_SYNC: primary checkout may be running stale instructions - origin could not be read (fetch failed)" \
+    "an unreachable origin is reported, never silent"
+  assert_contains "$out" "the drift cannot be measured and the last known origin ref may itself be stale" \
+    "the unknown is reported as unknown, not as a measured count"
+  assert_contains "$out" "every secondmate home converges to this checkout" \
+    "the report says the drift is fleet-wide, not local to the primary"
+  assert_not_contains "$out" "commit(s) behind origin/" \
+    "no behind count is derived from the stale local origin ref"
+  pass "T8 a landed commit with origin unreachable is reported as unknown drift, and nothing moves"
+}
+
 test_startup_converges_from_origin
 test_dirty_primary_reported_not_forced
 test_feature_branch_primary_reported
@@ -326,5 +352,6 @@ test_dirty_home_reports_behind
 test_secondmate_home_startup_does_not_self_fetch
 test_detect_only_leaves_primary_untouched
 test_second_run_is_quiet
+test_unreachable_origin_reported_not_silent
 
 echo "# all fm-startup-origin-sync tests passed"
