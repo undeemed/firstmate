@@ -1198,17 +1198,31 @@ signal_reason_is_actionable() {  # <file> ...
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
-  local id=$1 line state src
-  [ -n "$id" ] || { printf 'none'; return; }
+  local verdict
+  verdict=$(crew_absorb_state "$1")
+  printf '%s' "${verdict%% *}"
+}
+
+# crew_absorb_state: the same single fm-crew-state.sh read, printing
+# "<class> <source>" so a caller that must weigh WHY the crew reads working can do
+# it without a second read. The distinction matters in exactly one place: an
+# actively-running pipeline (source run-step) is positive evidence the crew resumed
+# and outranks its own older declaration, while a pane busy signature (source pane)
+# is a reading of the very pane a declared wait already explains - and the reading a
+# per-harness busy source keeps reporting on a parked lane. The source token is
+# whatever fm-crew-state.sh reported, or `none` when the line carried none.
+crew_absorb_state() {  # <id>
+  local id=$1 line state src=none
+  [ -n "$id" ] || { printf 'none none'; return; }
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
-  case "$line" in state:*) ;; *) printf 'none'; return ;; esac
+  case "$line" in state:*) ;; *) printf 'none none'; return ;; esac
   state=${line#state: }; state=${state%% *}
-  if [ "$state" = paused ]; then printf 'paused'; return; fi
+  case "$line" in *"source: "*) src=${line#*source: }; src=${src%% *} ;; esac
+  if [ "$state" = paused ]; then printf 'paused %s' "$src"; return; fi
   if [ "$state" = working ]; then
-    src=${line#*source: }; src=${src%% *}
-    case "$src" in run-step|pane) printf 'working'; return ;; esac
+    case "$src" in run-step|pane) printf 'working %s' "$src"; return ;; esac
   fi
-  printf 'none'
+  printf 'none %s' "$src"
 }
 
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class
