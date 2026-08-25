@@ -1,0 +1,5 @@
+=== New test run against the BASE (pre-fix) watcher: bin/fm-watch.sh from cfca1dc ===
+The per-home file is ignored by the old watcher, reproducing the reported defect:
+
+not ok - a 500s idle pane escalated under a 1200s override: stale: test:fm-quiet (idle 503s, possible wedge, escalation 1)
+exit=1 (test failed before the fix; the same test passes after it - see threshold-tests-transcript.txt)

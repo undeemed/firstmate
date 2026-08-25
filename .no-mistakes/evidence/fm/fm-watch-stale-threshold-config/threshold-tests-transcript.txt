@@ -1,0 +1,7 @@
+ok - provably-working non-terminal stale is absorbed on first sight, then wedge-escalated past the threshold
+ok - an absent config/stale-escalate-secs keeps the 240s escalation threshold
+ok - config/stale-escalate-secs sets the escalation interval with no tracked-script edit
+ok - a malformed config/stale-escalate-secs is reported and falls back to 240s
+ok - an interior-space config/stale-escalate-secs is reported and falls back to 240s
+ok - a leading-zero config/stale-escalate-secs is reported and falls back to 240s
+ok - FM_STALE_ESCALATE_SECS wins over config/stale-escalate-secs in both directions

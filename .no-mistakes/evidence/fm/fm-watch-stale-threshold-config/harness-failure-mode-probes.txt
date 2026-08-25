@@ -1,0 +1,18 @@
+=== 1) fm_test_tmproot with an uncreatable TMPDIR is fatal to the test process; the suite never composes fixture paths at / ===
+$ bash -c '. tests/lib.sh; export TMPDIR=/nonexistent-fm-demo; root=$(fm_test_tmproot demo-case); echo "REACHED with root=[${root}]"'
+mktemp: failed to create directory via template '/nonexistent-fm-demo/demo-case.XXXXXX': No such file or directory
+not ok - could not create a fixture root under TMPDIR=/nonexistent-fm-demo (full filesystem or quota?)
+exit=143 (143 = SIGTERM; REACHED never printed)
+
+=== 2) sourcing tests/wake-helpers.sh with a broken TMPDIR refuses instead of continuing ===
+$ bash -c 'export TMPDIR=/nonexistent-fm-demo; . tests/wake-helpers.sh; echo REACHED'
+mktemp: failed to create file via template '/nonexistent-fm-demo/.fm-test-cleanup.2709462.XXXXXX': No such file or directory
+tests/wake-helpers.sh: line 19: fm_test_tmproot: command not found
+tests/wake-helpers.sh: line 35: fm_test_tmproot: command not found
+not ok - no fixture root for the wedge-alarm recorder
+exit=1
+
+=== 3) make_case with an empty TMP_ROOT refuses ===
+$ bash -c '. tests/wake-helpers.sh; TMP_ROOT=""; make_case demo'
+not ok - make_case called with no TMP_ROOT - refusing to build a fixture at /
+exit=1

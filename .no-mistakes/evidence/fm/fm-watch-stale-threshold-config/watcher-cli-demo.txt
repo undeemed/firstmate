@@ -1,0 +1,23 @@
+=== A) Home with config/stale-escalate-secs=1200: a 500s-quiet provably-working lane is ABSORBED (no alarm) ===
+
+$ cat config/stale-escalate-secs
+1200
+watcher absorbed the 500s-quiet lane; no wedge alarm
+watch.out: []
+watch.err: []
+
+=== B) Same home, lane quiet for 1300s (past the 1200s override): the wedge alarm still fires ===
+watcher escalated:
+  watch.out> stale: test:fm-quiet (idle 1303s, possible wedge, escalation 1)
+
+=== C) Malformed override: warning on the watcher stderr, cadence falls back to 240s ===
+
+$ cat config/stale-escalate-secs
+twenty minutes
+watcher escalated on the 240s default:
+  watch.out> stale: test:fm-quiet (idle 504s, possible wedge, escalation 1)
+  watch.err> warning: ignoring malformed config/stale-escalate-secs (want one positive whole number of seconds); using 240s
+
+=== D) FM_STALE_ESCALATE_SECS=999999 in the environment beats a 60s file: 500s-quiet lane stays quiet ===
+environment override held: no alarm despite the 60s file
+watch.out: []
