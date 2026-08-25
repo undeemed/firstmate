@@ -1,0 +1,33 @@
+# Manual end-to-end demo: the REAL bin/fm-bootstrap.sh (target commit 64a94e6) run against a scratch
+# origin + primary clone + detached secondmate home in /tmp - the live fleet was never touched.
+# NOTE: the world uses a stub tmux; the 'send failed' and 'watcher still down' lines are harness
+# artifacts of that stub, not product output. The FIRSTMATE_SYNC lines are the behavior under test.
+
+=== SCENARIO A: a commit lands on origin (like a merged PR); one ordinary startup follows ===
+landed on origin : 66c5abe5c2407adb4dd2371a7d04d9331c48af24
+primary before   : 408d02e90ce5367cdcb621eb1fb210e6776be708
+home sm1 before  : 408d02e90ce5367cdcb621eb1fb210e6776be708
+
+--- operator-visible bootstrap output (sync lines) ---
+FIRSTMATE_SYNC: primary checkout updated 408d02e..66c5abe (instructions changed: AGENTS.md) - re-read AGENTS.md before acting further in this session
+NUDGE_SECONDMATES: secondmate sm1: send failed: ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONFIG_REREAD: secondmate sm1: send failed: WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+--- end ---
+
+primary after    : 66c5abe5c2407adb4dd2371a7d04d9331c48af24
+home sm1 after   : 66c5abe5c2407adb4dd2371a7d04d9331c48af24
+primary converged to landed commit: YES
+home converged to landed commit   : YES
+home still detached (leased state) : YES
+gitignored data/ untouched         : YES
+
+=== SCENARIO B: primary is dirty; another commit lands; drift must be REPORTED, never forced ===
+primary before   : 66c5abe5c2407adb4dd2371a7d04d9331c48af24 (dirty working tree, 2 commits behind origin)
+
+--- operator-visible bootstrap output (sync lines) ---
+FIRSTMATE_SYNC: primary checkout is 2 commit(s) behind origin/main and was left untouched (dirty working tree); every secondmate home converges to this checkout, so the whole fleet keeps running these instructions until it is resolved
+--- end ---
+
+primary after    : 66c5abe5c2407adb4dd2371a7d04d9331c48af24
+dirty primary left untouched       : YES
+local edit preserved               : YES
