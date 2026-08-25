@@ -95,12 +95,30 @@ fm_test_cleanup() {
   fi
 }
 
+# A caller reads this through a command substitution, so a plain non-zero return
+# is invisible unless every call site checks it: the variable is simply empty, and
+# the suite goes on to compose absolute paths from nothing, writing its fixture to
+# / instead of to a temp root (observed 2026-08-24, when a full TMPDIR made mktemp
+# fail and case paths came out as /<case-name>/state/...). A fixture root that
+# cannot be created is therefore fatal to the whole test process rather than to
+# the substitution's own subshell: signal the test process, whose EXIT and TERM
+# traps clean up and report, and keep the return for a caller that checks it.
+fm_test_tmproot_fatal() {
+  printf 'not ok - %s\n' "$1" >&2
+  kill -TERM $$ 2>/dev/null || true
+  return 1
+}
+
 fm_test_tmproot() {
   local prefix=${1:-fm-test} root
-  root=$(mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX") || return 1
+  if ! root=$(mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX") || [ -z "$root" ]; then
+    fm_test_tmproot_fatal "could not create a fixture root under TMPDIR=${TMPDIR:-/tmp} (full filesystem or quota?)"
+    return 1
+  fi
   if ! printf '%s\n%s\n' "$$" "$FM_TEST_OWNER_IDENTITY" > "$root/.fm-test-fixture" ||
     ! printf '%s\n' "$root" >> "$FM_TEST_CLEANUP_REGISTRY"; then
     rm -rf "$root"
+    fm_test_tmproot_fatal "could not record the fixture root $root (full filesystem or quota?)"
     return 1
   fi
   printf '%s\n' "$root"

@@ -117,6 +117,16 @@ An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisel
 A missing or failing channel logs and falls through to the next, never crashing the daemon.
 See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 
+## Stale escalation threshold (config/stale-escalate-secs / FM_STALE_ESCALATE_SECS)
+
+The optional local, gitignored `config/stale-escalate-secs` file holds how many idle seconds a provably-working stale pane may hold before the watcher escalates it as a possible wedge.
+Precedence is `FM_STALE_ESCALATE_SECS` in the watcher's environment, then this file, then the unchanged 240-second default; the environment wins because the harness extension that launches the watcher sets no such variable, so a deliberate per-process override stays authoritative over the home's standing file.
+The file is read as its first line that is not blank and not a `#` comment, which must be one positive whole number of seconds.
+A malformed value is reported on the watcher's standard error and ignored in favour of the 240-second default, so a typo never changes the cadence silently and never wedges the watcher.
+Size the value just above the longest silence the home's real work produces - about `1200` for a project whose full gate run takes 17 minutes - and never large enough to mute the alarm class, because a wedge alarm on a quiet-looking lane is what catches a lane that is failing rather than working.
+The file is per home and is not inherited by secondmate homes, because the legitimate silence it describes is a property of the work that home actually runs.
+`bin/fm-watch.sh`'s header owns the exact parsing and the escalation behavior the threshold paces.
+
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
 The optional local, gitignored `config/trace-context` presence flag enables default-off native W3C trace-context propagation.
@@ -693,7 +703,7 @@ FM_WATCHER_STALE_GRACE=300   # defaults to FM_GUARD_GRACE; seconds a live watche
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # captain-relevant status regex; nonterminal progress verbs remain excluded even when their prose matches
 FM_CLASSIFY_PAUSED_VERB=paused     # leading status verb for a declared external wait; excluded from FM_CAPTAIN_RE and distinct from blocked
-FM_STALE_ESCALATE_SECS=240         # idle seconds before a provably-working stale pane escalates; stale panes whose crew is not provably working surface immediately unless they declare the pause verb
+FM_STALE_ESCALATE_SECS=240         # idle seconds before a provably-working stale pane escalates; overrides config/stale-escalate-secs (see "Stale escalation threshold"); stale panes whose crew is not provably working surface immediately unless they declare the pause verb
 FM_BUSY_TURN_MAX_SECS=3600         # maximum age of a busy pane's latest state/<id>.turn-ended marker, or its state/<id>.meta spawn record before any turn completes, before the same wedge escalation used for a provably-working non-busy stale takes over; inspection-only, never an automatic interrupt or restart; a declared external wait or verified captain-held transfer takes the FM_PAUSE_RESURFACE_SECS recheck below instead
 FM_PAUSE_RESURFACE_SECS=3600       # seconds before the watcher re-surfaces a declared external wait or verified captain-held transfer for a recheck, including a live busy pane past FM_BUSY_TURN_MAX_SECS; the away-mode daemon uses the same setting for a declared external wait or verified captain-held transfer
 FM_SECONDMATE_WAKE_STALL_SECS=60   # minimum age of the oldest valid foreign wake-queue row before an endpoint-recorded local secondmate produces one durable parent wake-loop-stall notification; zero or invalid values use 60
