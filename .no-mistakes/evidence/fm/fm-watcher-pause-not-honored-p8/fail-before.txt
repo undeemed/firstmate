@@ -1,0 +1,6 @@
+.tmp-subset-test_declared_pause_is_bounded_for_exited_and_live_agents rc=1
+.tmp-subset-test_declared_pause_recheck_cadence_decays_and_stays_bounded rc=1
+.tmp-subset-test_live_declared_pause_outranks_a_lying_busy_source rc=1
+.tmp-subset-test_secondmate_deep_backlog_reports_depth_and_keeps_escalating rc=1
+.tmp-subset-test_secondmate_mid_turn_mate_is_not_reported_as_stalled rc=1
+.tmp-subset-test_wedge_escalation_interval_grows_and_is_bounded rc=0
