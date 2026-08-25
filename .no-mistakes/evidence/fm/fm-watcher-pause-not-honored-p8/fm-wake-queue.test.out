@@ -1,0 +1,13 @@
+ok - an abandoned same-process lock hold is reclaimed; a parent's live hold is not
+ok - foreign secondmate queue stalls notify once, remain byte-stable, and stay quiet when empty or healthy
+ok - a mid-turn mate is not reported as a stalled wake loop until it is measurably behind
+ok - a mate holding a deep, hours-old backlog reports its depth and keeps reporting on a bounded interval
+ok - secondmate stall markers reject symlinks without touching their targets
+ok - stall publication acknowledgement closes the pre-marker crash window
+ok - empty prefix mate cleanup preserves another mate's stall receipt
+ok - self-announced appends suppress only their own bytes and fail toward waking
+ok - historical annotations replay nothing already announced and keep everything new
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 8 --recovery-generation 2376361.1787643779.AuZEf0
+ok - concurrent append plus drain preserves durable records through acknowledgement
+ok - signal written while no watcher runs is caught on next run
+not ok - watcher did not exit for stale pane

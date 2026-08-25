@@ -1,0 +1,6 @@
+Sibling-watcher safety check.
+Before: 12 raw lines, of which 10 are real fm-watch.sh processes; 2 are grep noise (see watchers-before.txt).
+After: 11 real fm-watch.sh processes (see watchers-after.txt), none running from the test worktree.
+Delta: PIDs cycled and one extra instance appeared under ~/.treehouse/firstmate-4e604a/2.
+These are live services owned by other sessions on this shared box; they respawn on their own.
+All test watchers ran from the worktree with FM_STATE_OVERRIDE into per-test temp dirs and PATH-injected fake tmux, so they cannot address sibling state. No signal was sent to any sibling PID.

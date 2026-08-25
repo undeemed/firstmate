@@ -1,0 +1,8 @@
+ok - exited, captain-held and live declared waits all use the bounded pause cadence instead of a wedge
+ok - a declared wait outranks a lying pane busy source, and lifting it restores the wedge escalation
+ok - an unchanged declared wait is rechecked on a decaying interval bounded by its ceiling
+ok - a busy pane under a declared pause is rechecked on the long cadence, and lifting the pause restores the wedge escalation
+ok - a pane held on one unchanged stale hash past the threshold escalates on a growing, bounded interval
+ok - a genuine change resets the escalation count and returns the wedge cadence to the base interval
+ok - a declared pause is periodically rechecked against authoritative active-run state
+ok - a paused status overridden by authoritative working preserves its wedge timer and escalates
