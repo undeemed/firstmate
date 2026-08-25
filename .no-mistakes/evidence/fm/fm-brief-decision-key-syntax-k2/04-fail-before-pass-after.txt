@@ -1,0 +1,19 @@
+== Regression proof: the new tests fail on base f8b4c39 and pass on target 9ab764a ==
+
+--- BASE (f8b4c39 tree via git archive, target test files overlaid) ---
+not ok - brief-key-a1: ship brief does not show the key before the colon
+not ok - the guard stayed silent on a key the fold cannot use as written: needs-decision: pick REST or RPC [key=api-shape]
+not ok - a misplaced key token produced no warning: OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+not ok - the scaffolded decision form is not a needs-decision line: 'needs-decision: {summary of options}'
+
+--- TARGET (worktree at 9ab764a, same suites) ---
+ok - fm-brief.sh: every scaffold states a decision key before the colon
+ok - two colon-form keyed decisions never collapse into one shared bucket
+ok - keyed decisions stay separate; key tokens past the note head collapse into one
+ok - the stated-key guard names why a key cannot be used, and stays quiet otherwise
+ok - a rejected slug drops the line from the fold, and the guard reports it
+ok - a stated key the fold cannot use is reported once, and a later bad append is reported again
+ok - a rejected slug never lists as open, and the guard reports the skipped line
+ok - correctly stated keys and prose that quotes a key never trigger the warning
+ok - rows omitted by the byte cap re-warn next drain, then go quiet
+ok - a decision written verbatim from the scaffold is answerable by its own key

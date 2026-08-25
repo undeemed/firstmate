@@ -1,0 +1,32 @@
+== Acceptance 2: a worker following the scaffold verbatim files decisions that --resolve-key can close ==
+
+$ extract the literal line the ship brief tells the worker to append
+taught form : needs-decision [key=<slug>]: {summary of options}
+decision 1  : needs-decision [key=api-shape]: pick REST or RPC
+decision 2  : needs-decision [key=db-choice]: pg or sqlite
+
+$ worker appends both decisions to state/t20.status
+needs-decision [key=api-shape]: pick REST or RPC
+needs-decision [key=db-choice]: pg or sqlite
+
+$ bin/fm-wake-drain.sh (drain 1: both decisions listed under their own keys)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t20 [key=api-shape] needs-decision: pick REST or RPC
+t20 [key=db-choice] needs-decision: pg or sqlite
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+$ bin/fm-send.sh t20 --resolve-key api-shape 'go with REST'  (real fm-send)
+exit=0
+
+$ answer text delivered to the worker terminal (send log)
+go with REST
+
+$ status file after the answer (fm-send appended the keyed resolved line)
+needs-decision [key=api-shape]: pick REST or RPC
+needs-decision [key=db-choice]: pg or sqlite
+resolved [key=api-shape]: answered: go with REST
+
+$ bin/fm-wake-drain.sh (drain 2: api-shape closed, db-choice STILL open)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t20 [key=db-choice] needs-decision: pg or sqlite
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'

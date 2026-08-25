@@ -1,0 +1,30 @@
+== Acceptance 1: freshly scaffolded briefs teach the key-before-colon form ==
+(generated at target commit 9ab764a with the real bin/fm-brief.sh)
+
+$ FM_HOME=... bin/fm-brief.sh demo-ship some-proj --mode no-mistakes
+--- decision lines in data/demo-ship/brief.md ---
+27:   States: working, needs-decision, blocked, paused, done, failed.
+30:   needs-decision/blocked/paused/done/failed states. No step-by-step FYI progress lines;
+45:   append `needs-decision [key=<slug>]: {summary of options}` and stop. Firstmate will reply with the decision.
+46:   The `[key=<slug>]` token names that decision and must sit BEFORE the colon; `blocked [key=<slug>]: {why}` names a blocker the same way.
+49:   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append `resolved [key=<slug>]: {how it cleared}` yourself (the same key you opened it with) as you resume.
+87:Keep the append itself ONE line, and never append a stacked bar block to the status file: supervision reads the LAST line of that file, so trailing bar lines would hide the `done:`, `blocked:`, or `needs-decision:` verb the append exists to deliver.
+
+$ FM_HOME=... bin/fm-brief.sh demo-scout some-proj --scout
+--- decision lines in data/demo-scout/brief.md ---
+23:   States: working, needs-decision, blocked, paused, done, failed.
+25:   would act on and the needs-decision/blocked/paused/done/failed states. No step-by-step
+38:   append `needs-decision [key=<slug>]: {summary of options}` and stop. Firstmate will reply with the decision.
+39:   The `[key=<slug>]` token names that decision and must sit BEFORE the colon; `blocked [key=<slug>]: {why}` names a blocker the same way.
+42:   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append `resolved [key=<slug>]: {how it cleared}` yourself (the same key you opened it with) as you resume.
+80:Keep the append itself ONE line, and never append a stacked bar block to the status file: supervision reads the LAST line of that file, so trailing bar lines would hide the `done:`, `blocked:`, or `needs-decision:` verb the append exists to deliver.
+
+$ FM_SECONDMATE_CHARTER='own the demo domain' bin/fm-brief.sh demo-sm --secondmate some-proj
+--- decision lines in data/demo-sm/brief.md ---
+37:States: working, needs-decision, blocked, paused, done, failed.
+44:If its first reportable event is `working [key=<work-slug>]: {material phase}`, use the same key on its later `paused`, `done`, `failed`, `needs-decision`, or `blocked` event so the earlier working phase is superseded.
+45:When a keyed phase ends without another reportable state, append `resolved [key=<work-slug>]: {why it is no longer active}`.
+46:An escalation is keyed the same way: `needs-decision [key=<slug>]: {summary}` and `blocked [key=<slug>]: {why}`.
+47:Every `[key=...]` token must sit BEFORE the colon; written later in the line it is read as message text, so the event files under the shared `default` key and cannot be answered by its own key.
+49:The main firstmate's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main firstmate, append `resolved [key=<slug>]: {how it cleared}` yourself (the same key you opened it with, or a bare `resolved: {how it cleared}` when you opened it unkeyed) as your domain resumes.
+85:Keep the append itself ONE line, and never append a stacked bar block to the status file: supervision reads the LAST line of that file, so trailing bar lines would hide the `done:`, `blocked:`, or `needs-decision:` verb the append exists to deliver.
