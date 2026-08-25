@@ -25,6 +25,9 @@
 #       This is the direct regression pair for the 2026-07-02 herdr incident,
 #       proving the watcher's own absorb-only-when-provably-working predicate
 #       benefits from the fix in both directions.
+#   (l) run SELECTION: the branch's newest run is the only candidate, an
+#       unbindable candidate reads unknown instead of an older run's verdict,
+#       and a genuinely failed current run still reads failed.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -1389,6 +1392,170 @@ test_local_advanced_past_run_head_invalidates() {
   pass "local work advanced past run head invalidates attribution"
 }
 
+# --- superseded-run selection (2026-08-24 false-failed incident) ------------
+#
+# no-mistakes builds its pipeline commits in its OWN managed clone
+# (~/.no-mistakes/repos/<repo>.git, checked out under
+# ~/.no-mistakes/worktrees/<repo>/<run-id>), so from the review step onward a
+# run's reported head is a commit the crew's repository has never seen - it
+# arrives only after the push step pushes it and the crew's repo fetches it
+# back. make_pipeline_commit reproduces exactly that: a sha that is real, is a
+# descendant of the crew's head, and is unresolvable inside the crew worktree.
+make_pipeline_commit() {  # <worktree> -> echoes a sha only the managed clone has
+  local wt=$1 clone="$1.nm-managed-clone"
+  git clone -q "$wt" "$clone"
+  git -C "$clone" commit -q --allow-empty -m 'no-mistakes(document): pipeline commit'
+  git -C "$wt" cat-file -e "$(git -C "$clone" rev-parse HEAD)^{commit}" 2>/dev/null \
+    && fail "pipeline commit must not be resolvable in the crew worktree"
+  git -C "$clone" rev-parse HEAD
+}
+
+# `axi status` for THIS branch's current run, whose head is the managed-clone
+# commit above, plus the branch_sync block the real CLI emits (verified against
+# no-mistakes v1.48.0): its pipeline.submitted_head is the head the run started
+# from, i.e. the crew worktree's own head.
+run_pipeline_head_unresolvable() {  # <branch> <pipeline-head> <submitted-head>
+  cat <<EOF
+run:
+  id: "01RUNNEW"
+  branch: $1
+  status: running
+  head: "$2"
+  pr: ""
+  findings: none
+  steps[3]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,completed,0,0
+    test,running,0,0
+branch_sync:
+  state: pipeline_ahead
+  local:
+    branch: $1
+    head: $3
+    clean: true
+  pipeline:
+    run: "01RUNNEW"
+    status: running
+    submitted_head: $3
+    current_head: $2
+EOF
+}
+
+# The incident, end to end through the runs list: the branch's newest run is
+# still validating with a managed-clone head, an OLDER run on the same branch
+# failed at the head this worktree is still sitting on, and the crew is
+# demonstrably working. The reader must never answer with the superseded failed
+# run.
+test_superseded_failed_run_is_not_current() {
+  reset_fakes
+  local d local_short pipeline_head gen out
+  d=$(new_case superseded-failed)
+  make_repo_on_branch "$d/wt" fm/feat-superseded
+  local_short=$(git -C "$d/wt" rev-parse --short=8 HEAD)
+  pipeline_head=$(make_pipeline_commit "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/sup.meta" "window=fm:fm-sup" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validation under way\n' > "$d/state/sup.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  2026-08-25 01:08
+  running    fm/feat-superseded ${pipeline_head:0:8}  2026-08-25 00:04
+  failed     fm/feat-superseded ${local_short}  2026-08-24 23:54
+EOF
+)"
+  FM_FAKE_BUSY=1
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" sup)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" sup busy --gen "$gen" \
+    --source claude-hook --event user-prompt-submit
+  out=$(run_crew_state "$d" sup)
+  assert_not_contains "$out" "state: failed" "a superseded failed run must never be the current state"
+  assert_contains "$out" "state: working" "a demonstrably busy crew reads working"
+  assert_contains "$out" "source: pane" "an unbindable run must not outrank a busy pane"
+  pass "a superseded failed run is not reported as current"
+}
+
+# The same selection with no live evidence to fall back on: an unbindable
+# current run is reported as unknown WITH its reason. A truthful unknown is the
+# required answer - never the older failed run, and never a confident pass.
+test_unbindable_current_run_reports_unknown() {
+  reset_fakes
+  local d local_short pipeline_head out
+  d=$(new_case unbindable-unknown)
+  make_repo_on_branch "$d/wt" fm/feat-unbindable
+  local_short=$(git -C "$d/wt" rev-parse --short=8 HEAD)
+  pipeline_head=$(make_pipeline_commit "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/unb.meta" "window=fm:fm-unb" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validation under way\n' > "$d/state/unb.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/feat-unbindable ${pipeline_head:0:8}  2026-08-25 00:04
+  failed     fm/feat-unbindable ${local_short}  2026-08-24 23:54
+EOF
+)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" unb
+  out=$(run_crew_state "$d" unb)
+  assert_not_contains "$out" "state: failed" "ambiguity must not resolve to a false failure"
+  assert_not_contains "$out" "state: done" "ambiguity must not resolve to a false pass"
+  assert_contains "$out" "state: unknown" "an unbindable current run reads unknown"
+  assert_contains "$out" "cannot tell which run is current" "the unknown states why"
+  pass "an unbindable current run reports a truthful unknown"
+}
+
+# The same shape read through `axi status` instead of the runs list: the CLI
+# answers for this branch with the run's managed-clone head, and its branch_sync
+# block reports the submitted head this worktree is on. That binds the run, so
+# the crew reads as the validating run it is - not as the earlier failure.
+test_pipeline_head_binds_via_submitted_head() {
+  reset_fakes
+  local d local_head local_short pipeline_head out
+  d=$(new_case submitted-head-binding)
+  make_repo_on_branch "$d/wt" fm/feat-submitted
+  local_head=$(git -C "$d/wt" rev-parse HEAD)
+  local_short=$(git -C "$d/wt" rev-parse --short=8 HEAD)
+  pipeline_head=$(make_pipeline_commit "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/sub.meta" "window=fm:fm-sub" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validation under way\n' > "$d/state/sub.status"
+  FM_FAKE_AXI_STATUS="$(run_pipeline_head_unresolvable fm/feat-submitted "$pipeline_head" "$local_head")"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/feat-submitted ${pipeline_head:0:8}  2026-08-25 00:04
+  failed     fm/feat-submitted ${local_short}  2026-08-24 23:54
+EOF
+)"
+  out=$(run_crew_state "$d" sub)
+  assert_not_contains "$out" "state: failed" "the superseded failed run must not win"
+  assert_contains "$out" "state: working" "the current run binds through its submitted head"
+  assert_contains "$out" "source: run-step" "a bound current run stays run-step authoritative"
+  pass "a pipeline head absent locally still binds through the submitted head"
+}
+
+# The other direction, which the fix must never break: when the branch's NEWEST
+# run is the failed one and it binds to this worktree, failed is the truth and
+# is still reported.
+test_genuinely_failed_current_run_still_reports_failed() {
+  reset_fakes
+  local d local_short out
+  d=$(new_case genuinely-failed)
+  make_repo_on_branch "$d/wt" fm/feat-redstays
+  local_short=$(git -C "$d/wt" rev-parse --short=8 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/red.meta" "window=fm:fm-red" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validation under way\n' > "$d/state/red.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  2026-08-25 01:08
+  failed     fm/feat-redstays ${local_short}  2026-08-25 00:20
+  completed  fm/feat-redstays ${local_short}  2026-08-24 23:00  https://github.com/o/r/pull/9
+EOF
+)"
+  out=$(run_crew_state "$d" red)
+  assert_contains "$out" "state: failed" "a bound failed current run still reads failed"
+  assert_contains "$out" "source: run-step" "the failed verdict stays run-step sourced"
+  pass "a genuinely failed current run is still reported as failed"
+}
+
 test_missing_run_head_falls_back_to_current_state() {
   reset_fakes
   local d out
@@ -1460,6 +1627,10 @@ test_usage_error
 test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
+test_superseded_failed_run_is_not_current
+test_unbindable_current_run_reports_unknown
+test_pipeline_head_binds_via_submitted_head
+test_genuinely_failed_current_run_still_reports_failed
 test_missing_run_head_falls_back_to_current_state
 
 echo "all fm-crew-state tests passed"
