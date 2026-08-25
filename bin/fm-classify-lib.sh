@@ -13,7 +13,7 @@
 # daemon keeps its escalation-digest seen-markers; the watcher keeps its .seen-*
 # signatures).
 #
-# There are three documented exceptions. The absorb classification
+# There are four documented exceptions. The absorb classification
 # (crew_absorb_class and its working/paused wrappers) is NOT a pure status-file
 # read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call,
 # to decide whether a crew that just stopped its turn or went stale is working,
@@ -25,7 +25,11 @@
 # stays bounded by new appends instead of re-reading each task's whole lifetime
 # log every time. crew_worktree_written_since reads the task's meta file and walks
 # a bounded slice of its worktree instead of a status file, so callers run it only
-# at the moment they would otherwise escalate.
+# at the moment they would otherwise escalate. commit_key_syntax_markers also
+# writes: after the drain has printed the stated-key syntax warnings it persists
+# each task's warned-through byte marker (state/.<task>.key-syntax-cursor), and a
+# marker that cannot be written simply re-warns next drain (see "Fleet-wide
+# stated-key syntax warnings" below).
 
 # Directory of this library, used to locate the sibling fm-crew-state.sh reader.
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a
