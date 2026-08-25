@@ -121,7 +121,7 @@ See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`veri
 
 The optional local, gitignored `config/stale-escalate-secs` file holds how many idle seconds a provably-working stale pane may hold before the watcher escalates it as a possible wedge.
 Precedence is `FM_STALE_ESCALATE_SECS` in the watcher's environment, then this file, then the unchanged 240-second default; the environment wins because the harness extension that launches the watcher sets no such variable, so a deliberate per-process override stays authoritative over the home's standing file.
-The file is read as its first line that is not blank and not a `#` comment, which must be one positive whole number of seconds.
+The file is read as its first line that is not blank and not a `#` comment, which must be one positive whole number of seconds in plain decimal digits, with no leading zeros.
 A malformed value is reported on the watcher's standard error and ignored in favour of the 240-second default, so a typo never changes the cadence silently and never wedges the watcher.
 Size the value just above the longest silence the home's real work produces - about `1200` for a project whose full gate run takes 17 minutes - and never large enough to mute the alarm class, because a wedge alarm on a quiet-looking lane is what catches a lane that is failing rather than working.
 The file is per home and is not inherited by secondmate homes, because the legitimate silence it describes is a property of the work that home actually runs.
