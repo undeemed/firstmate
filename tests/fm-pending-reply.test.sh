@@ -22,6 +22,10 @@
 #  12. A remote mate's repost waits for its asynchronous reply mirror to be read
 #      past the turn, so a mirrored reply is never nagged and a real miss still
 #      gets its one repost
+#  13. An escalation nothing can answer settles once, WITHOUT being called a
+#      reply, and stops being folded as an open blocker
+#  14. Settled records are archived on the retention policy while open ones and
+#      unconverged closes are always kept in place
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -95,6 +99,12 @@ run_send() {
 
 phase_of() {  # <state> <corr>
   fm_pending_reply_get "$(fm_pending_reply_path "$1" "$2")" phase
+}
+
+# The production open-decision fold, so blocker assertions consume exactly what
+# the wake drain and the fleet snapshot consume.
+open_decisions() {  # <status-file>
+  bash -c '. "$1"; status_open_decisions "$2"' _ "$ROOT/bin/fm-classify-lib.sh" "$1"
 }
 
 # --- tests ------------------------------------------------------------------
@@ -1114,13 +1124,212 @@ test_tick_end_to_end_missed_then_escalate() {
   fm_pending_reply_tick_one "$state" "$corr" idle "$sm_home"
   [ "$(phase_of "$state" "$corr")" = escalated ] \
     || fail "tick should escalate after second miss, got $(phase_of "$state" "$corr")"
+  # Inside the acknowledgement window the blocker stands untouched.
+  export FM_PENDING_REPLY_NOW=$((9300 + 600))
+  fm_pending_reply_tick_one "$state" "$corr" idle "$sm_home"
+  [ "$(phase_of "$state" "$corr")" = escalated ] \
+    || fail "an escalation inside its acknowledgement window must stay a blocker"
   # Expired age must not erase the unresolved record.
   export FM_PENDING_REPLY_NOW=999999
   fm_pending_reply_tick_one "$state" "$corr" idle "$sm_home"
   [ -f "$(fm_pending_reply_path "$state" "$corr")" ] \
     || fail "expiration must never silently erase an unresolved reply"
-  [ "$(phase_of "$state" "$corr")" = escalated ] || fail "must stay escalated"
+  [ "$(phase_of "$state" "$corr")" = closed_unacknowledged ] \
+    || fail "an unanswerable escalation should settle, got $(phase_of "$state" "$corr")"
+  [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" closed_reason)" \
+    = escalation-window-elapsed ] || fail "settling reason should record the elapsed window"
   pass "tick end-to-end: miss -> one recovery -> escalate -> durable"
+}
+
+# --- settled-without-answer and retention -----------------------------------
+
+# Build one delivered, escalated, never-answered record and return its corr.
+escalated_fixture() {  # <home> <state> <task> <summary> -> corr
+  local home=$1 state=$2 task=$3 summary=$4 corr
+  corr=$(fm_pending_reply_create "$home" "$state" "$task" "$summary")
+  fm_pending_reply_mark_delivered "$state" "$corr" >/dev/null || return 1
+  fm_pending_reply_mark_turn_completed "$state" "$corr" request >/dev/null || return 1
+  fm_pending_reply_send_recovery "$state" "$corr" >/dev/null || return 1
+  fm_pending_reply_mark_turn_completed "$state" "$corr" recovery >/dev/null || return 1
+  fm_pending_reply_maybe_escalate "$state" "$corr" >/dev/null || return 1
+  printf '%s' "$corr"
+}
+
+# The delivered-and-acted-on case that used to hang forever: the mate consumed
+# the steer and went on reporting through the correlated channel about OTHER
+# requests, but never echoed this correlation. No human appends anything.
+test_superseded_report_settles_without_claiming_a_reply() {
+  local home state corr later rec closes
+  home=$(setup_parent superseded-report)
+  state="$home/state"
+  export FM_PENDING_REPLY_SEND_HOOK='true'
+  export FM_PENDING_REPLY_NOW=6000
+  corr=$(escalated_fixture "$home" "$state" hibit "informational note, nothing asked") \
+    || fail "escalated fixture should build"
+  [ "$(phase_of "$state" "$corr")" = escalated ] || fail "fixture should be escalated"
+  open_decisions "$state/hibit.status" | grep -Fq "pending-reply-$corr" \
+    || fail "the escalation should start as an open blocker"
+  # Well inside the acknowledgement window: with no evidence nothing settles.
+  export FM_PENDING_REPLY_NOW=6010
+  fm_pending_reply_tick "$state" || fail "tick should survive an open escalation"
+  [ "$(phase_of "$state" "$corr")" = escalated ] \
+    || fail "an escalation must not settle on time alone inside its window"
+  # The mate reports on a LATER request through the correlated channel.
+  later=$(fm_pending_reply_create "$home" "$state" hibit "a different request")
+  fm_pending_reply_mark_delivered "$state" "$later"
+  printf 'done [corr=%s]: the later request is handled\n' "$later" >> "$state/hibit.status"
+  fm_pending_reply_tick "$state" || fail "tick should accept the later report"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  [ "$(phase_of "$state" "$corr")" = closed_unacknowledged ] \
+    || fail "a superseded request should settle, got $(phase_of "$state" "$corr")"
+  [ "$(fm_pending_reply_get "$rec" closed_reason)" = superseded-report ] \
+    || fail "settling should record the superseding report as its ground"
+  [ -z "$(fm_pending_reply_get "$rec" resolved_epoch)" ] \
+    || fail "settling without an answer must never be recorded as a reply"
+  [ -z "$(fm_pending_reply_get "$rec" resolved_via)" ] \
+    || fail "settling without an answer must not invent a resolution channel"
+  [ -f "$rec" ] || fail "settling must retain the durable record"
+  # The blocker is gone from the fold, and it took no human status line.
+  if open_decisions "$state/hibit.status" | grep -Fq "pending-reply-$corr"; then
+    fail "a settled request must stop being folded as an open blocker"
+  fi
+  grep -Fq "resolved [key=pending-reply-$corr]: pending-reply-unacknowledged:" \
+    "$state/hibit.status" || fail "the close should state the honest outcome"
+  if grep -Fq "pending-reply-resolved: task=hibit pending-reply-id=$corr" "$state/hibit.status"; then
+    fail "an unanswered request must never publish a resolved-report close"
+  fi
+  # Idempotent: repeated ticks publish exactly one close.
+  fm_pending_reply_tick "$state" || fail "tick should stay idempotent after settling"
+  fm_pending_reply_tick "$state" || fail "tick should stay idempotent after settling"
+  closes=$(grep -Fc "resolved [key=pending-reply-$corr]:" "$state/hibit.status")
+  [ "$closes" = 1 ] || fail "settling should publish one close, got $closes"
+  # A late correlated line cannot reopen or re-close a settled request.
+  printf 'done [corr=%s]: very late\n' "$corr" >> "$state/hibit.status"
+  fm_pending_reply_tick "$state" || fail "tick should ignore a late line on a settled record"
+  [ "$(phase_of "$state" "$corr")" = closed_unacknowledged ] \
+    || fail "a settled request must stay settled"
+  closes=$(grep -Fc "resolved [key=pending-reply-$corr]:" "$state/hibit.status")
+  [ "$closes" = 1 ] || fail "a late line must not publish a second close, got $closes"
+  pass "an unanswerable escalation settles once without claiming a reply"
+}
+
+# The other half of the reported case: delivery itself stayed unknown, so no
+# repost is even permitted and the record had literally no reachable exit. The
+# settle must still not manufacture a delivery it never observed.
+test_delivery_unknown_settles_without_manufacturing_delivery() {
+  local home state corr later rec
+  home=$(setup_parent delivery-unknown-settle)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=6500
+  corr=$(fm_pending_reply_create "$home" "$state" hibit "correction to my last")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  fm_pending_reply_prepare_delivery "$state" "$corr" || fail "delivery attempt should persist"
+  fm_pending_reply_set "$rec" grace_secs 10 || fail "grace fixture should persist"
+  export FM_PENDING_REPLY_NOW=6520
+  fm_pending_reply_tick "$state" || fail "tick should age the unknown delivery"
+  [ "$(phase_of "$state" "$corr")" = escalated ] \
+    || fail "unknown delivery should escalate once, got $(phase_of "$state" "$corr")"
+  grep -Fq "pending-reply-delivery-unknown:" "$state/hibit.status" \
+    || fail "the escalation should name the delivery uncertainty"
+  open_decisions "$state/hibit.status" | grep -Fq "pending-reply-$corr" \
+    || fail "the escalation should start as an open blocker"
+  # The mate reports on a later request, proving it is alive on the channel.
+  later=$(fm_pending_reply_create "$home" "$state" hibit "a different request")
+  fm_pending_reply_mark_delivered "$state" "$later"
+  printf 'done [corr=%s]: the later request is handled\n' "$later" >> "$state/hibit.status"
+  fm_pending_reply_tick "$state" || fail "tick should accept the later report"
+  [ "$(phase_of "$state" "$corr")" = closed_unacknowledged ] \
+    || fail "an unanswerable unknown delivery should settle, got $(phase_of "$state" "$corr")"
+  [ -z "$(fm_pending_reply_get "$rec" delivered_epoch)" ] \
+    || fail "settling must never manufacture a delivery that was never confirmed"
+  if open_decisions "$state/hibit.status" | grep -Fq "pending-reply-$corr"; then
+    fail "a settled unknown delivery must stop being folded as an open blocker"
+  fi
+  pass "an unanswerable unknown delivery settles without manufacturing delivery"
+}
+
+# A request genuinely still awaiting its reply is never settled and never
+# archived, however long the retention window says records may be reaped.
+test_open_requests_survive_settling_and_reaping() {
+  local home state open escalated archive
+  home=$(setup_parent open-survives)
+  state="$home/state"
+  export FM_PENDING_REPLY_SEND_HOOK='true'
+  export FM_PENDING_REPLY_NOW=7000
+  export FM_PENDING_REPLY_RETAIN_SECS=0
+  open=$(fm_pending_reply_create "$home" "$state" hibit "still waiting on this one")
+  fm_pending_reply_mark_delivered "$state" "$open"
+  escalated=$(escalated_fixture "$home" "$state" other "escalated but inside its window") \
+    || fail "escalated fixture should build"
+  archive=$(fm_pending_reply_archive_dir "$state")
+  fm_pending_reply_reap "$state" >/dev/null || fail "reap should succeed"
+  [ -f "$(fm_pending_reply_path "$state" "$open")" ] \
+    || fail "a request still awaiting its reply must never be reaped"
+  [ -f "$(fm_pending_reply_path "$state" "$escalated")" ] \
+    || fail "an open escalation must never be reaped"
+  [ ! -e "$archive/$open" ] || fail "an open request must not reach the archive"
+  [ ! -e "$archive/$escalated" ] || fail "an open escalation must not reach the archive"
+  fm_pending_reply_task_has_open "$state" hibit || fail "the open request should still count as open"
+  fm_pending_reply_task_has_open "$state" other || fail "the escalation should still count as open"
+  unset FM_PENDING_REPLY_RETAIN_SECS
+  pass "requests still awaiting a reply survive settling and reaping"
+}
+
+# The accumulation policy itself: settled records are archived once past the
+# retention window, sidecars travel with them, and nothing is ever deleted.
+test_settled_records_are_archived_on_the_retention_policy() {
+  local home state resolved fresh unconverged settled archive rec
+  home=$(setup_parent reap-policy)
+  state="$home/state"
+  export FM_PENDING_REPLY_SEND_HOOK='true'
+  export FM_PENDING_REPLY_NOW=8000
+  export FM_PENDING_REPLY_RETAIN_SECS=600
+  archive=$(fm_pending_reply_archive_dir "$state")
+  # An ordinary resolved record, old enough to reap.
+  resolved=$(fm_pending_reply_create "$home" "$state" hibit "answered long ago")
+  fm_pending_reply_mark_delivered "$state" "$resolved"
+  printf 'done [corr=%s]: answered\n' "$resolved" > "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$resolved" || fail "fixture should resolve"
+  # A settled-without-answer record, also old enough, with a delivery sidecar.
+  settled=$(escalated_fixture "$home" "$state" other "never answered") \
+    || fail "escalated fixture should build"
+  fm_pending_reply_write_delivery_confirmation "$state" "$settled" attempted 8000 \
+    || fail "sidecar fixture should persist"
+  export FM_PENDING_REPLY_NOW=$((8000 + 21600))
+  fm_pending_reply_close_unacknowledged "$state" "$settled" || fail "escalation should settle"
+  # A freshly settled record must be kept until the window elapses.
+  export FM_PENDING_REPLY_NOW=$((8000 + 21600 + 60))
+  fresh=$(fm_pending_reply_create "$home" "$state" hibit "answered just now")
+  fm_pending_reply_mark_delivered "$state" "$fresh"
+  printf 'done [corr=%s]: answered\n' "$fresh" >> "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$fresh" || fail "fresh fixture should resolve"
+  # A resolved record whose escalation close has not converged must be kept.
+  unconverged=$(fm_pending_reply_create "$home" "$state" third "close never landed")
+  fm_pending_reply_mark_delivered "$state" "$unconverged"
+  rec=$(fm_pending_reply_path "$state" "$unconverged")
+  fm_pending_reply_set "$rec" phase resolved || fail "fixture phase should persist"
+  fm_pending_reply_set "$rec" resolved_epoch 8000 || fail "fixture epoch should persist"
+  fm_pending_reply_set "$rec" escalated_epoch 8000 || fail "fixture escalation should persist"
+  export FM_PENDING_REPLY_NOW=$((8000 + 21600 + 601))
+  [ "$(fm_pending_reply_reap "$state")" = 2 ] \
+    || fail "exactly the two records past retention should be archived"
+  [ ! -e "$(fm_pending_reply_path "$state" "$resolved")" ] \
+    || fail "a resolved record past retention should leave the live directory"
+  [ -f "$archive/$resolved" ] || fail "a reaped record must be archived, never deleted"
+  grep -Fq "corr_id=$resolved" "$archive/$resolved" \
+    || fail "the archived record must keep its evidence intact"
+  [ -f "$archive/$settled" ] || fail "a settled-without-answer record should archive too"
+  [ -f "$archive/$settled.delivery-confirmed" ] \
+    || fail "a reaped record's delivery sidecar must travel with it"
+  [ ! -e "$(fm_pending_reply_delivery_confirmation_path "$state" "$settled")" ] \
+    || fail "the live sidecar should not be left behind"
+  [ -f "$(fm_pending_reply_path "$state" "$fresh")" ] \
+    || fail "a record settled inside the retention window must be kept"
+  [ -f "$(fm_pending_reply_path "$state" "$unconverged")" ] \
+    || fail "a record whose escalation close has not converged must be kept"
+  [ "$(fm_pending_reply_reap "$state")" = "" ] || fail "a second reap should archive nothing"
+  unset FM_PENDING_REPLY_RETAIN_SECS
+  pass "settled records are archived on the retention policy, never deleted"
 }
 
 test_remote_repost_waits_for_the_reply_channel() {
@@ -1265,6 +1474,10 @@ test_kimi_capture_fallback_uses_recorded_harness
 test_tick_skips_terminal_and_reuses_target_observation
 test_correlations_reuse_only_for_matching_open_task
 test_tick_end_to_end_missed_then_escalate
+test_superseded_report_settles_without_claiming_a_reply
+test_delivery_unknown_settles_without_manufacturing_delivery
+test_open_requests_survive_settling_and_reaping
+test_settled_records_are_archived_on_the_retention_policy
 test_failed_send_discards_undelivered_expectation
 test_remote_repost_waits_for_the_reply_channel
 test_mirrored_remote_reply_never_triggers_a_repost
