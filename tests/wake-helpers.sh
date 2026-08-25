@@ -33,6 +33,7 @@ fi
 # harness still cannot fire a real notification: the daemon defaults the seam to
 # "discard" whenever it is sourced (its library-mode guard).
 _fm_wedge_rec_dir=$(fm_test_tmproot fm-wedge-rec)
+[ -n "$_fm_wedge_rec_dir" ] || fail "no fixture root for the wedge-alarm recorder"
 cat > "$_fm_wedge_rec_dir/rec" <<'REC'
 #!/usr/bin/env bash
 printf '%s\t%s\n' "${1:-}" "${2:-}" >> "${FM_WEDGE_ALARM_LOG:-/dev/null}"
@@ -70,6 +71,9 @@ retire_task_state() {
 
 make_case() {
   local name=$1 dir fakebin
+  # Never compose a case path from an empty base: that builds the whole fixture
+  # at / (see fm_test_tmproot in tests/lib.sh).
+  [ -n "${TMP_ROOT:-}" ] || fail "make_case called with no TMP_ROOT - refusing to build a fixture at /"
   dir="$TMP_ROOT/$name"
   fakebin="$dir/fakebin"
   mkdir -p "$dir/state" "$fakebin"
