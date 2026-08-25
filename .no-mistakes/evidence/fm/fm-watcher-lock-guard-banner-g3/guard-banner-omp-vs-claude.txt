@@ -1,0 +1,21 @@
+### Simulated omp host: parent env carries OMPCODE=1 and CLAUDECODE=1 (omp exports both into every child it spawns)
+
+--- OLD pin (base f8b4c39 fixture: CLAUDECODE=1 PI_CODING_AGENT='' GROK_AGENT='' only) - OMPCODE leaks through; guard resolves harness=omp and prints the omp repair line, so the assertion 'watcher supervision needs Stop-owned automatic recovery' fails:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 1s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  After draining queued wakes, repair a missing or failed watcher cycle with the omp tool fm_watch_arm_omp, or restart omp with -e /tmp/fm-guard-demo.UxLgtt/.omp/extensions/fm-primary-turnend-guard.ts -e /tmp/fm-guard-demo.UxLgtt/.omp/extensions/fm-primary-omp-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+
+--- NEW pin (target 5fb318a guard_as_claude: env -u OMPCODE -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u FM_PI_HARNESS, then CLAUDECODE=1) - guard resolves harness=claude and prints the neutral automatic-recovery guidance the test asserts:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 1s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  After draining queued wakes, watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.

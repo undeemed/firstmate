@@ -1,0 +1,9 @@
+Regression pair for tests/fm-watcher-lock.test.sh (host env: CLAUDECODE=1 only; OMPCODE=1 injected to simulate an omp host):
+
+BASE f8b4c39 with OMPCODE=1 - fails at the asserted line, run stops at 10/31:
+  20:not ok - guard banner missing neutral automatic-recovery guidance
+
+TARGET 5fb318a OMPCODE1-PASS            ok=31 not_ok=0
+TARGET 5fb318a CURSOR_AGENT1-PASS       ok=31 not_ok=0
+TARGET 5fb318a CURSOR_INVOKED_AS-PASS   ok=31 not_ok=0
+TARGET 5fb318a clean-env-PASS           ok=31 not_ok=0
