@@ -1193,7 +1193,7 @@ _fm_key_syntax_marker_path() {  # <status-file>
 # changed status identity (rotated or recreated file), or malformed content
 # reads as 0, which re-warns rather than silently skipping a bad line.
 _fm_key_syntax_offset() {  # <status-file> -> offset
-  local f=$1 marker ident recorded offset extra
+  local f=$1 marker ident recorded offset extra size
   marker=$(_fm_key_syntax_marker_path "$f")
   [ -f "$marker" ] && [ -r "$marker" ] && [ ! -L "$marker" ] || { printf '0'; return 0; }
   ident=$(_fm_open_decisions_file_ident "$f") || { printf '0'; return 0; }
@@ -1201,6 +1201,10 @@ _fm_key_syntax_offset() {  # <status-file> -> offset
   [ -z "$extra" ] || { printf '0'; return 0; }
   [ "$recorded" = "$ident" ] || { printf '0'; return 0; }
   case "$offset" in ''|*[!0-9]*) printf '0'; return 0 ;; esac
+  size=$(_fm_status_file_size "$f") || { printf '0'; return 0; }
+  size=${size//[[:space:]]/}
+  case "$size" in ''|*[!0-9]*) printf '0'; return 0 ;; esac
+  [ "$offset" -le "$size" ] || { printf '0'; return 0; }
   printf '%s' "$offset"
 }
 scan_key_syntax_warnings_snapshot() {  # <state> <snapshot>
