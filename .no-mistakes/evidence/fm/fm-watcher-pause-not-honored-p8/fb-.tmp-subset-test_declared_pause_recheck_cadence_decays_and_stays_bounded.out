@@ -1,0 +1,1 @@
+not ok - an aged declared wait was rechecked on the flat base cadence instead of its decayed one: stale: test:fm-decay (paused 503s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
