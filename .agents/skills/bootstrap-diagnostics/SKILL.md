@@ -41,7 +41,8 @@ When any diagnostic needs captain attention, report the plain consequence and re
 - `FIRSTMATE_SYNC: primary checkout is <n> commit(s) behind origin/<branch> and was left untouched (<reason>)` - a landed instruction change cannot reach this home, and the reason is named: the checkout is dirty, on a feature branch, diverged, or otherwise not fast-forwardable.
   This is fleet-wide, not local: every secondmate home converges to this checkout, so the whole fleet keeps running these instructions until it is resolved.
   Resolve the named reason without touching unlanded work - a dirty or diverged primary holds someone's commits - then rerun session start, or `bin/fm-update.sh` for the same fast-forward on demand.
-  A `could not confirm ...` variant means origin was unreachable, so the drift is unknown rather than measured; treat this checkout as possibly stale until a run confirms it.
+  A `may be running stale instructions - origin could not be read` variant means the fetch failed or the origin ref could not be resolved, so the drift cannot be measured and the last known origin ref may itself be stale; treat this checkout as possibly stale until a run with origin reachable confirms it.
+  A `could not confirm ...` variant means the behind count itself could not be computed; treat it the same way.
 - `FLEET_SYNC: <repo>: skipped: <reason>` - a benign one-off skip (offline, no origin, local-only); bootstrap continued, investigate only if it blocks work.
   A skip can also report the bounded fleet-refresh timeout (`FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT`, or a fleet-size-aware default with a 20 second floor); a timeout never blocks startup.
 - `FLEET_SYNC: <repo>: recovered: <detail>` - the clone had drifted onto a clean detached HEAD holding no unique commits and the sync self-healed it (re-attached the default branch and fast-forwarded); no action needed, it is reported only so the self-heal is visible.
