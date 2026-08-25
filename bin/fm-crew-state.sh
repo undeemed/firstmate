@@ -29,12 +29,29 @@
 #      gone/dead.
 #   2. Matching no-mistakes run for this crew's branch AND current code identity,
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
-#      fallback)? Branch name alone is not enough: a historical run on a reused
-#      branch whose head was rewritten or diverged must not be attributed.
-#      A run matches when its head equals the worktree HEAD, or the worktree HEAD
-#      is an ancestor of the run head (pipeline fix commits advanced the run on
-#      the same line of history). Local work that advanced past the run head, or
-#      diverged from it, invalidates attribution.
+#      fallback)?
+#      SELECTION: the ONLY candidate is the NEWEST run on this crew's branch -
+#      `axi status` when it answers for this branch (the CLI returns the branch's
+#      active-or-most-recent run), else the first, newest, row for this branch in
+#      `no-mistakes runs`. An older run on the same branch is never selected,
+#      however well its head matches: a crew that re-ran after a failure sits on
+#      the very head the FAILED attempt used, so falling through to it reports a
+#      superseded failure as current state (the 2026-08-24 incident, where a
+#      green PR read as `failed` for twenty minutes).
+#      ATTRIBUTION: branch name alone is not enough - a historical run on a
+#      reused branch whose head was rewritten or diverged must not be attributed.
+#      The candidate binds through every head it reports (the run head, plus
+#      branch_sync's submitted/current/pushed heads when the CLI emits them)
+#      under bin/fm-nm-run-lib.sh's four-valued rule: a `match` on any of them
+#      attributes the run, and `stale`/`absent` on all of them means no run is
+#      attributed and the pane/log fallback below decides.
+#      AMBIGUITY: when the candidate can be neither confirmed nor denied
+#      (`undetermined` - its head exists only in no-mistakes' managed clone and
+#      has not been pushed and fetched back yet) the reader refuses to guess. It
+#      never answers with an older run. A demonstrably busy pane still reports
+#      working, because live evidence outranks a run that cannot even be bound;
+#      otherwise the reader reports `unknown` and names the ambiguity, since a
+#      truthful unknown beats a false `failed` or a false `done`.
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
 #      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
@@ -82,7 +99,7 @@ LOG="$STATE/$ID.status"
 NM_TIMEOUT=${FM_CREW_STATE_NM_TIMEOUT:-10}
 case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 # How many of the most recent `no-mistakes runs` rows the cross-branch fallback
-# (nm_runs_status_for_branch, below) scans. Generous enough to still find a
+# (nm_runs_current_row_for_branch, below) scans. Generous enough to still find a
 # branch's own run on a busy multi-crew fleet without listing the entire
 # history every call.
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
@@ -380,10 +397,14 @@ nm_ci_checks_state() {
 # "<status> <branch> <short-sha> <date> [<pr-url>]" separated by runs of
 # spaces (verified: no quoting, so splitting on the first two whitespace runs
 # is exact) - but branch + coarse status is exactly what this predicate needs:
-# is a run for THIS branch active right now. Echoes the first (most recent)
-# matching row's status word (running/completed/cancelled/failed), or empty
-# when the branch has no run within FM_CREW_STATE_RUNS_LIMIT rows.
-nm_runs_status_for_branch() {  # <branch>
+# is a run for THIS branch active right now. Echoes "<status>|<short-sha>" for
+# the branch's NEWEST row only - the list is newest-first, so the first matching
+# row IS the branch's current run - or empty when the branch has no run within
+# FM_CREW_STATE_RUNS_LIMIT rows. The scan deliberately STOPS at that row instead
+# of walking past a row it cannot bind: every row below it is an older run, and
+# answering with one of those is how a superseded failure became a crew's
+# reported current state. Binding that row is the caller's job.
+nm_runs_current_row_for_branch() {  # <branch>
   local branch=$1 out row st rest br sha
   out=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
   [ -n "$out" ] || return 0
@@ -398,12 +419,7 @@ nm_runs_status_for_branch() {  # <branch>
     rest=$(trim "$rest")
     sha=${rest%% *}
     if [ "$br" = "$branch" ]; then
-      # Same code-identity rule as axi status: skip a same-branch row whose
-      # short-sha does not match this worktree (rewritten or advanced tip).
-      if ! nm_coarse_head_matches_worktree "$sha"; then
-        continue
-      fi
-      printf '%s' "$st"
+      printf '%s|%s' "$st" "$sha"
       return 0
     fi
   done <<< "$out"
@@ -414,20 +430,38 @@ nm_runs_status_for_branch() {  # <branch>
 # scratch worktree); with no branch there is no run to attribute to this crew.
 CREW_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 
-# 0 if the active axi-status run's head field matches this worktree's code
-# identity. Branch match is a precondition (caller). Rule owned by
-# fm_nm_head_matches_worktree in bin/fm-nm-run-lib.sh.
-nm_run_head_matches_worktree() {
-  local run_head
-  run_head=$(strip_quotes "$(nm_field head)")
-  fm_nm_head_matches_worktree "$WT" "$run_head"
+# Fold every head a run reports into ONE binding verdict for this worktree,
+# using bin/fm-nm-run-lib.sh's four-valued rule per head. Precedence is
+# match > undetermined > stale > absent: one provable match attributes the run,
+# while one head that cannot be resolved here keeps the whole verdict honest at
+# undetermined rather than letting a second, older head force a confident answer.
+nm_binding_of_heads() {  # <head...> -> match|undetermined|stale|absent
+  local head binding verdict=absent
+  for head in "$@"; do
+    [ -n "$head" ] || continue
+    binding=$(fm_nm_head_binding "$WT" "$head")
+    case "$binding" in
+      match)        printf 'match'; return 0 ;;
+      undetermined) verdict=undetermined ;;
+      stale)        [ "$verdict" = undetermined ] || verdict=stale ;;
+    esac
+  done
+  printf '%s' "$verdict"
 }
 
-# Coarse runs-list rows are "<status> <branch> <short-sha> ...". 0 if the short
-# sha for this branch row matches the worktree head under the same rules as
-# nm_run_head_matches_worktree (equal, or local is ancestor of run tip).
-nm_coarse_head_matches_worktree() {  # <short-sha>
-  fm_nm_head_matches_worktree "$WT" "$1"
+# Binding for the `axi status` run currently in $RUN_OUT. Branch match is a
+# precondition (caller). Besides the run's own head, the CLI's branch_sync block
+# reports the head the run was SUBMITTED from - the crew worktree's own head at
+# run start - plus the pipeline's current and pushed heads. submitted_head is
+# what binds a live run whose current head exists only in no-mistakes' managed
+# clone; an older CLI that omits the block returns empty fields, and the run
+# head decides alone.
+nm_run_binding() {
+  nm_binding_of_heads \
+    "$(strip_quotes "$(nm_field head)")" \
+    "$(strip_quotes "$(nm_field submitted_head)")" \
+    "$(strip_quotes "$(nm_field current_head)")" \
+    "$(strip_quotes "$(nm_field pushed_head)")"
 }
 
 HAVE_RUN=0
@@ -437,26 +471,53 @@ HAVE_RUN=0
 # run-step block below skips the TOON field parsing entirely for this crew.
 RUN_SOURCE=full
 COARSE_STATUS=""
+# RUN_UNBINDABLE=1 records the ambiguity rule firing: this branch's current run
+# was found, but no head it reports resolves in this checkout, so it can be
+# neither attributed nor ruled out. It is never converted into a run-state.
+RUN_UNBINDABLE=0
+UNBINDABLE_DETAIL=""
 # Scouts and secondmates never drive a no-mistakes validation of their own
 # worktree, so skip the lookup for them and read state from pane/log directly.
 if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1; then
   RUN_OUT=$(nm_run axi status)
   if [ -n "$RUN_OUT" ]; then
     run_branch=$(strip_quotes "$(nm_field branch)")
-    if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] && nm_run_head_matches_worktree; then
-      HAVE_RUN=1
+    if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ]; then
+      # The CLI answered for THIS branch, so this run IS the branch's current
+      # one: the only candidate. It is attributed, held ambiguous, or dropped -
+      # never replaced by an older run from the list.
+      case "$(nm_run_binding)" in
+        match)
+          HAVE_RUN=1
+          ;;
+        undetermined)
+          RUN_UNBINDABLE=1
+          UNBINDABLE_DETAIL="this branch's current run ($(strip_quotes "$(nm_field status)")) reports head $(strip_quotes "$(nm_field head)"), which this checkout has never seen"
+          ;;
+      esac
     else
-      # The active-or-most-recent run is for another branch, or same branch with
-      # a rewritten/diverged head (the CLI is alive and answered; only the
-      # attribution missed) - try the coarse fallback.
+      # The active-or-most-recent run is for another branch (the CLI is alive
+      # and answered; only the attribution missed) - ask the runs list for this
+      # branch's own newest run.
       # Deliberately nested inside `[ -n "$RUN_OUT" ]`: an empty/timed-out
       # primary call means the CLI itself did not respond, so retrying it
       # immediately with a second bounded call would just double the wait
       # for no better answer.
-      COARSE_STATUS=$(nm_runs_status_for_branch "$CREW_BRANCH")
-      if [ -n "$COARSE_STATUS" ]; then
-        HAVE_RUN=1
-        RUN_SOURCE=coarse
+      coarse_row=$(nm_runs_current_row_for_branch "$CREW_BRANCH")
+      if [ -n "$coarse_row" ]; then
+        coarse_status=${coarse_row%%|*}
+        coarse_sha=${coarse_row#*|}
+        case "$(nm_binding_of_heads "$coarse_sha")" in
+          match)
+            COARSE_STATUS=$coarse_status
+            HAVE_RUN=1
+            RUN_SOURCE=coarse
+            ;;
+          undetermined)
+            RUN_UNBINDABLE=1
+            UNBINDABLE_DETAIL="this branch's current run ($coarse_status) reports head $coarse_sha, which this checkout has never seen"
+            ;;
+        esac
       fi
     fi
   fi
@@ -600,6 +661,15 @@ if [ "$KIND" != secondmate ]; then
     idle) ;;
     *) emit unknown pane "harness state unavailable ($BUSY_VERDICT)" ;;
   esac
+fi
+
+# Ambiguity rule (header step 2): this branch has a current run that cannot be
+# bound to this checkout, and no live busy evidence above spoke for it. Say so.
+# The status log below is an event log whose last line predates the unresolved
+# run, so treating it as current here is exactly how a superseded event becomes
+# a confident wrong answer.
+if [ "$RUN_UNBINDABLE" = 1 ]; then
+  emit unknown run-step "cannot tell which run is current: $UNBINDABLE_DETAIL"
 fi
 
 # Fall back to the status log's last line, but ONLY when its verb maps to a real
