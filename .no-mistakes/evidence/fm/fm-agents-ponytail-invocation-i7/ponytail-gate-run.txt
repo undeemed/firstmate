@@ -1,0 +1,2 @@
+--- Documented gate run against the base, exactly as AGENTS.md line 367 instructs ---
+$ ponytail-review f7d8b8dd9cdb8158350492f0d25f53ec7b8c08bb

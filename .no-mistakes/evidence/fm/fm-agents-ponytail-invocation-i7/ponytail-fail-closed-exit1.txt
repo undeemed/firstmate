@@ -1,0 +1,4 @@
+--- Fail-closed demo: empty diff means the gate COULD NOT RUN, exit 1, never a pass ---
+$ printf "" | ponytail-review --stdin
+ponytail-review: empty diff - nothing to review, and an empty review is not a pass
+exit=1
