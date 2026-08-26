@@ -6,6 +6,10 @@
 # open/resolved statement); these tests exercise the real drain script over
 # crafted status logs and assert on its printed output, not on the fold's own
 # source text.
+#
+# Also covers the KEY SYNTAX section printed beside it: a stated decision key the
+# fold could not use as written is invisible in the listing above (the note still
+# shows the literal token), so the drain reports it once per bad append.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
@@ -215,6 +219,152 @@ test_over_long_decision_note_is_capped_with_a_marker() {
   pass "an over-long open decision is cut to its per-item budget with the shared truncation marker"
 }
 
+# A key token stated past the note head folds under the shared "default" key
+# while the printed note still shows the token, so the entry reads as correctly
+# keyed. The warning is what makes that loss visible, and it must not repeat on
+# every later drain.
+test_misplaced_key_is_reported_once() {
+  local dir state out
+  dir=$(make_case key-syntax-misplaced)
+  state="$dir/state"
+  out="$dir/drain.out"
+  printf 'needs-decision: pick REST or RPC [key=api-shape]\n' > "$state/task20.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a misplaced key token"
+  grep -F 'KEY SYNTAX' "$out" >/dev/null || fail "a misplaced key token produced no warning: $(cat "$out")"
+  grep -F 'task20' "$out" | grep -F 'folded under "default"' >/dev/null \
+    || fail "the warning did not name the task and what the fold did: $(cat "$out")"
+  grep -F 'needs-decision [key=<slug>]: <summary>' "$out" >/dev/null \
+    || fail "the warning did not show the working position"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second drain failed"
+  if grep -F 'KEY SYNTAX' "$out" >/dev/null; then
+    fail "the warning repeated after it had been presented: $(cat "$out")"
+  fi
+
+  printf 'blocked: the runner is down [key=infra]\n' >> "$state/task20.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a later bad append"
+  grep -F 'KEY SYNTAX' "$out" | grep -F 'KEY SYNTAX (' >/dev/null \
+    || fail "a later bad append was not warned about: $(cat "$out")"
+  grep -F 'the runner is down' "$out" >/dev/null \
+    || fail "the later bad append was not the line reported: $(cat "$out")"
+  pass "a stated key the fold cannot use is reported once, and a later bad append is reported again"
+}
+
+# A slug outside the charset makes the fold skip the line outright: the decision
+# never reaches OPEN DECISIONS, so the warning is its only surface.
+test_rejected_slug_is_warned_even_though_it_never_lists_as_open() {
+  local dir state out
+  dir=$(make_case key-syntax-slug)
+  state="$dir/state"
+  out="$dir/drain.out"
+  printf 'needs-decision [key=api shape]: pick REST or RPC\n' > "$state/task21.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a rejected slug"
+  if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
+    fail "a line the fold skips must not appear as an open decision: $(cat "$out")"
+  fi
+  grep -F 'skipped this line entirely' "$out" >/dev/null \
+    || fail "the skipped decision was not reported by the guard: $(cat "$out")"
+  pass "a rejected slug never lists as open, and the guard reports the skipped line"
+}
+
+# The documented form must stay silent, or the section becomes noise every
+# supervision turn.
+test_documented_key_position_is_never_warned_about() {
+  local dir state out
+  dir=$(make_case key-syntax-clean)
+  state="$dir/state"
+  out="$dir/drain.out"
+  printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$state/task22.status"
+  printf 'resolved [key=api-shape]: went with REST\n' >> "$state/task22.status"
+  printf 'note: the fix landed in [key=api-shape] terms the captain used\n' >> "$state/task22.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on well-formed keys"
+  if grep -F 'KEY SYNTAX' "$out" >/dev/null; then
+    fail "the guard warned about correctly stated keys: $(cat "$out")"
+  fi
+  pass "correctly stated keys and prose that quotes a key never trigger the warning"
+}
+
+
+# The section's global byte cap can drop rows, and a dropped row must not be
+# recorded as warned - for a rejected slug this section is the decision's only
+# surface, so a capped-out row would vanish with no named trace. The marker
+# advances only through the last row shown before the task's first omitted row,
+# so the omitted tail re-warns on the next drain (at-least-once, like a marker
+# that failed to write).
+test_rows_omitted_by_the_byte_cap_rewarn_next_drain() {
+  local dir state out pad i
+  dir=$(make_case key-syntax-byte-cap)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # Ten bad appends on ONE task, each long enough to fill the 220-byte item
+  # budget, so the 1500-byte section cap fits six rows and omits four.
+  pad=$(awk 'BEGIN { while (i++ < 12) printf " lots-of-padding" }')
+  for i in 01 02 03 04 05 06 07 08 09 10; do
+    printf 'needs-decision: omitted-%s%s [key=k%s]\n' "$i" "$pad" "$i" >> "$state/task23.status"
+  done
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a byte-capped corpus"
+  grep -F 'more omitted (byte cap)' "$out" >/dev/null \
+    || fail "the byte cap dropped rows without a disclosure: $(cat "$out")"
+  grep -F 'folded under "default"' "$out" | grep -F 'omitted-01' >/dev/null \
+    || fail "the first bad append was not warned about on the first drain: $(cat "$out")"
+  if grep -F 'folded under "default"' "$out" | grep -F 'omitted-10' >/dev/null; then
+    fail "the corpus did not exceed the byte cap: $(cat "$out")"
+  fi
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second drain failed"
+  for i in 07 08 09 10; do
+    grep -F 'folded under "default"' "$out" | grep -F "omitted-$i" >/dev/null \
+      || fail "a row omitted by the byte cap was swallowed instead of re-warned: $(cat "$out")"
+  done
+  if grep -F 'folded under "default"' "$out" | grep -F 'omitted-01' >/dev/null; then
+    fail "an already-shown row re-printed even though its marker had advanced: $(cat "$out")"
+  fi
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "third drain failed"
+  if grep -F 'KEY SYNTAX' "$out" >/dev/null; then
+    fail "the warning repeated after every row had been presented: $(cat "$out")"
+  fi
+  pass "rows omitted by the byte cap re-warn next drain, then go quiet"
+}
+
+# A stale marker can outlive its task (a retire that died between its manifest
+# update and its rm -f) and later match a rebuilt log through task-ID and inode
+# reuse; an in-place O_TRUNC rewrite reproduces that matched-identity state
+# (temp+mv would change the inode and defang this test). With the recorded
+# offset past the shorter rebuilt file's end, the drain must re-warn from byte
+# 0 rather than silently skip every bad line in the rebuilt log - for a
+# rejected slug this section is the decision's only surface.
+test_marker_offset_past_file_end_rewarns_instead_of_skipping() {
+  local dir state statusfile out i
+  dir=$(make_case key-syntax-stale-offset)
+  state="$dir/state"
+  statusfile="$state/task24.status"
+  out="$dir/drain.out"
+  printf 'needs-decision: pick REST or RPC [key=api-shape]\n' > "$statusfile"
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    printf 'working: routine progress line %s with some padding\n' "$i" >> "$statusfile"
+  done
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "bootstrap drain failed"
+  grep -F 'KEY SYNTAX' "$out" >/dev/null \
+    || fail "the bootstrap drain did not record the bad line as warned: $(cat "$out")"
+
+  printf 'needs-decision: choose blue or green [key=deploy]\n' > "$statusfile"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
+    || fail "drain failed on a marker offset past the file end"
+  grep -F 'KEY SYNTAX' "$out" >/dev/null \
+    || fail "a marker offset past the file end silently skipped the rebuilt log: $(cat "$out")"
+  grep -F 'task24' "$out" | grep -F 'choose blue or green' >/dev/null \
+    || fail "the rebuilt log's own bad line was not the one re-warned: $(cat "$out")"
+  pass "a marker offset past the file's end re-warns the rebuilt log instead of skipping it"
+}
+
+
 test_buried_decision_still_surfaces
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
@@ -224,3 +374,8 @@ test_no_open_decisions_prints_nothing
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake
 test_buried_decision_surfaces_on_the_empty_queue_fast_path
 test_status_symlink_is_not_followed
+test_misplaced_key_is_reported_once
+test_rejected_slug_is_warned_even_though_it_never_lists_as_open
+test_documented_key_position_is_never_warned_about
+test_rows_omitted_by_the_byte_cap_rewarn_next_drain
+test_marker_offset_past_file_end_rewarns_instead_of_skipping

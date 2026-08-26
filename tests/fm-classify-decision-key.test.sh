@@ -440,8 +440,92 @@ test_trailing_bar_block_would_mask_a_terminal_verb() {
   pass "stacked bar blocks belong in the worker's output; a single inline bar stays safe"
 }
 
+# Two decisions on ONE task, written the way the scaffold now teaches: each must
+# hold its own key, and answering one must leave the other open. Written the way
+# the scaffold used to leave open - a key token stated later in the line - both
+# collapse into the shared "default" record, where one resolution closes both.
+# That collapse is the defect the guard warns about; the fold's rule is correct
+# and unchanged.
+test_two_decisions_on_one_task_keep_separate_keys() {
+  local dir f expected
+  dir=$(case_dir two-decisions)
+  f="$dir/good.status"
+  printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$f"
+  printf 'needs-decision [key=db-choice]: pg or sqlite\n' >> "$f"
+  expected=$(printf 'api-shape\tneeds-decision\tpick REST or RPC\ndb-choice\tneeds-decision\tpg or sqlite')
+  assert_fold "$f" "$expected" "two documented-form decisions"
+
+  printf 'resolved [key=api-shape]: went with REST\n' >> "$f"
+  expected=$(printf 'db-choice\tneeds-decision\tpg or sqlite')
+  assert_fold "$f" "$expected" "answering one documented-form decision"
+
+  f="$dir/misplaced.status"
+  printf 'needs-decision: pick REST or RPC [key=api-shape]\n' > "$f"
+  printf 'needs-decision: pg or sqlite [key=db-choice]\n' >> "$f"
+  expected=$(printf 'default\tneeds-decision\tpg or sqlite [key=db-choice]')
+  assert_fold "$f" "$expected" "two decisions whose key tokens sit past the note head"
+
+  printf 'resolved: went with REST\n' >> "$f"
+  assert_fold "$f" "" "one bare resolution closes both collapsed decisions"
+  pass "keyed decisions stay separate; key tokens past the note head collapse into one"
+}
+
+# The guard that keeps that collapse from being silent. It reports the reason a
+# stated key cannot be used as written and stays quiet on the documented form and
+# on prose that merely quotes a key.
+test_key_syntax_guard_names_the_reason() {
+  local line reason got
+  while IFS='|' read -r line reason; do
+    [ -n "$line" ] || continue
+    if [ "$reason" = quiet ]; then
+      if status_line_key_syntax_problem "$line" >/dev/null; then
+        fail "the guard warned about a line it should accept: $line"
+      fi
+      continue
+    fi
+    if ! got=$(status_line_key_syntax_problem "$line"); then
+      fail "the guard stayed silent on a key the fold cannot use as written: $line"
+    fi
+    [ "$got" = "$reason" ] \
+      || fail "guard reason mismatch for '$line': got '$got' want '$reason'"
+  done <<'CASES'
+needs-decision [key=api-shape]: pick REST or RPC|quiet
+blocked [key=infra.down-2]: waiting on the runner|quiet
+resolved [key=api-shape]: went with REST|quiet
+note: I answered [key=api-shape] in chat|quiet
+done: shipped [key=api-shape]|quiet
+working: rebuilding [key=api-shape]|quiet
+needs-decision: pick REST or RPC [key=api-shape]|unplaced-key
+blocked: the runner is down [key=infra]|unplaced-key
+needs-decision [key=api shape: pick REST or RPC|unplaced-key
+needs-decision: [key=api-shape] pick REST or RPC|late-key
+resolved: [key=api-shape] went with REST|late-key
+needs-decision: [key=api shape] pick REST or RPC|invalid-slug
+needs-decision [key=api shape]: pick REST or RPC|invalid-slug
+CASES
+  pass "the stated-key guard names why a key cannot be used, and stays quiet otherwise"
+}
+
+# The nastiest silent case, pinned separately: a slug outside the charset makes
+# the fold skip the whole line, so the decision never appears as open at all.
+# The guard is the only thing that reports it.
+test_invalid_slug_line_is_skipped_by_the_fold_and_caught_by_the_guard() {
+  local dir f
+  dir=$(case_dir invalid-slug)
+  f="$dir/task.status"
+  printf 'needs-decision [key=api shape]: pick REST or RPC\n' > "$f"
+  assert_fold "$f" "" "a rejected slug must not be rewritten into the default bucket"
+  [ "$(status_line_key_syntax_problem 'needs-decision [key=api shape]: pick REST or RPC')" = invalid-slug ] \
+    || fail "the guard did not report the rejected slug that made the fold skip the line"
+  pass "a rejected slug drops the line from the fold, and the guard reports it"
+}
+
+
 test_closing_verb_separates_resolution_from_durable_transfer
 test_closing_verb_tracks_the_last_transition_in_both_positions
 test_progress_bar_lines_cannot_move_a_keyed_decision
 test_inline_progress_bar_preserves_verb_key_note_and_relevance
 test_trailing_bar_block_would_mask_a_terminal_verb
+test_two_decisions_on_one_task_keep_separate_keys
+test_key_syntax_guard_names_the_reason
+test_invalid_slug_line_is_skipped_by_the_fold_and_caught_by_the_guard
