@@ -364,7 +364,8 @@ The worker reports the PR when CI first becomes green rather than waiting for me
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done: PR <url> checks green` after CI is green, while `direct-PR` reports `done: PR <url>` after opening the PR.
 Run `bin/fm-pr-check.sh <id> <PR url>` - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
 Tell the captain the PR's full URL, always the complete `https://...` link rather than a bare `#number`, a concise outcome summary, and the no-mistakes risk level when applicable.
-There is no line cap: before opening a PR, run `/ponytail-review` on the diff, cut everything it names, and re-run it until it answers `Lean already. Ship.`
+There is no line cap: before opening a PR, run the harness-agnostic `ponytail-review` wrapper on the diff (`ponytail-review` for uncommitted work, `ponytail-review <base>` such as `origin/main`, or `git diff main... | ponytail-review --stdin`), cut everything it names, and re-run it until it exits 0 with `Lean already. Ship.`
+Exit 2 means findings remain and must be cut, while exit 1 means the review could not run at all and must be reported rather than treated as a pass.
 Never hold or reject an otherwise green PR on size alone.
 Split only on genuinely independent seams, never because a total looked big, and a split that leaves an intermediate PR broken is not a split.
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine merge authority.
