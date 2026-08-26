@@ -225,7 +225,7 @@ Retire a remote second mate with the normal guarded command:
 bin/fm-teardown.sh <id>
 ```
 
-Retirement is executed on the configured host and refuses while the remote home has child work, while the primary has an unfinished backlog outbox, or while a routed reply remains unresolved.
+Retirement is executed on the configured host and refuses while the remote home has child work, while the primary has an unfinished backlog outbox, or while a routed reply is not yet settled - neither resolved nor closed without an answer (`bin/fm-pending-reply-lib.sh`).
 It closes only the retiring secondmate's panes or `2ndmate-<id>` workspace in `fm-remote`; it never stops the shared session or removes a sibling secondmate's workspace or panes.
 SSH exit 255 preserves both the route and local records because completion is unknown.
 `--force` remains the explicit discard path and requires the same captain authority as local secondmate discard.

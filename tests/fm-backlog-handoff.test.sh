@@ -332,6 +332,11 @@ case " $* " in
       handoff_pid=$(ps -o ppid= -p "$PPID" | tr -d '[:space:]')
       kill -KILL "$handoff_pid"
       sleep 1
+      # A PRE-move crash: the move must never land. Falling through to the real
+      # tasks-axi below would run it a second later, racing this test's own
+      # assertions - the item would sometimes move anyway and the recovery retry
+      # would then fail with NOT_FOUND.
+      exit 1
     fi
     ;;
 esac
