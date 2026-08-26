@@ -39,6 +39,10 @@
 # when a ShellCheck process runs out of memory, the worker re-runs that shard
 # one root at a time under the same ceiling, still reports every root that fits,
 # and fails naming each root that did not.
+# Enforcement is probed at startup rather than assumed: if the platform refuses
+# RLIMIT_AS, or accepts it without enforcing it as macOS does, one warning line
+# on stderr says the ceiling is not bounding ShellCheck, because a ceiling that
+# is set but not enforced is the same silent failure as a skipped lint.
 #
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
@@ -72,8 +76,9 @@ fm_lint_worker_stop() {
 # fm_lint_shellcheck <output-file> <root>...: one ShellCheck process under the
 # address-space ceiling, tracked so the worker's signal traps still stop it. The
 # ceiling is only ever lowered, so an ambient limit that is already stricter
-# wins, and a platform that refuses RLIMIT_AS says so instead of leaving the run
-# silently unbounded.
+# wins. A refusal is silent here because both of this subshell's streams feed
+# the captured shard diagnostics; fm_lint_warn_unenforced_ceiling already said
+# so once on the run's real stderr before any worker started.
 fm_lint_shellcheck() {  # <output-file> <root>...
   local output=$1 rc=0
   shift
@@ -84,9 +89,7 @@ fm_lint_shellcheck() {  # <output-file> <root>...
         ''|*[!0-9]*) current=unlimited ;;
       esac
       if [ "$current" = unlimited ] || [ "$current" -gt "$FM_LINT_MEMORY_LIMIT_KIB" ]; then
-        ulimit -v "$FM_LINT_MEMORY_LIMIT_KIB" 2>/dev/null \
-          || printf 'fm-lint.sh: this platform refused the %s KiB ShellCheck memory ceiling; ShellCheck runs unbounded here.\n' \
-            "$FM_LINT_MEMORY_LIMIT_KIB" >&2
+        ulimit -v "$FM_LINT_MEMORY_LIMIT_KIB" 2>/dev/null || :
       fi
     fi
     exec "$FM_LINT_SHELLCHECK" --norc --external-sources -- "$@"
@@ -108,6 +111,30 @@ fm_lint_out_of_memory() {  # <rc> <output-file>
     0|1) return 1 ;;
   esac
   [ -f "$2" ] && grep -Eq 'out of memory|malloc: failed|Cannot allocate memory' "$2"
+}
+
+# fm_lint_warn_unenforced_ceiling: one runtime probe of whether the kernel
+# actually enforces RLIMIT_AS, run once per lint before the workers start.
+# macOS accepts setrlimit(RLIMIT_AS) and then does not enforce it, and this
+# fleet runs real Darwin hosts, so a configured ceiling can look bounded while
+# protecting nothing - the accepted intent rejects that for the same reason it
+# rejects silently skipping a file. The probe observes one process under a
+# tiny ulimit -v, never the OS name, and its whole contract is exactly one
+# warning line on stderr: no capability framework, no new configuration.
+fm_lint_warn_unenforced_ceiling() {
+  [ "$FM_LINT_MEMORY_LIMIT_KIB" -gt 0 ] || return 0
+  local probe_rc=0
+  (
+    ulimit -v 1024 2>/dev/null || exit 3
+    exec /bin/sh -c 'exit 0'
+  ) >/dev/null 2>&1 || probe_rc=$?
+  if [ "$probe_rc" -eq 3 ]; then
+    printf 'fm-lint.sh: this platform refused the RLIMIT_AS ceiling; the %s KiB ShellCheck memory ceiling is not applied and ShellCheck runs unbounded here.\n' \
+      "$FM_LINT_MEMORY_LIMIT_KIB" >&2
+  elif [ "$probe_rc" -eq 0 ]; then
+    printf 'fm-lint.sh: this platform sets RLIMIT_AS without enforcing it; the %s KiB ShellCheck memory ceiling is not bounding ShellCheck here.\n' \
+      "$FM_LINT_MEMORY_LIMIT_KIB" >&2
+  fi
 }
 
 fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
@@ -172,7 +199,7 @@ if [ "${1:-}" = "--required-version" ]; then
 fi
 
 fm_lint_usage() {
-  sed -n '2,53{s/^# \{0,1\}//;p;}' "$SELF"
+  sed -n '2,57{s/^# \{0,1\}//;p;}' "$SELF"
 }
 
 # Default no-args lint also validates GitHub workflows. Explicit paths stay a
@@ -493,6 +520,8 @@ fm_lint_wait_workers() {
     ACTIVE_PIDS=("${ACTIVE_PIDS[@]:1}")
   done
 }
+
+fm_lint_warn_unenforced_ceiling
 
 if [ "$JOBS" -eq 1 ]; then
   worker=0

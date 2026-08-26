@@ -65,6 +65,21 @@ Serial, on the loaded host above. Peak resident memory across the whole run is 3
 Linting each of the 323 canonical roots separately, before and after, produced the same diagnostics: none.
 A seeded `SC1007` in each of `bin/fm-teardown.sh`, `bin/fm-send.sh`, and `bin/fm-spawn.sh` is reported and the run exits 1, so the shrunken source graph still analyses those roots rather than skipping them.
 
+## Enforcement scope: Linux is the platform that enforces the ceiling
+
+Decided 2026-08-26 during review, recorded here because it bounds what the ceiling promises.
+The ceiling is real only where the kernel enforces RLIMIT_AS, and of this fleet's platforms only Linux does.
+macOS accepts `setrlimit(RLIMIT_AS)` and then does not enforce it, so on Darwin the ceiling is set but bounds nothing.
+Approving that silently was rejected on the accepted intent, not on taste: a cap that silently skips linting is not acceptable, and a ceiling that is set but not enforced is the same failure wearing a different hat.
+Darwin is a real platform for this fleet, not hypothetical: the fleet runs three M4 Mac minis reachable on the tailnet, and `bin/fm-lint.sh` already carries explicit Darwin branches.
+`bin/fm-lint.sh` therefore probes actual enforcement once per lint run, before the workers start: one process runs under a tiny `ulimit -v`, and the kernel either refuses its allocation or does not.
+The probe never branches on `uname`, because the thing under test is the platform's behaviour, not its name.
+When the platform refuses RLIMIT_AS, or accepts it without enforcing it, `bin/fm-lint.sh` warns in exactly one line on stderr that the configured ceiling is not bounding ShellCheck.
+That single line is deliberately the whole mechanism: no capability-detection framework, no new configuration surface, no new guarantee.
+The warning lands on the run's real stderr rather than inside a worker's captured shard streams, so it cannot be mistaken for a ShellCheck finding or truncated with a discarded shard batch.
+The three ceiling tests in `tests/fm-lint.test.sh` - `test_heavy_roots_lint_within_the_memory_ceiling`, `test_memory_ceiling_names_the_root_it_could_not_lint`, and `test_memory_ceiling_still_reports_the_roots_that_fit` - skip when that same runtime probe finds RLIMIT_AS unenforced, and each skip message states that reason.
+The heavy-roots case skips for the same reason as the two named failure cases: without enforcement it cannot prove the roots fit, and the honest warning line would trip its no-ceiling-message assertion.
+
 ## Refreshing this record
 
 ```
