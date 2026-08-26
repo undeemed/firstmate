@@ -41,6 +41,11 @@
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
+# Every ship mode also carries AGENTS.md's ponytail lean gate, worded for that
+# mode's own delivery point (the PR body for the PR modes, the branch handoff for
+# local-only), and no scaffold states a size number because the gate replaced the
+# line cap. Scouts and charters never carry it.
+# LEAN_GATE below owns the invocation and the exit codes for all three modes.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns merge decisions, so yolo is
@@ -424,6 +429,14 @@ echo "scaffolded: $BRIEF (scout; replace {TASK})"
 exit 0
 fi
 
+# Ponytail lean gate, identical for every ship mode so the invocation and the
+# exit-code meanings have one owner. Single-quoted so its backticks reach the
+# reading agent verbatim; the interpolating DOD heredocs below expand
+# "$LEAN_GATE" once and never rescan its bytes.
+# shellcheck disable=SC2016  # single quotes are deliberate: these backticks are literal brief text
+LEAN_GATE='run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.'
+
 # Ship task: shape Setup / Rule 1 / Definition of done by this task's explicit
 # delivery mode, validated above. The generated DOD opens with the fixed
 # "Delivery contract: mode=<mode>" line that bin/fm-spawn.sh checks against its own
@@ -437,6 +450,8 @@ case "$MODE" in
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
+Before you open the PR, $LEAN_GATE
+Report that verdict in the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
@@ -450,6 +465,8 @@ Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+Before you hand the branch off, $LEAN_GATE
+Record that verdict in your handoff, and name any finding you deliberately did not cut with the reason it earns its place.
 When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
@@ -462,6 +479,8 @@ EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
+Before the PR is opened, $LEAN_GATE
+Carry that verdict into the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
 When you believe it is complete, append \`done: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 

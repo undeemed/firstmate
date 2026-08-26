@@ -851,6 +851,54 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# The brief, not AGENTS.md, is what binds the worker: every ship mode must carry a
+# runnable lean gate with its exit codes, and neither scout nor charter may.
+test_ship_modes_carry_the_lean_gate_and_scout_charter_do_not() {
+  local home id mode brief
+  home="$TMP_ROOT/lean-gate-home"
+  mkdir -p "$home/data"
+
+  for id_mode in "brief-lean-d1:no-mistakes" "brief-lean-d2:direct-PR" "brief-lean-d3:local-only"; do
+    id=${id_mode%%:*}
+    mode=${id_mode##*:}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$id: ship scaffold failed"
+    brief="$home/data/$id/brief.md"
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    assert_grep 'run `ponytail-review <base>` against the branch base you started from' "$brief" \
+      "$mode: ship brief lost the runnable ponytail lean gate"
+    assert_no_grep '/ponytail-review' "$brief" \
+      "$mode: ship brief invokes the Claude-only slash command a non-Claude crewmate cannot run"
+    assert_grep 'exit 1 means the gate COULD NOT RUN' "$brief" \
+      "$mode: ship brief lost the could-not-run exit code, the one a worker must never read as a pass"
+    assert_grep 'name any finding you deliberately did not cut with the reason it earns its place' "$brief" \
+      "$mode: ship brief lost the kept-finding disclosure"
+  done
+
+  assert_grep 'Carry that verdict into the PR body' "$home/data/brief-lean-d1/brief.md" \
+    "no-mistakes brief must gate before the pipeline opens the PR and report in the PR body"
+  assert_grep 'Report that verdict in the PR body' "$home/data/brief-lean-d2/brief.md" \
+    "direct-PR brief must gate before the worker opens the PR and report in the PR body"
+
+  # local-only stops at a clean branch, so its gate is worded for the handoff and
+  # must never inherit PR wording it can never satisfy.
+  assert_grep 'Record that verdict in your handoff' "$home/data/brief-lean-d3/brief.md" \
+    "local-only brief must record the verdict in the handoff"
+  assert_no_grep 'PR body' "$home/data/brief-lean-d3/brief.md" \
+    "local-only brief pasted PR wording into a no-PR delivery mode"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-lean-d4 some-proj --scout >/dev/null 2>&1 \
+    || fail "scout scaffold failed"
+  assert_no_grep 'ponytail-review' "$home/data/brief-lean-d4/brief.md" \
+    "scout brief inherited a PR gate it can never reach"
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-lean-d5 --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "secondmate charter scaffold failed"
+  assert_no_grep 'ponytail-review' "$home/data/brief-lean-d5/brief.md" \
+    "secondmate charter inherited a delivery gate it is not a contract for"
+  pass "fm-brief.sh: every ship mode carries the lean gate; scout and charter do not"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -935,6 +983,7 @@ test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_ship_project_memory_wording
+test_ship_modes_carry_the_lean_gate_and_scout_charter_do_not
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
