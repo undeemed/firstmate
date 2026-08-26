@@ -151,6 +151,18 @@ pinned_ready() {
   [ "$(shellcheck --version | awk '/^version:/ {print $2; exit}')" = "$REQUIRED" ]
 }
 
+# True only when the kernel actually enforces RLIMIT_AS, probed by running one
+# process under a tiny ulimit -v rather than by branching on uname: macOS
+# accepts setrlimit(RLIMIT_AS) and then does not enforce it, so the ceiling
+# tests below cannot observe the bound or its failure mode there and skip with
+# that reason instead of failing against an unenforced ceiling.
+rlimit_as_enforced() {
+  ! (
+    ulimit -v 1024 2>/dev/null || exit 0
+    exec /bin/sh -c 'exit 0'
+  ) >/dev/null 2>&1
+}
+
 test_list_files_reports_the_shell_inventory() {
   local listed expected
   # CI=true forces the full canonical set regardless of the ambient branch or
@@ -365,6 +377,10 @@ test_heavy_roots_lint_within_the_memory_ceiling() {
     pass "SKIP (ShellCheck $REQUIRED not resolved): heavy-root memory ceiling check"
     return
   fi
+  if ! rlimit_as_enforced; then
+    pass "SKIP (kernel does not enforce RLIMIT_AS, so the ceiling cannot bound ShellCheck): heavy-root memory ceiling check"
+    return
+  fi
   local out rc=0
   # The default ceiling, stated explicitly so this pins the bound rather than
   # whatever the default happens to become. Before the source-graph fix
@@ -397,6 +413,10 @@ test_memory_ceiling_names_the_root_it_could_not_lint() {
     pass "SKIP (ShellCheck $REQUIRED not resolved): memory ceiling failure check"
     return
   fi
+  if ! rlimit_as_enforced; then
+    pass "SKIP (kernel does not enforce RLIMIT_AS, so the ceiling cannot fail): memory ceiling failure check"
+    return
+  fi
   local tmp big out rc=0
   tmp=$(fm_test_tmproot fm-lint-mem-refuse)
   mkdir -p "$tmp"
@@ -417,11 +437,17 @@ test_memory_ceiling_still_reports_the_roots_that_fit() {
     pass "SKIP (ShellCheck $REQUIRED not resolved): partial-shard reporting check"
     return
   fi
-  local tmp big bad out rc=0
+  if ! rlimit_as_enforced; then
+    pass "SKIP (kernel does not enforce RLIMIT_AS, so the ceiling cannot fail): partial-shard reporting check"
+    return
+  fi
+  local tmp big_a big_b bad out rc=0
   tmp=$(fm_test_tmproot fm-lint-mem-partial)
   mkdir -p "$tmp"
-  big="$tmp/oversized.sh"
-  fm_lint_write_oversized_root "$big"
+  big_a="$tmp/oversized-a.sh"
+  big_b="$tmp/oversized-b.sh"
+  fm_lint_write_oversized_root "$big_a"
+  fm_lint_write_oversized_root "$big_b"
   bad="$tmp/bad.sh"
   cat > "$bad" <<'SH'
 #!/usr/bin/env bash
@@ -431,11 +457,15 @@ foo() {
 }
 foo
 SH
-  # One root that cannot fit the ceiling and one small root with a genuine
-  # finding: the ceiling must not cost the shard its other diagnostics.
-  out=$(FM_LINT_MEMORY_LIMIT_KIB=204800 FM_LINT_JOBS=1 "$LINT" "$big" "$bad" 2>&1) || rc=$?
+  # Two equal-weight oversized roots force the deterministic largest-first
+  # greedy assignment to co-shard the small finding-bearing root with one of
+  # them (a -> shard 0, b -> shard 1, bad -> shard 0), so the out-of-memory
+  # shard must salvage bad.sh's finding through the per-root retry instead of
+  # discarding it with the dead batch.
+  out=$(FM_LINT_MEMORY_LIMIT_KIB=204800 FM_LINT_JOBS=1 "$LINT" "$big_a" "$big_b" "$bad" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "the ceiling run must still fail"$'\n'"$out"
-  assert_contains "$out" "$big" "the memory-ceiling failure did not name the oversized root"
+  assert_contains "$out" "$big_a" "the memory-ceiling failure did not name the oversized root co-sharded with bad.sh"
+  assert_contains "$out" "$big_b" "the memory-ceiling failure did not name the oversized root in the other shard"
   assert_contains "$out" "SC1007" "the ceiling failure suppressed a real finding in a root that fits"
   pass "fm-lint.sh still reports findings for the roots that fit under the ceiling"
 }
