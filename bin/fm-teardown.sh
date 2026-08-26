@@ -183,7 +183,12 @@ if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
 fi
 ID=$1
 FORCE=${2:-}
-# shellcheck source=bin/fm-wake-lib.sh
+# The runtime re-source stays: fm-wake-lib.sh rebinds STATE and the queue paths
+# from the current environment. The source boundary is a lint-cost cut only -
+# ShellCheck already inlined this module at the top-level source above, and a
+# second inline of its whole graph is what pushed this root past every memory
+# ceiling (see bin/fm-lint.sh's memory-ceiling notes).
+# shellcheck source=/dev/null
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 CONTROL_LOCK_HELD=0
@@ -2395,7 +2400,8 @@ teardown_herdr_require_prerequisites() { # <task-id>
 		fi
 	done
 	if ! declare -F fm_lock_try_acquire >/dev/null 2>&1; then
-		# shellcheck source=bin/fm-wake-lib.sh
+		# Source boundary only: already inlined at this file's top-level source.
+		# shellcheck source=/dev/null
 		. "$SCRIPT_DIR/fm-wake-lib.sh"
 	fi
 	if ! declare -F fm_lock_try_acquire >/dev/null 2>&1 ||

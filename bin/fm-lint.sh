@@ -29,6 +29,21 @@
 # deterministic shard and root order after every worker finishes. FM_LINT_JOBS=1
 # runs the same shards serially with byte-identical diagnostics and exit selection.
 #
+# Every ShellCheck process runs under an address-space ceiling
+# (FM_LINT_MEMORY_LIMIT_KIB, default 6291456 KiB = 6 GiB). ShellCheck's memory
+# cost is roughly proportional to the total lines it analyses, and
+# --external-sources inlines a module once per source directive, so a root that
+# imports the same module more than once pays for that module's whole graph
+# every time. bin/fm-teardown.sh reached 14.4 GB RSS and consumed all swap that
+# way. The ceiling stops that at the process boundary and never skips a file:
+# when a ShellCheck process runs out of memory, the worker re-runs that shard
+# one root at a time under the same ceiling, still reports every root that fits,
+# and fails naming each root that did not.
+# Enforcement is probed at startup rather than assumed: if the platform refuses
+# RLIMIT_AS, or accepts it without enforcing it as macOS does, one warning line
+# on stderr says the ceiling is not bounding ShellCheck, because a ceiling that
+# is set but not enforced is the same silent failure as a skipped lint.
+#
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
 #
@@ -43,6 +58,7 @@
 set -u
 
 REQUIRED_SHELLCHECK=0.11.0
+DEFAULT_MEMORY_LIMIT_KIB=6291456
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SELF_DIR/fm-lint.sh"
 ROOT="$(cd "$SELF_DIR/.." && pwd)"
@@ -57,8 +73,72 @@ fm_lint_worker_stop() {
   FM_LINT_WORKER_SHELLCHECK_PID=
 }
 
+# fm_lint_shellcheck <output-file> <root>...: one ShellCheck process under the
+# address-space ceiling, tracked so the worker's signal traps still stop it. The
+# ceiling is only ever lowered, so an ambient limit that is already stricter
+# wins. A refusal is silent here because both of this subshell's streams feed
+# the captured shard diagnostics; fm_lint_warn_unenforced_ceiling already said
+# so once on the run's real stderr before any worker started.
+fm_lint_shellcheck() {  # <output-file> <root>...
+  local output=$1 rc=0
+  shift
+  (
+    if [ "$FM_LINT_MEMORY_LIMIT_KIB" -gt 0 ]; then
+      current=$(ulimit -v 2>/dev/null || printf 'unlimited')
+      case "$current" in
+        ''|*[!0-9]*) current=unlimited ;;
+      esac
+      if [ "$current" = unlimited ] || [ "$current" -gt "$FM_LINT_MEMORY_LIMIT_KIB" ]; then
+        ulimit -v "$FM_LINT_MEMORY_LIMIT_KIB" 2>/dev/null || :
+      fi
+    fi
+    exec "$FM_LINT_SHELLCHECK" --norc --external-sources -- "$@"
+  ) > "$output" 2>&1 &
+  FM_LINT_WORKER_SHELLCHECK_PID=$!
+  wait "$FM_LINT_WORKER_SHELLCHECK_PID" || rc=$?
+  FM_LINT_WORKER_SHELLCHECK_PID=
+  return "$rc"
+}
+
+# fm_lint_out_of_memory <rc> <output-file>: true when ShellCheck died for memory
+# rather than reporting findings. 251 is the Haskell runtime's out-of-memory
+# exit and 137 is a SIGKILL from an out-of-memory killer; the message checks
+# cover the allocation failures that runtime reports under other statuses,
+# including a ceiling low enough to stop it before it finishes starting.
+fm_lint_out_of_memory() {  # <rc> <output-file>
+  case "$1" in
+    251|137) return 0 ;;
+    0|1) return 1 ;;
+  esac
+  [ -f "$2" ] && grep -Eq 'out of memory|malloc: failed|Cannot allocate memory' "$2"
+}
+
+# fm_lint_warn_unenforced_ceiling: one runtime probe of whether the kernel
+# actually enforces RLIMIT_AS, run once per lint before the workers start.
+# macOS accepts setrlimit(RLIMIT_AS) and then does not enforce it, and this
+# fleet runs real Darwin hosts, so a configured ceiling can look bounded while
+# protecting nothing - the accepted intent rejects that for the same reason it
+# rejects silently skipping a file. The probe observes one process under a
+# tiny ulimit -v, never the OS name, and its whole contract is exactly one
+# warning line on stderr: no capability framework, no new configuration.
+fm_lint_warn_unenforced_ceiling() {
+  [ "$FM_LINT_MEMORY_LIMIT_KIB" -gt 0 ] || return 0
+  local probe_rc=0
+  (
+    ulimit -v 1024 2>/dev/null || exit 3
+    exec /bin/sh -c 'exit 0'
+  ) >/dev/null 2>&1 || probe_rc=$?
+  if [ "$probe_rc" -eq 3 ]; then
+    printf 'fm-lint.sh: this platform refused the RLIMIT_AS ceiling; the %s KiB ShellCheck memory ceiling is not applied and ShellCheck runs unbounded here.\n' \
+      "$FM_LINT_MEMORY_LIMIT_KIB" >&2
+  elif [ "$probe_rc" -eq 0 ]; then
+    printf 'fm-lint.sh: this platform sets RLIMIT_AS without enforcing it; the %s KiB ShellCheck memory ceiling is not bounding ShellCheck here.\n' \
+      "$FM_LINT_MEMORY_LIMIT_KIB" >&2
+  fi
+}
+
 fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
-  local manifest=$1 output_dir=$2 shard_index=$3 tab index path output rc=0
+  local manifest=$1 output_dir=$2 shard_index=$3 tab index path output root root_rc rc=0
   local -a roots
   roots=()
   tab=$(printf '\t')
@@ -67,14 +147,32 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
     roots+=("$path")
   done < "$manifest"
   output="$output_dir/shard.$shard_index"
+  : > "$output.mem"
   if [ "${#roots[@]}" -gt 0 ]; then
     trap 'fm_lint_worker_stop; exit 129' HUP
     trap 'fm_lint_worker_stop; exit 130' INT
     trap 'fm_lint_worker_stop; exit 143' TERM
-    "$FM_LINT_SHELLCHECK" --norc --external-sources -- "${roots[@]}" > "$output.out" 2>&1 &
-    FM_LINT_WORKER_SHELLCHECK_PID=$!
-    wait "$FM_LINT_WORKER_SHELLCHECK_PID" || rc=$?
-    FM_LINT_WORKER_SHELLCHECK_PID=
+    fm_lint_shellcheck "$output.out" "${roots[@]}" || rc=$?
+    if fm_lint_out_of_memory "$rc" "$output.out"; then
+      # The batched process died, so this shard has no usable diagnostics. Re-run
+      # its roots one at a time: every root that fits is still linted and
+      # reported, and each root that does not is named in the failure.
+      rc=0
+      : > "$output.out"
+      for root in "${roots[@]}"; do
+        root_rc=0
+        fm_lint_shellcheck "$output.root" "$root" || root_rc=$?
+        if fm_lint_out_of_memory "$root_rc" "$output.root"; then
+          printf 'fm-lint.sh: ShellCheck exceeded the %s KiB memory ceiling on %s; that root was NOT linted. Shrink its ShellCheck source graph (a repeated shellcheck source directive re-inlines that whole module graph) or raise FM_LINT_MEMORY_LIMIT_KIB deliberately.\n' \
+            "$FM_LINT_MEMORY_LIMIT_KIB" "$root" >> "$output.mem"
+          rc=2
+          continue
+        fi
+        cat "$output.root" >> "$output.out"
+        [ "$root_rc" -eq 0 ] || [ "$rc" -ne 0 ] || rc=$root_rc
+      done
+      rm -f "$output.root"
+    fi
     trap - HUP INT TERM
   else
     : > "$output.out"
@@ -90,6 +188,7 @@ if [ "${1:-}" = "--internal-worker" ]; then
     exit 2
   }
   [ "$#" -eq 4 ] && [ -n "${FM_LINT_SHELLCHECK:-}" ] || exit 2
+  [ -n "${FM_LINT_MEMORY_LIMIT_KIB:-}" ] || exit 2
   fm_lint_worker "$2" "$3" "$4"
   exit $?
 fi
@@ -100,7 +199,7 @@ if [ "${1:-}" = "--required-version" ]; then
 fi
 
 fm_lint_usage() {
-  sed -n '2,42{s/^# \{0,1\}//;p;}' "$SELF"
+  sed -n '2,57{s/^# \{0,1\}//;p;}' "$SELF"
 }
 
 # Default no-args lint also validates GitHub workflows. Explicit paths stay a
@@ -152,6 +251,16 @@ done
 case "$JOBS" in
   1|2) ;;
   *) printf 'fm-lint.sh: jobs must be 1 or 2, got %s.\n' "$JOBS" >&2; exit 2 ;;
+esac
+
+# Fail closed on a malformed ceiling rather than silently linting unbounded.
+FM_LINT_MEMORY_LIMIT_KIB=${FM_LINT_MEMORY_LIMIT_KIB:-$DEFAULT_MEMORY_LIMIT_KIB}
+case "$FM_LINT_MEMORY_LIMIT_KIB" in
+  ''|*[!0-9]*)
+    printf 'fm-lint.sh: FM_LINT_MEMORY_LIMIT_KIB must be a whole number of KiB (0 disables the ceiling), got %s.\n' \
+      "$FM_LINT_MEMORY_LIMIT_KIB" >&2
+    exit 2
+    ;;
 esac
 
 # fm_lint_changed_base_ref prints the ref to diff the working branch against:
@@ -380,17 +489,20 @@ fm_lint_run_worker() {  # <worker-index>
       exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
         /usr/bin/time -lp -o "$timing" \
         env FM_LINT_INTERNAL=1 FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+        FM_LINT_MEMORY_LIMIT_KIB="$FM_LINT_MEMORY_LIMIT_KIB" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     else
       exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
         /usr/bin/time -f 'wall_seconds=%e\nuser_seconds=%U\nsystem_seconds=%S\nmax_rss_kib=%M' -o "$timing" \
         env FM_LINT_INTERNAL=1 FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+        FM_LINT_MEMORY_LIMIT_KIB="$FM_LINT_MEMORY_LIMIT_KIB" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     fi
   else
     [ -z "$TELEMETRY" ] || printf 'timing_unavailable=1\n' > "$timing"
     exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
       env FM_LINT_INTERNAL=1 FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+      FM_LINT_MEMORY_LIMIT_KIB="$FM_LINT_MEMORY_LIMIT_KIB" \
       "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
   fi
 }
@@ -408,6 +520,8 @@ fm_lint_wait_workers() {
     ACTIVE_PIDS=("${ACTIVE_PIDS[@]:1}")
   done
 }
+
+fm_lint_warn_unenforced_ceiling
 
 if [ "$JOBS" -eq 1 ]; then
   worker=0
@@ -432,6 +546,7 @@ worker=0
 while [ "$worker" -lt "$SHARD_COUNT" ]; do
   output="$OUTPUT_DIR/shard.$worker"
   [ ! -f "$output.out" ] || cat "$output.out"
+  [ ! -s "$output.mem" ] || cat "$output.mem" >&2
   if [ -f "$output.rc" ]; then
     rc=$(cat "$output.rc" 2>/dev/null || printf '2')
     case "$rc" in ''|*[!0-9]*) rc=2 ;; esac
