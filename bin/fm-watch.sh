@@ -101,6 +101,17 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# Single owner of durable merge-outcome publication, shared with
+# bin/fm-pr-merge.sh so self and poll origins use the same role-routed outcome.
+# The watcher still owns immediate delivery of its actionable poll result and
+# poll retirement.
+# This library is a canonical lint root in its own right, and it reaches the
+# wake queue, PR identity, and secondmate parent libraries. Keep it an analysis
+# boundary here for the same reason as the transition and inbox owners above and
+# below: following its graph from this large runtime exceeds the bounded CI lint
+# worker while adding no uncovered file.
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/fm-merge-outcome-lib.sh"
 # shellcheck source=bin/fm-x-lib.sh
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-check-lib.sh
@@ -1230,28 +1241,23 @@ while :; do
       fi
       if [ -n "$out" ]; then
         reason="check: $c: $out"
-        if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ] \
-          && fm_pr_poll_merge_already_notified "$STATE" "$id" \
-            "$provider" "$host" "$path" "$number"; then
-          # This exact merge was already surfaced to main once for this task
-          # (fm_pr_poll_merge_mark_notified below records that at first
-          # notification, and it survives a later re-registered poll for the
-          # same, already-merged task - bin/fm-pr-lib.sh owns why). A repeat
-          # identical detection is a no-op, not captain-facing progress
-          # (AGENTS.md section 8): absorb it rather than enqueue another
-          # main-blocking row, but still retire the poll so it stops firing.
+        if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
+          merge_outcome_rc=0
+          fm_merge_outcome_report "$FM_HOME" "$STATE" "$id" "$url" poll \
+            || merge_outcome_rc=$?
+          if [ "$merge_outcome_rc" -ne 0 ]; then
+            triage_log "merge outcome for $id could not be recorded (rc=$merge_outcome_rc)"
+            exit 1
+          fi
           retire_merged_pr_poll "$id"
-          triage_log "absorbed duplicate merged PR poll result for $id"
           touch "$STATE/.last-check"
-          continue
+          if [ "$FM_MERGE_OUTCOME_ALREADY_RECORDED" = true ]; then
+            triage_log "absorbed duplicate merged PR poll result for $id"
+            continue
+          fi
+          wake "$reason"
         fi
         fm_wake_append check "$c" "$reason" || exit 1
-        if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
-          fm_pr_poll_merge_mark_notified "$STATE" "$id" \
-            "$provider" "$host" "$path" "$number" \
-            || triage_log "merge notification receipt could not be recorded for $id"
-          retire_merged_pr_poll "$id"
-        fi
         touch "$STATE/.last-check"
         wake "$reason"
       fi
