@@ -18,7 +18,8 @@ ShellCheck's memory cost is roughly linear in the total number of lines it analy
 - Date: 2026-08-24.
 - Host: Linux x86_64, 8 CPU, 22 GiB RAM, other fleet work running concurrently (load average 9-19), so wall times are upper bounds.
 - ShellCheck 0.11.0, the version `bin/fm-lint.sh --required-version` pins.
-- Every measurement ran under `ulimit -v` with a wall-clock timeout. No unbounded run was repeated.
+- Every measurement ran under `ulimit -v` with a wall-clock timeout.
+- No unbounded run was repeated.
 
 ## Not a version regression
 
@@ -58,7 +59,8 @@ wall_seconds          1020
 result_exit           0
 ```
 
-Serial, on the loaded host above. Peak resident memory across the whole run is 3144092 KiB, well inside the 6 GiB ceiling.
+Serial, on the loaded host above.
+Peak resident memory across the whole run is 3144092 KiB, well inside the 6 GiB ceiling.
 
 ## Findings parity
 
