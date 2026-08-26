@@ -1,0 +1,34 @@
+== STEP B: AFTER - each heavy root linted under the default 6 GiB ceiling ==
+date: 2026-08-26T03:42:04Z  commit: 25be9f0  shellcheck: 0.11.0
+
+--- cmd: FM_LINT_JOBS=1 /usr/bin/time -v bin/fm-lint.sh bin/fm-teardown.sh ---
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+	Command being timed: "bin/fm-lint.sh bin/fm-teardown.sh"
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:38.20
+	Maximum resident set size (kbytes): 3118292
+	Exit status: 0
+EXIT CODE for bin/fm-teardown.sh: 0
+
+--- cmd: FM_LINT_JOBS=1 /usr/bin/time -v bin/fm-lint.sh bin/fm-send.sh ---
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+	Command being timed: "bin/fm-lint.sh bin/fm-send.sh"
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:21.02
+	Maximum resident set size (kbytes): 1537472
+	Exit status: 0
+EXIT CODE for bin/fm-send.sh: 0
+
+--- cmd: FM_LINT_JOBS=1 /usr/bin/time -v bin/fm-lint.sh bin/fm-spawn.sh ---
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+	Command being timed: "bin/fm-lint.sh bin/fm-spawn.sh"
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:20.72
+	Maximum resident set size (kbytes): 2514336
+	Exit status: 0
+EXIT CODE for bin/fm-spawn.sh: 0
+
+--- cmd: FM_LINT_JOBS=1 /usr/bin/time -v bin/fm-lint.sh tests/fm-pending-reply.test.sh ---
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+	Command being timed: "bin/fm-lint.sh tests/fm-pending-reply.test.sh"
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:50.97
+	Maximum resident set size (kbytes): 3331108
+	Exit status: 0
+EXIT CODE for tests/fm-pending-reply.test.sh: 0

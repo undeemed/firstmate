@@ -1,0 +1,18 @@
+== STEP C: lint still catches a real finding in each named file ==
+date: 2026-08-26T03:47:52Z  commit: 25be9f0
+seed: insert '_fm_lint_seed_probe= true' (SC1007) at line 2 of each file
+
+--- cmd: FM_LINT_JOBS=1 bin/fm-lint.sh bin/fm-teardown.sh bin/fm-send.sh bin/fm-spawn.sh ---
+EXIT CODE: 1
+findings, with the file each one names:
+In bin/fm-spawn.sh line 2:
+                    ^-- SC1007 (warning): Remove space after = if trying to assign a value (for empty string, use var='' ... ).
+  https://www.shellcheck.net/wiki/SC1007 -- Remove space after = if trying to...
+In bin/fm-teardown.sh line 2:
+                    ^-- SC1007 (warning): Remove space after = if trying to assign a value (for empty string, use var='' ... ).
+In bin/fm-send.sh line 2:
+                    ^-- SC1007 (warning): Remove space after = if trying to assign a value (for empty string, use var='' ... ).
+  https://www.shellcheck.net/wiki/SC1007 -- Remove space after = if trying to...
+
+revert: git checkout 25be9f0a -- bin/fm-teardown.sh bin/fm-send.sh bin/fm-spawn.sh
+revert verified: files identical to target commit

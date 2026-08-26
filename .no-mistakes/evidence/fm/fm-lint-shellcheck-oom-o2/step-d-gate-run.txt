@@ -1,0 +1,36 @@
+== STEP D: the real changed-file gate run on this branch (no args) ==
+date: 2026-08-26T03:44:45Z  commit: 25be9f0
+file set:
+bin/fm-lint.sh
+bin/fm-pending-reply-lib.sh
+bin/fm-teardown.sh
+tests/fm-lint.test.sh
+
+--- cmd: /usr/bin/time -v bin/fm-lint.sh ---
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint-workflows.sh: actionlint 1.7.12 (pinned 1.7.12)
+fm-lint-workflows.sh: 3 workflow files valid
+	Command being timed: "bin/fm-lint.sh"
+	User time (seconds): 48.06
+	System time (seconds): 3.23
+	Percent of CPU this job got: 132%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:38.86
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3117928
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 6
+	Minor (reclaiming a frame) page faults: 1031486
+	Voluntary context switches: 5016
+	Involuntary context switches: 6961
+	Swaps: 0
+	File system inputs: 12080
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+EXIT CODE: 0
