@@ -13,7 +13,7 @@
 # daemon keeps its escalation-digest seen-markers; the watcher keeps its .seen-*
 # signatures).
 #
-# There are three documented exceptions. The absorb classification
+# There are four documented exceptions. The absorb classification
 # (crew_absorb_class and its working/paused wrappers) is NOT a pure status-file
 # read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call,
 # to decide whether a crew that just stopped its turn or went stale is working,
@@ -25,7 +25,11 @@
 # stays bounded by new appends instead of re-reading each task's whole lifetime
 # log every time. crew_worktree_written_since reads the task's meta file and walks
 # a bounded slice of its worktree instead of a status file, so callers run it only
-# at the moment they would otherwise escalate.
+# at the moment they would otherwise escalate. commit_key_syntax_markers also
+# writes: after the drain has printed the stated-key syntax warnings it persists
+# each task's warned-through byte marker (state/.<task>.key-syntax-cursor), and a
+# marker that cannot be written simply re-warns next drain (see "Fleet-wide
+# stated-key syntax warnings" below).
 
 # Directory of this library, used to locate the sibling fm-crew-state.sh reader.
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a
@@ -274,6 +278,72 @@ _fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
   _fm_decision_slug_ok "$k" || return 1
   printf '%s' "$k"
 }
+# --- stated-key syntax guard ------------------------------------------------
+#
+# _fm_decision_key above reads a stated key from exactly two positions. A worker
+# that writes the token anywhere else states a key nothing will ever use: the
+# line folds under the shared "default" bucket (or, for a slug the charset
+# rejects, is skipped by the fold entirely) while its note still SHOWS the
+# literal "[key=x]" token, so the listing reads as correctly keyed and only
+# fm-send's --resolve-key refusal reveals the loss - after the answer has been
+# composed. Two such decisions on one task then share "default", where answering
+# either closes both.
+#
+# The guard warns rather than rejects, and reads rather than writes, because
+# workers append status with a plain `echo` (bin/fm-brief.sh rule 4): there is no
+# write chokepoint to refuse at, and the fold deliberately HONORS the note-head
+# position rather than losing a stated key (issue #2109), so refusing every
+# after-the-colon token would discard decisions the fold can still place. The
+# drain surfaces one warning per newly appended line instead
+# (bin/fm-wake-drain.sh), which is the first place a supervisor reads the append.
+#
+# Reasons, all reported against the same line:
+#   unplaced-key  a "[key=...]" token sits past the note head, so the fold read
+#                 this line under "default"
+#   invalid-slug  a token sits in a stated position but its slug fails the
+#                 charset, so the fold skipped the line outright
+#   late-key      the token sits at the note head: honored, but the documented
+#                 position is before the colon
+# Only the verbs that open or close a decision are checked, so a `note:` line
+# quoting a key stays quiet.
+_fm_key_syntax_verbs() {  # -> space-separated verbs whose keys matter here
+  printf 'needs-decision blocked %s %s' \
+    "${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}" \
+    "${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}"
+}
+# Print the reason a decision-opening or decision-closing status line states a
+# key the fold cannot use as written. Returns 1 (printing nothing) for a line
+# with no token, a non-decision verb, or the documented before-colon position.
+status_line_key_syntax_problem() {  # <status-line> -> reason
+  local line=$1 verb want slug matched=0
+  case "$line" in
+    *'[key='*) ;;
+    *) return 1 ;;
+  esac
+  verb=$(status_line_verb "$line")
+  for want in $(_fm_key_syntax_verbs); do
+    [ "$verb" = "$want" ] && { matched=1; break; }
+  done
+  [ "$matched" -eq 1 ] || return 1
+  if _fm_key_before_colon "$line"; then
+    slug=${line%%:*}
+    slug=${slug#*\[key=}
+    slug=${slug%%\]*}
+    _fm_decision_slug_ok "$slug" && return 1
+    printf 'invalid-slug'
+    return 0
+  fi
+  if slug=$(_fm_key_at_note_head "$line"); then
+    if _fm_decision_slug_ok "$slug"; then
+      printf 'late-key'
+    else
+      printf 'invalid-slug'
+    fi
+    return 0
+  fi
+  printf 'unplaced-key'
+}
+
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
 _fm_decision_drop() {  # <open-set> <key>
@@ -826,7 +896,8 @@ EOF
     fi
   fi
   if [ "$rc" -eq 0 ]; then
-    rm -f -- "$state/$task.status" "$state/.$task.open-decisions-cursor" || rc=1
+    rm -f -- "$state/$task.status" "$state/.$task.open-decisions-cursor" \
+      "$state/.$task.key-syntax-cursor" || rc=1
   fi
   fm_lock_release "$lock" || rc=1
   return "$rc"
@@ -1097,6 +1168,101 @@ EOF
   done <<EOF
 $snapshot
 EOF
+}
+
+# Fleet-wide stated-key syntax warnings: one
+# "<task>\t<line-end>\t<reason>\t<status-line>" row per not-yet-warned line
+# whose stated key the fold cannot use as written
+# (status_line_key_syntax_problem above), where <line-end> is the byte offset
+# just past that line in the status file. Bounded by a private per-task byte
+# marker rather than the presentation cursor, because that cursor deliberately
+# holds still while only routine lines are unread - a warning tied to it would
+# repeat every drain for as long as the decision stayed open. commit_key_syntax_
+# markers below advances the marker once the caller has printed the rows, and
+# the caller uses <line-end> to pull a task's marker back to its last shown row
+# when its byte cap omitted any, so a turn that dies before printing - or a row
+# the cap dropped - warns again next time. Prints nothing when every new line
+# places its key correctly, which is the common case.
+_fm_key_syntax_marker_path() {  # <status-file>
+  local dir base
+  dir=$(dirname "$1")
+  base=$(basename "$1")
+  printf '%s/.%s.key-syntax-cursor' "$dir" "${base%.status}"
+}
+# Byte offset already warned about for <status-file>. A missing marker, a
+# changed status identity (rotated or recreated file), malformed content, or an
+# offset past the current file end reads as 0, which re-warns rather than
+# silently skipping a bad line.
+_fm_key_syntax_offset() {  # <status-file> -> offset
+  local f=$1 marker ident recorded offset extra size
+  marker=$(_fm_key_syntax_marker_path "$f")
+  [ -f "$marker" ] && [ -r "$marker" ] && [ ! -L "$marker" ] || { printf '0'; return 0; }
+  ident=$(_fm_open_decisions_file_ident "$f") || { printf '0'; return 0; }
+  IFS=$(printf '\t') read -r recorded offset extra < "$marker" || { printf '0'; return 0; }
+  [ -z "$extra" ] || { printf '0'; return 0; }
+  [ "$recorded" = "$ident" ] || { printf '0'; return 0; }
+  case "$offset" in ''|*[!0-9]*) printf '0'; return 0 ;; esac
+  size=$(_fm_status_file_size "$f") || { printf '0'; return 0; }
+  size=${size//[[:space:]]/}
+  case "$size" in ''|*[!0-9]*) printf '0'; return 0 ;; esac
+  [ "$offset" -le "$size" ] || { printf '0'; return 0; }
+  printf '%s' "$offset"
+}
+scan_key_syntax_warnings_snapshot() {  # <state> <snapshot>
+  local state=$1 snapshot=$2 task endpoint ident f start size chunk line reason rc=0 pos lineend
+  local LC_ALL=C
+  while IFS=$(printf '\t') read -r task endpoint ident; do
+    [ -n "$task" ] || continue
+    f="$state/$task.status"
+    [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || continue
+    case "$endpoint" in ''|*[!0-9]*) return 1 ;; esac
+    size=$(_fm_status_file_size "$f") || return 1
+    size=${size//[[:space:]]/}
+    case "$size" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$endpoint" -le "$size" ] || return 1
+    start=$(_fm_key_syntax_offset "$f")
+    [ "$start" -lt "$endpoint" ] || continue
+    chunk=$(_fm_status_read_span "$f" "$start" "$((endpoint - start))") || return 1
+    pos=$start
+    while IFS= read -r line || [ -n "$line" ]; do
+      lineend=$((pos + ${#line} + 1))
+      [ "$lineend" -le "$endpoint" ] || lineend=$endpoint
+      pos=$lineend
+      [ -n "$line" ] || continue
+      reason=$(status_line_key_syntax_problem "$line") || continue
+      printf '%s\t%s\t%s\t%s\n' "$task" "$lineend" "$reason" "$line" || { rc=1; break; }
+    done <<EOF
+$chunk
+EOF
+    [ "$rc" -eq 0 ] || return 1
+  done <<EOF
+$snapshot
+EOF
+  return 0
+}
+
+# Record that every line up to each task's captured endpoint has been warned
+# about. Called only after the rows are printed, with a snapshot the caller has
+# already pulled back to the last shown row for any task whose rows its byte
+# cap omitted. A marker that cannot be written is not fatal: the next drain
+# re-warns, which is the safe direction.
+commit_key_syntax_markers() {  # <state> <snapshot>
+  local state=$1 snapshot=$2 task endpoint ident f marker tmp
+  while IFS=$(printf '\t') read -r task endpoint ident; do
+    [ -n "$task" ] || continue
+    case "$endpoint" in ''|*[!0-9]*) continue ;; esac
+    [ -n "$ident" ] || continue
+    f="$state/$task.status"
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [ "$ident" = "$(_fm_open_decisions_file_ident "$f")" ] || continue
+    marker=$(_fm_key_syntax_marker_path "$f")
+    tmp="$marker.tmp.$$"
+    printf '%s\t%s\n' "$ident" "$endpoint" > "$tmp" 2>/dev/null || { rm -f "$tmp"; continue; }
+    mv -f "$tmp" "$marker" 2>/dev/null || rm -f "$tmp"
+  done <<EOF
+$snapshot
+EOF
+  return 0
 }
 
 # Fold material routed-work phases in the same keyed event stream.
