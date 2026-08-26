@@ -867,6 +867,9 @@ test_ship_modes_carry_the_lean_gate_and_scout_charter_do_not() {
     # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
     assert_grep 'run `ponytail-review <base>` against the branch base you started from' "$brief" \
       "$mode: ship brief lost the runnable ponytail lean gate"
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    assert_grep 'bare `ponytail-review` reviews uncommitted work' "$brief" \
+      "$mode: ship brief lost the bare uncommitted-work form of the wrapper contract"
     assert_no_grep '/ponytail-review' "$brief" \
       "$mode: ship brief invokes the Claude-only slash command a non-Claude crewmate cannot run"
     assert_grep 'exit 1 means the gate COULD NOT RUN' "$brief" \
