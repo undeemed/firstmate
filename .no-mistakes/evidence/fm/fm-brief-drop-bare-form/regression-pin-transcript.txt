@@ -1,0 +1,10 @@
+# Regression pin: new tests/fm-brief.test.sh run against BASE f804329's bin/fm-brief.sh
+# (base tree extracted via git archive, new test file overlaid). Expected: fail.
+
+ok - fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe
+ok - fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar
+not ok - no-mistakes: ship brief teaches the bare form, which reviews an empty diff on committed work and answers exit 1
+exit code: 1
+
+# Same test file against TARGET 1be8b8b (this worktree): full file passes, exit 0, including:
+ok - fm-brief.sh: every ship mode carries the lean gate; scout and charter do not

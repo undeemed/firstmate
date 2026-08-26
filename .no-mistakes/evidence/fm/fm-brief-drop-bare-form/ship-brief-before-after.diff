@@ -1,0 +1,36 @@
+# diff of the generated worker brief (brief.md), base f804329 -> target 1be8b8b, per ship mode.
+# Environment-embedded paths (generating repo root, FM_HOME) normalized to <ROOT>/<FM_HOME>
+# so the diff shows only real content changes in the delivered artifact.
+
+== mode: no-mistakes ==
+@@ -98,7 +98,7 @@
+ # Definition of done
+ Delivery contract: mode=no-mistakes
+ The task is complete only when committed on your branch.
+-Before the PR is opened, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; bare `ponytail-review` reviews uncommitted work, and `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
++Before the PR is opened, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+ Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+ Carry that verdict into the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
+ When you believe it is complete, append `done: {summary}` to the status file and stop.
+
+== mode: direct-PR ==
+@@ -98,7 +98,7 @@
+ Delivery contract: mode=direct-PR
+ This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+ The task is complete only when committed on your branch.
+-Before you open the PR, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; bare `ponytail-review` reviews uncommitted work, and `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
++Before you open the PR, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+ Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+ Report that verdict in the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
+ When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and stop.
+
+== mode: local-only ==
+@@ -99,7 +99,7 @@
+ This task ships **local-only**: no remote, no PR, no pipeline.
+ The task is complete only when committed on your branch `fm/ev-local-only`. Do NOT push, do NOT open a PR, do NOT merge.
+ Keep your branch a clean fast-forward onto the current default branch - if `main` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+-Before you hand the branch off, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; bare `ponytail-review` reviews uncommitted work, and `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
++Before you hand the branch off, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+ Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+ Record that verdict in your handoff, and name any finding you deliberately did not cut with the reason it earns its place.
+ When it is implemented and committed, append `done: ready in branch fm/ev-local-only` to the status file and stop.

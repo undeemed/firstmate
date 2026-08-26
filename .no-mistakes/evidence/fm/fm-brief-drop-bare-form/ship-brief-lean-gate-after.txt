@@ -1,0 +1,32 @@
+# Generated ship-brief lean-gate paragraph - target commit 1be8b8b (branch fm/fm-brief-drop-bare-form)
+# Command per mode: FM_HOME=<tmp> bin/fm-brief.sh <id> some-proj --mode <mode>
+
+== mode: no-mistakes  (brief.md as delivered to the worker) ==
+    101:Before the PR is opened, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+    102-Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+    103-Carry that verdict into the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
+    -- checks --
+    OK: bare `ponytail-review` form ABSENT
+    OK: taught form 1 present: ponytail-review <base>
+    OK: taught form 2 present: git diff <base>... | ponytail-review --stdin
+    OK: exit-code paragraph whole (exit 1 = COULD NOT RUN, report blocked:, never a pass)
+
+== mode: direct-PR  (brief.md as delivered to the worker) ==
+    101:Before you open the PR, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+    102-Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+    103-Report that verdict in the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
+    -- checks --
+    OK: bare `ponytail-review` form ABSENT
+    OK: taught form 1 present: ponytail-review <base>
+    OK: taught form 2 present: git diff <base>... | ponytail-review --stdin
+    OK: exit-code paragraph whole (exit 1 = COULD NOT RUN, report blocked:, never a pass)
+
+== mode: local-only  (brief.md as delivered to the worker) ==
+    102:Before you hand the branch off, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+    103-Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+    104-Record that verdict in your handoff, and name any finding you deliberately did not cut with the reason it earns its place.
+    -- checks --
+    OK: bare `ponytail-review` form ABSENT
+    OK: taught form 1 present: ponytail-review <base>
+    OK: taught form 2 present: git diff <base>... | ponytail-review --stdin
+    OK: exit-code paragraph whole (exit 1 = COULD NOT RUN, report blocked:, never a pass)
