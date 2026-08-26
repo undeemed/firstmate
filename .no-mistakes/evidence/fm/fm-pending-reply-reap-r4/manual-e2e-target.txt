@@ -1,0 +1,86 @@
+
+== [TARGET] T=6000: steer delivered, both turns complete with no correlated reply, escalates
+corr=a845c2124fc44be0 phase=escalated
+open pending-reply blockers in the fold: 1
+
+== [TARGET] T=6010 (inside 21600s ack window): tick -> must stay escalated, still a blocker
+phase=escalated  open blockers: 1
+
+== [TARGET] T=27610 (window elapsed): tick
+phase=closed_unacknowledged
+closed_reason=escalation-window-elapsed
+resolved_epoch='' resolved_via='' (must both be empty: never a false resolved)
+open pending-reply blockers in the fold: 0
+status log close lines:
+    1:blocked [key=pending-reply-a845c2124fc44be0]: pending-reply-missed: task=hibit pending-reply-id=a845c2124fc44be0 request=informational steer, nothing asked
+    2:resolved [key=pending-reply-a845c2124fc44be0]: pending-reply-unacknowledged: task=hibit pending-reply-id=a845c2124fc44be0 reason=escalation-window-elapsed
+--- record /tmp/fm-pr-manual-e2e/target-home/state/pending-replies/a845c2124fc44be0 ---
+    schema=fm-pending-reply.v1
+    corr_id=a845c2124fc44be0
+    task_id=hibit
+    parent_home=/tmp/fm-pr-manual-e2e/target-home
+    parent_status=/tmp/fm-pr-manual-e2e/target-home/state/hibit.status
+    request_summary=informational steer, nothing asked
+    created_epoch=6000
+    turn_seen_busy=0
+    resolved_epoch=
+    resolved_via=
+    wrong_home_hits=0
+    wrong_home_sightings=
+    wrong_home_scan_signature=
+    grace_secs=0
+    delivered_epoch=6000
+    request_turn_completed_epoch=6000
+    recovery_sender_pid=4029191
+    recovery_sender_identity=Tue Aug 25 08:17:08 2026 bash /tmp/fm-pr-manual-e2e/scenario.sh /home/ubuntu/.no-mistakes/worktrees/5d83c95b53c3/01M0VTDAGHEW530A2Y37M50AK2 /tmp/fm-pr-manual-e2e/target-home TARGET
+    recovery_attempted_epoch=6000
+    recovery_delivery_outcome=confirmed
+    recovery_sent_epoch=6000
+    recovery_turn_seen_busy=0
+    recovery_turn_completed_epoch=6000
+    escalated_epoch=6000
+    parent_status_scan_signature=33:6256088:156:1787645829:1787645829
+    closed_reason=escalation-window-elapsed
+    unacknowledged_epoch=27610
+    escalation_closed_epoch=27610
+    phase=closed_unacknowledged
+
+== [TARGET] T=632500: a fresh request is still genuinely awaiting its reply
+open_corr=d391e890f76dfbc6 phase=awaiting_report
+
+== [TARGET] T=632500 (7-day retention elapsed for the settled record): tick again
+records still in state/pending-replies/:
+    d391e890f76dfbc6
+archived in state/pending-replies-archive/:
+    a845c2124fc44be0
+--- record /tmp/fm-pr-manual-e2e/target-home/state/pending-replies-archive/a845c2124fc44be0 ---
+    schema=fm-pending-reply.v1
+    corr_id=a845c2124fc44be0
+    task_id=hibit
+    parent_home=/tmp/fm-pr-manual-e2e/target-home
+    parent_status=/tmp/fm-pr-manual-e2e/target-home/state/hibit.status
+    request_summary=informational steer, nothing asked
+    created_epoch=6000
+    turn_seen_busy=0
+    resolved_epoch=
+    resolved_via=
+    wrong_home_hits=0
+    wrong_home_sightings=
+    wrong_home_scan_signature=
+    grace_secs=0
+    delivered_epoch=6000
+    request_turn_completed_epoch=6000
+    recovery_sender_pid=4029191
+    recovery_sender_identity=Tue Aug 25 08:17:08 2026 bash /tmp/fm-pr-manual-e2e/scenario.sh /home/ubuntu/.no-mistakes/worktrees/5d83c95b53c3/01M0VTDAGHEW530A2Y37M50AK2 /tmp/fm-pr-manual-e2e/target-home TARGET
+    recovery_attempted_epoch=6000
+    recovery_delivery_outcome=confirmed
+    recovery_sent_epoch=6000
+    recovery_turn_seen_busy=0
+    recovery_turn_completed_epoch=6000
+    escalated_epoch=6000
+    parent_status_scan_signature=33:6256088:156:1787645829:1787645829
+    closed_reason=escalation-window-elapsed
+    unacknowledged_epoch=27610
+    escalation_closed_epoch=27610
+    phase=closed_unacknowledged
+open record d391e890f76dfbc6 SURVIVED settling and reaping (correct)
