@@ -1,0 +1,53 @@
+
+== [BASE-49c760c] T=6000: steer delivered, both turns complete with no correlated reply, escalates
+corr=d25164a7068fff52 phase=escalated
+open pending-reply blockers in the fold: 1
+
+== [BASE-49c760c] T=6010 (inside 21600s ack window): tick -> must stay escalated, still a blocker
+phase=escalated  open blockers: 1
+
+== [BASE-49c760c] T=27610 (window elapsed): tick
+phase=escalated
+closed_reason=
+resolved_epoch='' resolved_via='' (must both be empty: never a false resolved)
+open pending-reply blockers in the fold: 1
+status log close lines:
+    1:blocked [key=pending-reply-d25164a7068fff52]: pending-reply-missed: task=hibit pending-reply-id=d25164a7068fff52 request=informational steer, nothing asked
+--- record /tmp/fm-pr-manual-e2e/base-home/state/pending-replies/d25164a7068fff52 ---
+    schema=fm-pending-reply.v1
+    corr_id=d25164a7068fff52
+    task_id=hibit
+    parent_home=/tmp/fm-pr-manual-e2e/base-home
+    parent_status=/tmp/fm-pr-manual-e2e/base-home/state/hibit.status
+    request_summary=informational steer, nothing asked
+    created_epoch=6000
+    turn_seen_busy=0
+    resolved_epoch=
+    resolved_via=
+    wrong_home_hits=0
+    wrong_home_sightings=
+    wrong_home_scan_signature=
+    grace_secs=0
+    delivered_epoch=6000
+    request_turn_completed_epoch=6000
+    recovery_sender_pid=4054882
+    recovery_sender_identity=Tue Aug 25 08:17:30 2026 bash /tmp/fm-pr-manual-e2e/scenario.sh /tmp/fm-pr-manual-e2e/base-repo /tmp/fm-pr-manual-e2e/base-home BASE-49c760c
+    recovery_attempted_epoch=6000
+    recovery_delivery_outcome=confirmed
+    recovery_sent_epoch=6000
+    recovery_turn_seen_busy=0
+    recovery_turn_completed_epoch=6000
+    escalated_epoch=6000
+    phase=escalated
+    parent_status_scan_signature=33:6256665:156:1787645852:1787645852
+
+== [BASE-49c760c] T=632500: a fresh request is still genuinely awaiting its reply
+open_corr=32062ae9ec135dd3 phase=awaiting_report
+
+== [BASE-49c760c] T=632500 (7-day retention elapsed for the settled record): tick again
+records still in state/pending-replies/:
+    32062ae9ec135dd3
+    d25164a7068fff52
+NO archive directory exists
+open record 32062ae9ec135dd3 SURVIVED settling and reaping (correct)
+note: fm_pending_reply_reap does not exist in this library
