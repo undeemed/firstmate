@@ -1,0 +1,33 @@
+== STEP A: BEFORE repro - base-commit source graph, NEW capped lint ==
+date: 2026-08-26T03:38:56Z  host shellcheck: 0.11.0
+cmd: git checkout 0981b6ec -- bin/fm-teardown.sh bin/fm-pending-reply-lib.sh
+cmd: FM_LINT_JOBS=1 /usr/bin/time -v bin/fm-lint.sh bin/fm-teardown.sh  (default 6 GiB ceiling)
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: ShellCheck exceeded the 6291456 KiB memory ceiling on bin/fm-teardown.sh; that root was NOT linted. Shrink its ShellCheck source graph (a repeated shellcheck source directive re-inlines that whole module graph) or raise FM_LINT_MEMORY_LIMIT_KIB deliberately.
+Command exited with non-zero status 2
+	Command being timed: "bin/fm-lint.sh bin/fm-teardown.sh"
+	User time (seconds): 114.78
+	System time (seconds): 7.15
+	Percent of CPU this job got: 75%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:40.65
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4202336
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 4
+	Minor (reclaiming a frame) page faults: 2171668
+	Voluntary context switches: 12478
+	Involuntary context switches: 31071
+	Swaps: 0
+	File system inputs: 17608
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 2
+EXIT CODE: 2
+cmd: git checkout 25be9f0a -- bin/fm-teardown.sh bin/fm-pending-reply-lib.sh (restore)
+restore verified: no diff vs target commit
