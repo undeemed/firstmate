@@ -69,11 +69,54 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
-# Each merge below is an outbound forge write, so each one is recorded to this
-# home's own audit log before it is attempted and refuses rather than act
-# unlogged. bin/fm-forge-audit-lib.sh owns that record and its format.
-# shellcheck source=bin/fm-forge-audit-lib.sh
-. "$SCRIPT_DIR/fm-forge-audit-lib.sh"
+# --- forge write audit ------------------------------------------------------
+# Many firstmate homes share one forge credential, and the forge reports the
+# same provenance for a plain token and for a human at the web UI, so an
+# outbound write is not attributable to a home after the fact. Each merge below
+# therefore appends one tab-separated line to this home's own
+# state/forge-write-audit.log BEFORE it is attempted, so a merge that crashes
+# mid-flight still leaves evidence it was tried, and refuses rather than act
+# unlogged. It supersedes the pipeline-only state/pr-merge-audit.log; a home
+# that has one keeps that older file untouched for its own history.
+#
+# Only identity this script constructed is recorded - the home, the task id, the
+# action, and the already-validated canonical URL - which is what structurally
+# keeps a token, a header value, or any other secret out of the log. Reads are
+# never recorded. When a second forge writer appears under bin/, lift these two
+# functions into a shared library rather than writing a second log.
+
+# One field value with the separators removed, so no value can forge a second
+# record out of an embedded tab or newline.
+forge_audit_scrub() { printf '%s' "${1-}" | tr -d '\t\n\r'; }
+
+# forge_audit <action> <task-id-or-dash> <target> [<extra-field> ...]
+# Returns non-zero, after naming the reason, when the record cannot be appended.
+forge_audit() {
+  local action=$1 task=$2 target=$3
+  shift 3
+  local log line extra
+  log="$STATE/forge-write-audit.log"
+
+  line=$(printf '%s\thome=%s\ttask=%s\taction=%s\ttarget=%s' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$(forge_audit_scrub "$FM_HOME")" \
+    "$(forge_audit_scrub "$task")" \
+    "$(forge_audit_scrub "$action")" \
+    "$(forge_audit_scrub "$target")")
+  for extra in "$@"; do
+    line=$(printf '%s\t%s' "$line" "$(forge_audit_scrub "$extra")")
+  done
+
+  mkdir -p "$STATE" 2>/dev/null
+  # The log states its own limit on creation, because a reader who takes it for
+  # a complete record of outbound writes would read its silence as proof that
+  # no write happened, which it is not.
+  [ -e "$log" ] || line='# forge writes made through firstmate bin/ tooling; a direct gh invocation or a browser action is NOT captured, so the absence of a line is not proof that no write occurred.'$'\n'$line
+  if ! printf '%s\n' "$line" >>"$log" 2>/dev/null; then
+    echo "error: the forge write audit log could not be appended: $log" >&2
+    return 1
+  fi
+}
 
 PIPELINE_HEAD=""
 
@@ -374,7 +417,7 @@ pipeline_merge_gate() {
   if [ "$DEFAULT_SQUASH" = yes ]; then
     squash_default_guard "$pull" || return 1
   fi
-  fm_forge_audit pr-merge - "$URL" class=pipeline "head=$head" || {
+  forge_audit pr-merge - "$URL" class=pipeline "head=$head" || {
     pipeline_refuse "the merge could not be recorded in the forge write audit log"
     return 1
   }
@@ -549,12 +592,12 @@ case "$PROVIDER" in
       squash_default_guard || exit 1
       merge_args=(--squash)
     fi
-    fm_forge_audit pr-merge "$ID" "$URL" || exit 1
+    forge_audit pr-merge "$ID" "$URL" || exit 1
     gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
     ;;
   gitlab)
     gitlab_verify_mergeable || exit 1
-    fm_forge_audit mr-merge "$ID" "$URL" "head=$FM_PR_MERGE_HEAD" || exit 1
+    forge_audit mr-merge "$ID" "$URL" "head=$FM_PR_MERGE_HEAD" || exit 1
     # --sha binds the merge to the head this run verified, so a push that lands
     # in between is refused by GitLab instead of merged unverified. --yes only
     # skips the interactive confirmation, which no supervised run can answer;
