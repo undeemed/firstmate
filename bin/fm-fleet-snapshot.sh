@@ -49,7 +49,8 @@
 #     current backlog rows). Does not invent live tasks; meta remains truth for
 #     workers. Bearings maps failures into omitted[] disclosure (and a Charted
 #     Next gate line) rather than silent empty Underway.
-#   secondmate_current: {records[],total,shown,truncated} - bounded current summaries
+#   secondmate_current: {registry,records[],total_registered,total,shown,truncated} -
+#     the bounded registry read plus bounded current summaries
 #     for registered secondmates, selected from validated structured state inside
 #     each home with explicit provenance, freshness, endpoint evidence, and unknown
 #     failure reasons. Parent status and bounded terminal evidence are historical,
