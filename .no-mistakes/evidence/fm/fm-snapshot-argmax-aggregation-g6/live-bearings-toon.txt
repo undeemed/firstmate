@@ -1,0 +1,84 @@
+schema: fm-bearings.v1
+home: Dev/firstmate
+generated: "2026-08-28T21:41:06Z"
+prs: "not_requested (run: /bearings include PRs)"
+in_flight[3]{id,kind,state,doing}:
+  fm-snapshot-argmax-aggregation-g6,ship,working,validating (running)
+  fm-stale-base-guard-s2,ship,working,validating (running)
+  fm-watch-absorb-active-pipeline-w4,ship,working,validating (running)
+secondmates[7]{id,state,doing,provenance,freshness,age_seconds,contradiction,reason}:
+  abstract-mate-x2,no_active_work,No active child work,structured-home,fresh,0,true,"-"
+  dorm-mate-d9,captain_decision,"Phase 9 - huddles, gated on the PR 9.0 Chime measurement spike; Triage four stale open PRs, three of them from the rejec…",structured-home,fresh,0,true,"-"
+  foodie-mate-f7,captain_decision,"Foodie health shortcut: PR 26 awaiting review and macOS/iPhone validation; Confirm which Cloudflare token was revoked, a…",structured-home,fresh,0,true,"-"
+  seer-mate-e3,captain_decision,Land the held web scaffold into web/ once the exports question is answered,structured-home,fresh,0,true,"-"
+  subliminal-mate-b8,unknown,"structured home state invalid: child current state unavailable: page-cache-ci-green",structured-home,fresh,0,false,"structured home state invalid: child current state unavailable: page-cache-ci-green"
+  swarm-mate-s6,unknown,"structured home state invalid: unstructured current backlog row",parent-event-fallback,historical-event,56932,false,"structured home state invalid: unstructured current backlog row"
+  tetanus-mate-t1,captain_decision,"Is the frozen .sentrux/baseline.json coupling reference still valid?; Phase 3 WASM host: scope it down, build as planned…",structured-home,fresh,0,false,"-"
+decisions_open[20]{id,key,verb,summary,owner}:
+  dorm-mate-d9-decision-dorm-gh-app-pem,dorm-mate-d9-decision-dorm-gh-app-pem,captain-hold,"dorm: GitHub App key MISMATCH (repo: dorm) (kind: captain) (since 2026-08-17) (hold: Capta…",(main)
+  dorm-mate-d9/dorm-ph9,dorm-ph9,captain-hold,"Phase 9 - huddles, gated on the PR 9.0 Chime measurement spike: captain presence plus real…",dorm-mate-d9
+  dorm-mate-d9/dorm-stale-pr-triage,dorm-stale-pr-triage,captain-hold,"Triage four stale open PRs, three of them from the rejected shell stack: only PR 169 remai…",dorm-mate-d9
+  foodie-mate-f7/foodie-health-shortcut-mime-validator,foodie-health-shortcut-mime-validator,captain-hold,"Foodie health shortcut: PR 26 awaiting review and macOS/iPhone validation: Parked on capta…",foodie-mate-f7
+  foodie-mate-f7/foodie-next-r3-decision-arm-ci-deploy-decision-stale-cloudflare-token,foodie-next-r3-decision-arm-ci-deploy-decision-stale-cloudflare-token,captain-hold,"Confirm which Cloudflare token was revoked, and retire the stale one in super.env: The Clo…",foodie-mate-f7
+  foodie-mate-f7/foodie-deploy-migration-gap,foodie-deploy-migration-gap,captain-hold,"Deploy pipeline ships code but never runs database migrations: Captain's call on posture: …",foodie-mate-f7
+  foodie-mate-f7/foodie-dd-hosted-callback,foodie-dd-hosted-callback,captain-hold,"Get a DoorDash client registered for a hosted callback so relinking needs no localhost: Bl…",foodie-mate-f7
+  seer-mate-e3/seer-web-app-land-w2,seer-web-app-land-w2,captain-hold,"Land the held web scaffold into web/ once the exports question is answered: Blocked on: do…",seer-mate-e3
+  subliminal-mate-b8/bun14-deploy-decision-windows-guest-bun-scope,bun14-deploy-decision-windows-guest-bun-scope,captain-hold,"Bun 1.4: include or defer the Automation Windows guest image: Guest Bun is a hash-pinned b…",subliminal-mate-b8
+  subliminal-mate-b8/bun14-deploy-decision-regional-lane-drift,bun14-deploy-decision-regional-lane-drift,captain-hold,"Bun 1.4: accept regional lane version drift or schedule an all-lane rollout: Merging a Bun…",subliminal-mate-b8
+  subliminal-mate-b8/bun14-surface-decision-test-isolation-prepass,bun14-surface-decision-test-isolation-prepass,captain-hold,"Bun 1.4: land test --isolate pre-pass on 1.3.14 before the version bump?: Probe showed Bun…",subliminal-mate-b8
+  subliminal-mate-b8/bun14-deploy-decision-railpack-config-var,bun14-deploy-decision-railpack-config-var,captain-hold,"Dashboard Bun pin depends on an out-of-repo Railway variable: The customer dashboard's Bun…",subliminal-mate-b8
+  subliminal-mate-b8/bun14-deploy-decision-client-doc-drift,bun14-deploy-decision-client-doc-drift,captain-hold,"Two documentation drifts found in the client repo: docs/operations/ci-cd.md lists a workfl…",subliminal-mate-b8
+  subliminal-mate-b8/bun14-surface-decision-sharp-napi-silent-degrade,bun14-surface-decision-sharp-napi-silent-degrade,captain-hold,"sharp is lazily imported, so a NAPI 147 mismatch degrades silently: process.versions.modul…",subliminal-mate-b8
+  subliminal-mate-b8/slack-handoff-decision-default,slack-handoff-decision-default,captain-hold,"Slack handoff retrieval blocked: Chrome relay extension not connected: The omp browser rel…",subliminal-mate-b8
+  subliminal-mate-b8/v3rev-workflow-decision-proposal-gating,v3rev-workflow-decision-proposal-gating,captain-hold,"Gate proposal-origin workflow definitions before customers see them?: Incremental coalesce…",subliminal-mate-b8
+  subliminal-mate-b8/v3rev-workflow-decision-partial-catalogue-switch,v3rev-workflow-decision-partial-catalogue-switch,captain-hold,"Should the customer workflows page flip on the first definition, or wait for coverage?: Th…",subliminal-mate-b8
+  subliminal-mate-b8/img-pipeline-structure-decision-speed-levers,img-pipeline-structure-decision-speed-levers,captain-hold,"Windows paired-image build: which iteration-speed levers to authorise: Which paired-image …",subliminal-mate-b8
+  subliminal-mate-b8/img-certify-scan-loop-decision-nested-layer-topology,img-certify-scan-loop-decision-nested-layer-topology,captain-hold,"Windows image: split the nested VHDX out of the captured AMI, or keep paying full certific…",subliminal-mate-b8
+  subliminal-mate-b8/img-windows-internals-decision-builder-av-exclusion,img-windows-internals-decision-builder-av-exclusion,captain-hold,"Windows image builder: exclude DISM from Defender real-time scanning, or keep it on?: Scou…",subliminal-mate-b8
+landed[6]{id,what,artifact,owner}:
+  fm-forge-write-audit-log-a3,"firstmate-repo: outbound forge writes are not attributable to a home","https://github.com/undeemed/firstmate/pull/48",(main)
+  abs-add-manual-dispatch-trigger-to-the-deplo-86,Add manual dispatch trigger to the deploy workflow,"https://github.com/reflex-inc/abstract/pull/116",abstract-mate-x2
+  dorm-agent-removal,Nothing that joins an organization can ever leave it - no removal for …,"https://github.com/42nights/dorm/pull/242",dorm-mate-d9
+  foodie-dd-relink-ux-r4,Show expired DoorDash links truthfully and relink from a button,"https://github.com/undeemed/foodie/pull/38",foodie-mate-f7
+  seer-web-app-w1,"Web app: scaffold the TanStack/Hono/tRPC stack under web/","https://github.com/undeemed/seer/pull/39",seer-mate-e3
+  wf-scores,Where automatability and confidence numbers come from,data/wf-scores/report.md,subliminal-mate-b8
+gates[20]{id,title,blocked_by,reason,owner}:
+  fleet-cutover-c7,"phases 2-4: drain laptop fleet, snapshot, final sync, activa…","fork-herdr-docs-h8,upstream-sync-u5,fleet-remote-build-b2","-",(main)
+  fm-brief-status-honesty-s7,"firstmate-repo: brief templates must forbid intention-as-com…","-","-",(main)
+  fm-teardown-cotenant-t3,"firstmate-repo: teardown reaps processes belonging to a co-t…","-","-",(main)
+  fm-retire-purge-precision-r9,"firstmate-repo: retirement purge is too coarse on batched si…","-","-",(main)
+  fm-merge-local-branch-naming-b6,"firstmate-repo: fm-merge-local.sh assumes the branch is alwa…","-","-",(main)
+  fleet-clone-drift-preserve-d4,Preserve and reconcile drifted project clones,"-","-",(main)
+  tetanus-ladder-squash-accepted-a8,"tetanus: ladder ancestry loss accepted by captain, remote le…","-","-",(main)
+  fm-supervisor-quiet-with-live-children-q5,"firstmate-repo: a supervisor can go quiet while its own work…","-","-",(main)
+  fm-teardown-reap-build-cache-c4,"firstmate-repo: teardown must reap the task's build cache, n…","-","-",(main)
+  fm-nomistakes-pr-body-contract-b1,"firstmate-repo: no-mistakes composes the PR body, so brief i…","-","-",(main)
+  aa-demo-deploy-time-machine-t8,"AA-Demo: deploy the demo at time-machine.vercel.app","-","-",(main)
+  fm-lavish-allowlist-respawn-l5,"firstmate-repo: lavish server keeps respawning with a stale …","-","-",(main)
+  dorm-neon-import,Import the stranded 2026-08-11..08-19 Neon data into RDS aft…,"dorm-staging-neon-drain,dorm-prod-image-lag","until 2026-09-01: Neon free-plan compute…",dorm-mate-d9
+  foodie-super-env-token-swap,Verify the captain's replacement Cloudflare token once it la…,foodie-next-r3-decision-arm-ci-deploy-decision-stale-cloudflare-token,"-",foodie-mate-f7
+  seer-app-register-b6,"Ops: register the real Seer GitHub App, install fleet-wide, …","-",App registered id 4716716 and installed …,seer-mate-e3
+  seer-audit-u6,Append-only audit log for policy edits and gate overrides,"-","-",seer-mate-e3
+  seer-airgap-g7,Air-gap offline bundle with zero-egress conformance test,seer-audit-u6,"-",seer-mate-e3
+  seer-ca-bundle-flake-f2,Fix 1-in-15 flake in app/tests/ca_bundle.rs (socket dropped …,"-","-",seer-mate-e3
+  seer-parity-rebar-poststack,Re-take the parity bar under whatever engine version main ca…,"-","-",seer-mate-e3
+  seer-golden-fixtures-unread,Golden fixtures exist that no test reads; they went stale un…,"-","-",seer-mate-e3
+reports: []
+recorded_prs: []
+unhealthy_endpoints[1]{id,backend,target,exists,agent}:
+  subliminal-mate-b8/page-cache-ci-green,secondmate-home,"default:wDK:p2",false,not_checked
+omitted[14]{surface,reveal}:
+  backlog item bodies,"--fields bodies"
+  task paths,"--fields paths"
+  watch/steer actions,"--fields actions"
+  healthy endpoint detail,"--fields endpoints"
+  full scout-report inventory,"--all-reports"
+  superseded or prose-deferred queued items,"--all-queued"
+  landed showing 6 of 39 (incl. 5 secondmate home(s)),"--all-landed"
+  landed per-home capped at 6 for 6 home(s),"--all-landed"
+  "secondmate home(s) with unreadable backlog: 1",inspect the listed secondmate home backlogs
+  secondmate parent activity evidence truncated for 3 record(s),"raise FM_SNAPSHOT_PARENT_ACTIVITY_LINES, FM_SNAPSHOT_PARENT_ACTIVITY_BYTES, or FM_SNAPSHOT_PARENT_ACTIVITIES"
+  decisions_open showing 20 of 33,"--all-decisions"
+  "captain holds marked deferred or superseded: 1","--all-decisions"
+  gates showing 20 of 34,"--all-queued"
+  live PR discovery + checks,"--include-prs"
