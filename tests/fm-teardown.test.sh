@@ -345,6 +345,17 @@ SH
 # present, and succeeds once it is gone. This drives the lock through
 # fm-teardown.sh's own retry-then-stale-cleanup logic (teardown_treehouse_return
 # in bin/fm-teardown.sh) rather than hand-simulating that logic in the test.
+# A treehouse fake that records any return, so a test can assert the checkout
+# was never returned. Args: case_dir
+add_logging_treehouse() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return\n' >> "$case_dir/treehouse.log"
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
 add_lock_aware_treehouse() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
@@ -2143,11 +2154,7 @@ test_parked_own_run_refuses_when_abort_is_unconfirmed() {
   pid=$!
   disown
 
-  cat > "$case_dir/fakebin/treehouse" <<EOF
-#!/usr/bin/env bash
-printf 'return\n' >> "$case_dir/treehouse.log"
-EOF
-  chmod +x "$case_dir/fakebin/treehouse"
+  add_logging_treehouse "$case_dir"
 
   rc=0
   FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
@@ -2209,6 +2216,115 @@ test_own_autonomous_run_is_left_alone() {
   assert_not_contains "$(cat "$case_dir/stderr")" "aborting" \
     "autonomous-run-left-alone: teardown reported aborting an autonomous run"
   pass "a task-owned autonomous running step is left alone rather than aborted"
+}
+
+# Record a SECOND task in the same home holding the SAME checkout - the
+# co-tenancy fm-worktree-collision-c5 reproduced end to end, where a returned
+# pool slot was handed to a new worker while the first worker was still live.
+add_cotenant_task() {  # <case-dir> <cotenant-id>
+  local case_dir=$1 other=$2
+  mkdir -p "$case_dir/tasktmp-$other"
+  fm_write_meta "$case_dir/state/$other.meta" \
+    "window=firstmate:fm-$other" \
+    "endpoint_task_id=$other" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "tasktmp=$case_dir/tasktmp-$other"
+}
+
+# Start a disowned process whose cwd is the shared worktree, carrying (or
+# deliberately lacking) the per-task scratch root a real worker's process tree
+# inherits from its pane. Sets STARTED_PID rather than echoing it, because a
+# command substitution would not outlive its own subshell.
+# Args: case_dir <tasktmp-root|->
+start_worktree_process() {
+  local case_dir=$1 root=$2
+  if [ "$root" = - ]; then
+    ( cd "$case_dir/wt" && exec env -u TMPDIR -u GOTMPDIR sleep 300 ) &
+  else
+    ( cd "$case_dir/wt" && exec env TMPDIR="$root/tmp" sleep 300 ) &
+  fi
+  STARTED_PID=$!
+  disown
+  sleep 0.3
+  kill -0 "$STARTED_PID" 2>/dev/null || fail "setup process in $case_dir/wt did not start"
+}
+
+test_cotenant_process_survives_teardown() {
+  local case_dir rc own_pid other_pid branch survived=0
+  case_dir=$(make_case cotenant-process-survives)
+  write_meta "$case_dir" no-mistakes ship
+  printf 'tasktmp=%s\n' "$case_dir/tasktmp" >> "$case_dir/state/task-x1.meta"
+  mkdir -p "$case_dir/tasktmp"
+  add_cotenant_task "$case_dir" task-y2
+  land_shippable_commit "$case_dir"
+
+  start_worktree_process "$case_dir" "$case_dir/tasktmp"
+  own_pid=$STARTED_PID
+  start_worktree_process "$case_dir" "$case_dir/tasktmp-task-y2"
+  other_pid=$STARTED_PID
+
+  add_logging_treehouse "$case_dir"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  kill -0 "$other_pid" 2>/dev/null || survived=1
+  kill -0 "$own_pid" 2>/dev/null && survived=2
+  kill -KILL "$own_pid" "$other_pid" 2>/dev/null || true
+
+  expect_code 0 "$rc" "cotenant-process-survives: teardown should still complete"
+  [ "$survived" != 1 ] || fail "cotenant-process-survives: the co-tenant's live process was reaped by another task's teardown"
+  [ "$survived" != 2 ] || fail "cotenant-process-survives: this task's own process was not reaped"
+  assert_absent "$case_dir/treehouse.log" \
+    "cotenant-process-survives: teardown returned a checkout another task still records"
+  branch=$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)
+  [ "$branch" = fm/task-x1 ] || fail "cotenant-process-survives: teardown reset the shared checkout's branch to $branch"
+  assert_grep "is also recorded by task(s) task-y2" "$case_dir/stderr" \
+    "cotenant-process-survives: teardown did not report the shared checkout"
+  assert_grep "reaping leaked worktree process" "$case_dir/stderr" \
+    "cotenant-process-survives: teardown did not report reaping its own process"
+  assert_absent "$case_dir/state/task-x1.meta" \
+    "cotenant-process-survives: teardown did not complete its own task cleanup"
+  assert_present "$case_dir/state/task-y2.meta" \
+    "cotenant-process-survives: teardown removed the co-tenant's record"
+  pass "a co-tenant's live process in a shared checkout survives this task's teardown, while this task's own process is still reaped"
+}
+
+test_unattributable_shared_worktree_process_refuses_teardown() {
+  local case_dir rc own_pid stray_pid own_alive=0 stray_alive=0
+  case_dir=$(make_case cotenant-unattributable-refusal)
+  write_meta "$case_dir" no-mistakes ship
+  printf 'tasktmp=%s\n' "$case_dir/tasktmp" >> "$case_dir/state/task-x1.meta"
+  mkdir -p "$case_dir/tasktmp"
+  add_cotenant_task "$case_dir" task-y2
+  land_shippable_commit "$case_dir"
+
+  start_worktree_process "$case_dir" "$case_dir/tasktmp"
+  own_pid=$STARTED_PID
+  start_worktree_process "$case_dir" -
+  stray_pid=$STARTED_PID
+
+  add_logging_treehouse "$case_dir"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  kill -0 "$own_pid" 2>/dev/null && own_alive=1
+  kill -0 "$stray_pid" 2>/dev/null && stray_alive=1
+  kill -KILL "$own_pid" "$stray_pid" 2>/dev/null || true
+
+  expect_code 1 "$rc" "cotenant-unattributable-refusal: teardown should refuse"
+  assert_grep "REFUSED: process(es) $stray_pid run in shared checkout" "$case_dir/stderr" \
+    "cotenant-unattributable-refusal: teardown did not name the process it could not attribute"
+  [ "$stray_alive" = 1 ] || fail "cotenant-unattributable-refusal: teardown killed a process it could not attribute"
+  [ "$own_alive" = 1 ] || fail "cotenant-unattributable-refusal: teardown reaped before establishing ownership"
+  assert_present "$case_dir/wt" "cotenant-unattributable-refusal: teardown removed the shared worktree"
+  assert_present "$case_dir/state/task-x1.meta" "cotenant-unattributable-refusal: teardown removed task metadata"
+  assert_absent "$case_dir/treehouse.log" "cotenant-unattributable-refusal: teardown returned the shared worktree"
+  pass "an unattributable process in a shared checkout refuses teardown loudly instead of guessing in either direction"
 }
 
 test_leaked_worktree_process_is_reaped() {
@@ -2720,6 +2836,8 @@ test_empty_status_after_abort_refuses_unconfirmed
 test_not_found_status_after_abort_confirms_completion
 test_another_branchs_parked_run_is_never_touched
 test_own_autonomous_run_is_left_alone
+test_cotenant_process_survives_teardown
+test_unattributable_shared_worktree_process_refuses_teardown
 test_leaked_worktree_process_is_reaped
 test_leaked_tasktmp_process_is_reaped
 test_lsof_absent_reaps_tmux_process_group

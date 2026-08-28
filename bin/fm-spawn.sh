@@ -307,6 +307,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-tasktmp-lib.sh
 . "$SCRIPT_DIR/fm-tasktmp-lib.sh"
+# shellcheck source=bin/fm-worktree-claim-lib.sh
+. "$SCRIPT_DIR/fm-worktree-claim-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1644,43 +1646,6 @@ validate_firstmate_operational_dirs() {
   done
 }
 
-real_path_or_raw() {  # <path>
-  local path=$1 real
-  if real=$(cd "$path" 2>/dev/null && pwd -P); then
-    printf '%s\n' "$real"
-  else
-    printf '%s\n' "$path"
-  fi
-}
-
-# Occupied-checkout refusal (see this script's header for the full contract).
-# The durable record is the other task's own state/<id>.meta worktree= line: a
-# meta exists exactly while its task does, because fm-teardown.sh removes it as
-# part of landing the task. Process visibility is deliberately not consulted -
-# the whole failure mode is a live worker the pool could not see.
-worktree_meta_claimant() {  # <worktree-raw> <worktree-real> -> prints the conflicting task id
-  local wt_raw=$1 wt_real=$2 meta other_id other_wt other_real
-  [ -d "$STATE" ] || return 1
-  for meta in "$STATE"/*.meta; do
-    [ -f "$meta" ] || continue
-    other_id=${meta##*/}
-    other_id=${other_id%.meta}
-    [ "$other_id" != "$ID" ] || continue
-    other_wt=$(sed -n 's/^worktree=//p' "$meta" 2>/dev/null | head -n 1)
-    [ -n "$other_wt" ] || continue
-    if [ "$other_wt" = "$wt_raw" ] || [ "$other_wt" = "$wt_real" ]; then
-      printf '%s\n' "$other_id"
-      return 0
-    fi
-    other_real=$(real_path_or_raw "$other_wt")
-    if [ "$other_real" = "$wt_real" ]; then
-      printf '%s\n' "$other_id"
-      return 0
-    fi
-  done
-  return 1
-}
-
 # Record axis of the occupied-checkout refusal (see this script's header): the
 # durable state/<id>.meta comparison alone, run the moment a spawn path knows
 # its worktree - immediately after a secondmate home resolves (before the ff
@@ -1690,10 +1655,11 @@ worktree_meta_claimant() {  # <worktree-raw> <worktree-real> -> prints the confl
 # the authoritative locked re-check stay at the single pre-publication point
 # (assert_worktree_unclaimed below), because that is where the claim lock can
 # span check-to-publication.
+# bin/fm-worktree-claim-lib.sh owns the claim record this reads.
 assert_worktree_meta_unclaimed() {  # <source> <inspect-target>
-  local source=$1 inspect_target=$2 wt_real claimant
-  wt_real=$(real_path_or_raw "$WT")
-  if claimant=$(worktree_meta_claimant "$WT" "$wt_real"); then
+  local source=$1 inspect_target=$2 claimant
+  claimant=$(fm_worktree_claimants "$STATE" "$ID" "$WT" | head -n 1)
+  if [ -n "$claimant" ]; then
     echo "error: $source handed back $WT, which task $claimant already records as its worktree ($STATE/$claimant.meta); refusing to launch $ID into an occupied checkout" >&2
     echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout, including task $claimant's worker" >&2
     HERDR_PROJECTION_ABORT_CLEANUP=0
@@ -1715,7 +1681,7 @@ if [ "$KIND" = secondmate ]; then
   [ -n "$FIRSTMATE_HOME" ] || { echo "error: no firstmate home supplied or registered for $ID" >&2; exit 1; }
   PROJ_ABS=$(validate_firstmate_home_for_spawn "$ID" "$FIRSTMATE_HOME")
   if [ -e "$DATA/secondmates.md" ] || [ -L "$DATA/secondmates.md" ]; then
-    if ! secondmate_registry_validate_bindings "$DATA/secondmates.md" resolve_path "$ID" "$FIRSTMATE_HOME"; then
+    if ! secondmate_registry_validate_bindings "$DATA/secondmates.md" fm_worktree_real_path "$ID" "$FIRSTMATE_HOME"; then
       echo "error: $SECONDMATE_REGISTRY_ERROR" >&2
       exit 1
     fi
@@ -1962,7 +1928,7 @@ assert_worktree_unclaimed() {  # <source> <inspect-target>
   # firstmate leases only secondmate homes. A secondmate spawn legitimately
   # relaunches into its own leased home, so the lease axis does not apply to it.
   [ "$KIND" != secondmate ] || return 0
-  wt_real=$(real_path_or_raw "$WT")
+  wt_real=$(fm_worktree_real_path "$WT")
   lease=$(worktree_pool_lease_state "$WT" "$wt_real") || return 0
   lease_status=${lease%%	*}
   lease_holder=${lease#*	}
@@ -2406,14 +2372,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # proven instead is that the adopted endpoint's shell is actually sitting in
   # that worktree, so the replacement agent starts where the work is rather
   # than wherever the pane happened to drift.
-  relaunch_wt_real=$(real_path_or_raw "$WT")
+  relaunch_wt_real=$(fm_worktree_real_path "$WT")
   relaunch_seen=
   for _ in $(seq 1 10); do
     relaunch_seen=$(spawn_current_path "$WT_TARGET" || true)
-    [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ] || break
+    [ -z "$relaunch_seen" ] || [ "$(fm_worktree_real_path "$relaunch_seen")" != "$relaunch_wt_real" ] || break
     sleep 0.5
   done
-  if [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ]; then
+  if [ -z "$relaunch_seen" ] || [ "$(fm_worktree_real_path "$relaunch_seen")" != "$relaunch_wt_real" ]; then
     echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}', not its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
     exit 1
   fi
@@ -2445,7 +2411,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   for _ in $(seq 1 60); do
     p=$(spawn_current_path "$WT_TARGET" || true)
     if [ -n "$p" ]; then
-      p_real=$(real_path_or_raw "$p")
+      p_real=$(fm_worktree_real_path "$p")
       if [ "$p_real" != "$PROJ_ABS_REAL" ]; then
         if [ -n "$candidate" ] && [ "$p_real" = "$candidate" ]; then
           WT="$p"

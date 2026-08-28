@@ -27,6 +27,8 @@
 SUB_HOME_MARKER="${SUB_HOME_MARKER:-.fm-secondmate-home}"
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-secondmate-registry-lib.sh"
+# shellcheck source=bin/fm-worktree-claim-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-worktree-claim-lib.sh"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -59,12 +61,6 @@ primary_head_commit() {
   local root=$1 default
   default=$(default_branch "$root") || return 1
   git -C "$root" rev-parse --verify --quiet "refs/heads/$default^{commit}" 2>/dev/null || return 1
-}
-
-resolve_path() {
-  # Resolve to a canonical absolute path, falling back to the literal input
-  # when the directory does not exist (so callers can still dedup/skip on it).
-  ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s\n' "$1"
 }
 
 resolved_existing_dir() {
@@ -393,8 +389,8 @@ process_secondmate() {
   local id=$1 home=$2 window=${3:-} base_mode=$4 nudge_requires_instr=${5:-no} home_real fm_root_real
   [ -n "$id" ] || return 0
   [ -n "$home" ] || return 0
-  fm_root_real=$(resolve_path "$FM_ROOT")
-  home_real=$(resolve_path "$home")
+  fm_root_real=$(fm_worktree_real_path "$FM_ROOT")
+  home_real=$(fm_worktree_real_path "$home")
   [ "$home_real" != "$fm_root_real" ] || return 0
   if ! validate_secondmate_home "$id" "$home"; then
     echo "secondmate $id: skipped: unsafe home: $VALIDATION_ERROR"
