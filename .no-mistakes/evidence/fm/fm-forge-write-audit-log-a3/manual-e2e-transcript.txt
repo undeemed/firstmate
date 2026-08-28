@@ -1,0 +1,86 @@
+
+=== A. happy GitHub merge: the write is recorded before the forge is called ===
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+armed: state/task-x1.check.sh
+exit=0
+--- forge invocations (gh-axi.log):
+pr merge 31 --repo example/repo --squash
+--- state/ contents (no pr-merge-audit.log: the old log is superseded, not written):
+forge-write-audit.log
+task-x1.check.sh
+task-x1.meta
+task-x1.pr-poll
+task-x1.pr-poll-registration
+--- state/forge-write-audit.log via cat -A (^I = tab, $ = line end):
+# forge writes made through firstmate bin/ tooling; a direct gh invocation or a browser action is NOT captured, so the absence of a line is not proof that no write occurred.$
+2026-08-28T06:46:34Z^Ihome=/tmp/fm-forge-audit-e2e.1gFsKH/home-a^Itask=task-x1^Iaction=pr-merge^Itarget=https://github.com/example/repo/pull/31$
+--- the log as the gh-axi mock saw it AT CALL TIME (proves write-before-call):
+# forge writes made through firstmate bin/ tooling; a direct gh invocation or a browser action is NOT captured, so the absence of a line is not proof that no write occurred.
+2026-08-28T06:46:34Z	home=/tmp/fm-forge-audit-e2e.1gFsKH/home-a	task=task-x1	action=pr-merge	target=https://github.com/example/repo/pull/31
+
+=== B. forge merge crashes mid-flight: evidence of the attempt survives ===
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+armed: state/task-x1.check.sh
+error: connection reset mid-flight
+exit=1 (non-zero: the merge really failed)
+--- yet the audit log already holds the attempt:
+2026-08-28T06:46:36Z	home=/tmp/fm-forge-audit-e2e.1gFsKH/home-b	task=task-x1	action=pr-merge	target=https://github.com/example/repo/pull/32
+
+=== C. unwritable log: the merge refuses rather than act unlogged ===
+armed: state/task-x1.check.sh
+exit=1
+--- stderr:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/home/ubuntu/.no-mistakes/worktrees/5d83c95b53c3/01M13GY9G42SEFPG9PNS8RDG2D/bin/fm-pr-merge.sh: line 115: /tmp/fm-forge-audit-e2e.1gFsKH/home-c/state/forge-write-audit.log: Is a directory
+error: the forge write audit log could not be appended: /tmp/fm-forge-audit-e2e.1gFsKH/home-c/state/forge-write-audit.log
+--- forge merge invocations after the refusal (must be none):
+0
+0 merge calls: the forge was never asked to act
+
+=== D. a secret-shaped argument reaches the forge call but never the log ===
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+armed: state/task-x1.check.sh
+exit=0
+--- the forge call really carried the secret-shaped argument (non-vacuous):
+pr merge 34 --repo example/repo --squash --auth-token=ghp_argumentcredential111
+--- the audit log carries neither the argument nor the environment credential:
+0
+0 matches: no credential material in the log
+--- what the log does carry:
+# forge writes made through firstmate bin/ tooling; a direct gh invocation or a browser action is NOT captured, so the absence of a line is not proof that no write occurred.
+2026-08-28T06:46:39Z	home=/tmp/fm-forge-audit-e2e.1gFsKH/home-d	task=task-x1	action=pr-merge	target=https://github.com/example/repo/pull/34
+
+=== E. a second write into the same home: one header, two records ===
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+armed: state/task-x1.check.sh
+exit=0
+--- state/forge-write-audit.log via cat -A after two merges from home-a:
+# forge writes made through firstmate bin/ tooling; a direct gh invocation or a browser action is NOT captured, so the absence of a line is not proof that no write occurred.$
+2026-08-28T06:46:34Z^Ihome=/tmp/fm-forge-audit-e2e.1gFsKH/home-a^Itask=task-x1^Iaction=pr-merge^Itarget=https://github.com/example/repo/pull/31$
+2026-08-28T06:46:40Z^Ihome=/tmp/fm-forge-audit-e2e.1gFsKH/home-a^Itask=task-x1^Iaction=pr-merge^Itarget=https://github.com/example/repo/pull/35$
+--- header lines in the log (must be exactly 1):
+1
