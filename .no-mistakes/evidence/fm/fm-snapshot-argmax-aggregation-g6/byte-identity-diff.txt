@@ -1,0 +1,10 @@
+== byte-identity: base f6c9282 vs target b3cbcff on a small two-home fleet (pinned FM_SNAPSHOT_NOW) ==
+-- sha256 --
+036e2e8521f604cf5b10389870cce15204f6ce9f1a79690722d2c79d88bb9de5  /tmp/no-mistakes-evidence/01M152TDPBM144CYPW4EJC4KF4/base-run.json
+036e2e8521f604cf5b10389870cce15204f6ce9f1a79690722d2c79d88bb9de5  /tmp/no-mistakes-evidence/01M152TDPBM144CYPW4EJC4KF4/target-run1.json
+1b10fc17596bf9f9d6b24664d7528093f4c3da3a00c81a4f89e16d4564a823fb  /tmp/no-mistakes-evidence/01M152TDPBM144CYPW4EJC4KF4/base-run.view
+1b10fc17596bf9f9d6b24664d7528093f4c3da3a00c81a4f89e16d4564a823fb  /tmp/no-mistakes-evidence/01M152TDPBM144CYPW4EJC4KF4/target-run1.view
+-- diff snapshot JSON (empty = identical) --
+snapshot JSON: IDENTICAL
+-- diff fleet view render (empty = identical) --
+fleet view: IDENTICAL

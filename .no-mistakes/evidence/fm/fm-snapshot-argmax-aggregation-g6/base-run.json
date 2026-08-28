@@ -1,0 +1,575 @@
+{
+  "schema": "fm-fleet-snapshot.v1",
+  "generated": "2026-07-14T00:00:00Z",
+  "fm_home": "/tmp/fm-byte-identity.3Ub5SJ/parent",
+  "roots": {
+    "fm_root": "/tmp/fm-byte-identity.3Ub5SJ/root-override",
+    "state": "/tmp/fm-byte-identity.3Ub5SJ/parent/state",
+    "data": "/tmp/fm-byte-identity.3Ub5SJ/parent/data",
+    "config": "/tmp/fm-byte-identity.3Ub5SJ/parent/config",
+    "projects": "/tmp/fm-byte-identity.3Ub5SJ/parent/projects"
+  },
+  "backlog": {
+    "path": "/tmp/fm-byte-identity.3Ub5SJ/parent/data/backlog.md",
+    "present": false,
+    "records": []
+  },
+  "tasks": [
+    {
+      "id": "small-mate-1",
+      "kind": "secondmate",
+      "harness": "echo",
+      "mode": "secondmate",
+      "yolo": "off",
+      "project": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-1",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/parent/state/small-mate-1.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/parent/state/small-mate-1.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "watching scope",
+            "raw": "working [key=small-mate-1]: watching scope"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-1",
+          "present": true
+        },
+        "home": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-1",
+          "present": true
+        },
+        "report": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/parent/data/small-mate-1/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [
+        "sample"
+      ],
+      "current_state": {
+        "state": "working",
+        "source": "status-log",
+        "detail": "watching scope",
+        "raw": "state: working · source: status-log · watching scope",
+        "observed_at": "2026-07-14T00:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-small-mate-1",
+        "exists": true,
+        "agent_alive": "alive",
+        "status": "alive",
+        "observed_at": "2026-07-14T00:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working [key=small-mate-1]: watching scope"
+      },
+      "actions": {
+        "send": "bin/fm-send.sh fm-small-mate-1 '<request>'",
+        "watch": "read status/doc return channel; do not routinely fm-peek a secondmate for answers",
+        "return_channel_note": "Secondmate answers come back through status/doc paths after a marked fm-send request."
+      },
+      "backlog": null
+    },
+    {
+      "id": "small-mate-2",
+      "kind": "secondmate",
+      "harness": "echo",
+      "mode": "secondmate",
+      "yolo": "off",
+      "project": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-2",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/parent/state/small-mate-2.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/parent/state/small-mate-2.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "watching scope",
+            "raw": "working [key=small-mate-2]: watching scope"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-2",
+          "present": true
+        },
+        "home": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-2",
+          "present": true
+        },
+        "report": {
+          "path": "/tmp/fm-byte-identity.3Ub5SJ/parent/data/small-mate-2/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [
+        "sample"
+      ],
+      "current_state": {
+        "state": "working",
+        "source": "status-log",
+        "detail": "watching scope",
+        "raw": "state: working · source: status-log · watching scope",
+        "observed_at": "2026-07-14T00:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-small-mate-2",
+        "exists": true,
+        "agent_alive": "alive",
+        "status": "alive",
+        "observed_at": "2026-07-14T00:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working [key=small-mate-2]: watching scope"
+      },
+      "actions": {
+        "send": "bin/fm-send.sh fm-small-mate-2 '<request>'",
+        "watch": "read status/doc return channel; do not routinely fm-peek a secondmate for answers",
+        "return_channel_note": "Secondmate answers come back through status/doc paths after a marked fm-send request."
+      },
+      "backlog": null
+    }
+  ],
+  "main_inventory": {
+    "valid": true,
+    "reason": null,
+    "orphan_in_flight": [],
+    "unstructured_current_count": 0
+  },
+  "scout_reports": [],
+  "secondmate_current": {
+    "registry": {
+      "present": true,
+      "available": true,
+      "reason": null,
+      "provenance": "registered-table",
+      "path": "/tmp/fm-byte-identity.3Ub5SJ/parent/data/secondmates.md",
+      "freshness": {
+        "status": "fresh",
+        "observed_at": "2026-07-14T00:00:00Z"
+      },
+      "records": [
+        {
+          "id": "small-mate-1",
+          "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-1",
+          "host": null,
+          "root": null,
+          "remote": false,
+          "registered": true,
+          "registry_error": null
+        },
+        {
+          "id": "small-mate-2",
+          "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-2",
+          "host": null,
+          "root": null,
+          "remote": false,
+          "registered": true,
+          "registry_error": null
+        }
+      ],
+      "input_truncated": false,
+      "records_truncated": false,
+      "complete": true,
+      "reasons": [],
+      "lines_in_window": 2,
+      "records_in_window": 2
+    },
+    "records": [
+      {
+        "id": "small-mate-1",
+        "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-1",
+        "host": null,
+        "remote": false,
+        "registered": true,
+        "current": {
+          "state": "no_active_work",
+          "reason": null
+        },
+        "invalidity": {
+          "kind": null,
+          "ids": []
+        },
+        "provenance": {
+          "selected": "structured-home",
+          "structured_home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-1",
+          "summary_valid": true,
+          "trust": "complete",
+          "parent_event_role": "historical-only"
+        },
+        "freshness": {
+          "status": "fresh",
+          "observed_at": "2026-07-14T00:00:00Z",
+          "age_seconds": 0
+        },
+        "active_children": [],
+        "decisions_open": [],
+        "holds": [],
+        "queued": [],
+        "landed": [
+          {
+            "id": "small-mate-1-landed-3",
+            "title": "Landed item 3",
+            "pr_url": null,
+            "report_path": null,
+            "local_note": null,
+            "completion": {
+              "verb": "merged",
+              "date": "2026-07-05"
+            }
+          },
+          {
+            "id": "small-mate-1-landed-2",
+            "title": "Landed item 2",
+            "pr_url": null,
+            "report_path": null,
+            "local_note": null,
+            "completion": {
+              "verb": "merged",
+              "date": "2026-07-05"
+            }
+          },
+          {
+            "id": "small-mate-1-landed-1",
+            "title": "Landed item 1",
+            "pr_url": null,
+            "report_path": null,
+            "local_note": null,
+            "completion": {
+              "verb": "merged",
+              "date": "2026-07-05"
+            }
+          }
+        ],
+        "endpoints": [],
+        "counts": {
+          "active_children": 0,
+          "decisions_open": 0,
+          "holds": 0,
+          "queued": 0,
+          "landed": 3,
+          "endpoints": 0
+        },
+        "omitted": [],
+        "parent_event": {
+          "raw": "working [key=small-mate-1]: watching scope",
+          "note": "watching scope",
+          "age_seconds": 0,
+          "open_activities": [
+            {
+              "key": "small-mate-1",
+              "verb": "working",
+              "summary": "watching scope"
+            }
+          ],
+          "open_decisions": [],
+          "activity_scan": {
+            "records": [
+              {
+                "key": "small-mate-1",
+                "verb": "working",
+                "summary": "watching scope"
+              }
+            ],
+            "available": true,
+            "input_truncated": false,
+            "retained_truncated": false,
+            "reasons": [],
+            "lines_in_window": 1,
+            "records_in_window": 1
+          },
+          "reconciliation": {
+            "provenance": "parent-status-keyed-fold",
+            "trust": "untrusted-supplement",
+            "activities": [
+              {
+                "key": "small-mate-1",
+                "verb": "working",
+                "summary": "watching scope",
+                "verdict": "contradicts",
+                "compared_to": "active_children",
+                "matched": null
+              }
+            ],
+            "decisions": [],
+            "contradiction": true,
+            "inconclusive": false
+          }
+        },
+        "terminal_evidence": {
+          "provenance": "parent-direct-report-terminal",
+          "trust": "untrusted-supplement",
+          "captured": true,
+          "observed_at": "2026-07-14T00:00:00Z",
+          "freshness": "fresh",
+          "reason": null,
+          "lines": 2,
+          "bytes": 12,
+          "event_note_seen": false,
+          "contradiction": false
+        },
+        "contradiction": true
+      },
+      {
+        "id": "small-mate-2",
+        "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-2",
+        "host": null,
+        "remote": false,
+        "registered": true,
+        "current": {
+          "state": "no_active_work",
+          "reason": null
+        },
+        "invalidity": {
+          "kind": null,
+          "ids": []
+        },
+        "provenance": {
+          "selected": "structured-home",
+          "structured_home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-2",
+          "summary_valid": true,
+          "trust": "complete",
+          "parent_event_role": "historical-only"
+        },
+        "freshness": {
+          "status": "fresh",
+          "observed_at": "2026-07-14T00:00:00Z",
+          "age_seconds": 0
+        },
+        "active_children": [],
+        "decisions_open": [],
+        "holds": [],
+        "queued": [],
+        "landed": [
+          {
+            "id": "small-mate-2-landed-3",
+            "title": "Landed item 3",
+            "pr_url": null,
+            "report_path": null,
+            "local_note": null,
+            "completion": {
+              "verb": "merged",
+              "date": "2026-07-05"
+            }
+          },
+          {
+            "id": "small-mate-2-landed-2",
+            "title": "Landed item 2",
+            "pr_url": null,
+            "report_path": null,
+            "local_note": null,
+            "completion": {
+              "verb": "merged",
+              "date": "2026-07-05"
+            }
+          },
+          {
+            "id": "small-mate-2-landed-1",
+            "title": "Landed item 1",
+            "pr_url": null,
+            "report_path": null,
+            "local_note": null,
+            "completion": {
+              "verb": "merged",
+              "date": "2026-07-05"
+            }
+          }
+        ],
+        "endpoints": [],
+        "counts": {
+          "active_children": 0,
+          "decisions_open": 0,
+          "holds": 0,
+          "queued": 0,
+          "landed": 3,
+          "endpoints": 0
+        },
+        "omitted": [],
+        "parent_event": {
+          "raw": "working [key=small-mate-2]: watching scope",
+          "note": "watching scope",
+          "age_seconds": 0,
+          "open_activities": [
+            {
+              "key": "small-mate-2",
+              "verb": "working",
+              "summary": "watching scope"
+            }
+          ],
+          "open_decisions": [],
+          "activity_scan": {
+            "records": [
+              {
+                "key": "small-mate-2",
+                "verb": "working",
+                "summary": "watching scope"
+              }
+            ],
+            "available": true,
+            "input_truncated": false,
+            "retained_truncated": false,
+            "reasons": [],
+            "lines_in_window": 1,
+            "records_in_window": 1
+          },
+          "reconciliation": {
+            "provenance": "parent-status-keyed-fold",
+            "trust": "untrusted-supplement",
+            "activities": [
+              {
+                "key": "small-mate-2",
+                "verb": "working",
+                "summary": "watching scope",
+                "verdict": "contradicts",
+                "compared_to": "active_children",
+                "matched": null
+              }
+            ],
+            "decisions": [],
+            "contradiction": true,
+            "inconclusive": false
+          }
+        },
+        "terminal_evidence": {
+          "provenance": "parent-direct-report-terminal",
+          "trust": "untrusted-supplement",
+          "captured": true,
+          "observed_at": "2026-07-14T00:00:00Z",
+          "freshness": "fresh",
+          "reason": null,
+          "lines": 2,
+          "bytes": 12,
+          "event_note_seen": false,
+          "contradiction": false
+        },
+        "contradiction": true
+      }
+    ],
+    "total_registered": 2,
+    "total": 2,
+    "shown": 2,
+    "truncated": 0
+  },
+  "secondmate_landed": {
+    "records": [
+      {
+        "id": "small-mate-2-landed-3",
+        "title": "Landed item 3",
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "completion": {
+          "verb": "merged",
+          "date": "2026-07-05"
+        },
+        "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-2",
+        "home_id": "small-mate-2"
+      },
+      {
+        "id": "small-mate-2-landed-2",
+        "title": "Landed item 2",
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "completion": {
+          "verb": "merged",
+          "date": "2026-07-05"
+        },
+        "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-2",
+        "home_id": "small-mate-2"
+      },
+      {
+        "id": "small-mate-2-landed-1",
+        "title": "Landed item 1",
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "completion": {
+          "verb": "merged",
+          "date": "2026-07-05"
+        },
+        "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-2",
+        "home_id": "small-mate-2"
+      },
+      {
+        "id": "small-mate-1-landed-3",
+        "title": "Landed item 3",
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "completion": {
+          "verb": "merged",
+          "date": "2026-07-05"
+        },
+        "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-1",
+        "home_id": "small-mate-1"
+      },
+      {
+        "id": "small-mate-1-landed-2",
+        "title": "Landed item 2",
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "completion": {
+          "verb": "merged",
+          "date": "2026-07-05"
+        },
+        "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-1",
+        "home_id": "small-mate-1"
+      },
+      {
+        "id": "small-mate-1-landed-1",
+        "title": "Landed item 1",
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "completion": {
+          "verb": "merged",
+          "date": "2026-07-05"
+        },
+        "home": "/tmp/fm-byte-identity.3Ub5SJ/small-mate-1",
+        "home_id": "small-mate-1"
+      }
+    ],
+    "truncated": [],
+    "unreadable": [],
+    "partial": []
+  },
+  "secondmate_guidance": {
+    "note": "For kind=secondmate, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority."
+  }
+}

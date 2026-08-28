@@ -1,0 +1,4 @@
+ok - empty fleet snapshot and view use explicit absence markers
+ok - fixture snapshot covers task rows, backlog rows, pointers, and stable ordering
+not ok - homes were dropped or downgraded instead of aggregated: [{"id":"bulk-mate-1","state":"unknown","reason":"structured home snapshot failed","landed":0},{"id":"bulk-mate-2","state":"unknown","reason":"structured home snapshot failed","landed":0}]
+EXIT=1

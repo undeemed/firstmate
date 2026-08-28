@@ -1,0 +1,3 @@
+== live seven-home fleet: bin/fm-bearings-snapshot.sh (branch worktree binaries, FM_HOME=/home/ubuntu/Dev/firstmate) ==
+exit=0  toon_lines=84  stderr_bytes=0
+registered homes in live registry: 7

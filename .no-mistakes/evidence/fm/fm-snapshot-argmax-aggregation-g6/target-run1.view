@@ -1,0 +1,19 @@
+# Fleet View
+
+Schema: fm-fleet-snapshot.v1
+Home: /tmp/fm-byte-identity.3Ub5SJ/parent
+
+## Under Way
+| ID | Current | Kind | Repo/Project | Backend | Endpoint | Artifact | Path | Watch / return channel |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| small-mate-1 | working / status-log | secondmate | /tmp/fm-byte-identity.3Ub5SJ/small-mate-1 | tmux | present / alive | - | /tmp/fm-byte-identity.3Ub5SJ/small-mate-1 | bin/fm-send.sh fm-small-mate-1 '<request>' - read status/doc return channel; do not routinely fm-peek a secondmate for answers |
+| small-mate-2 | working / status-log | secondmate | /tmp/fm-byte-identity.3Ub5SJ/small-mate-2 | tmux | present / alive | - | /tmp/fm-byte-identity.3Ub5SJ/small-mate-2 | bin/fm-send.sh fm-small-mate-2 '<request>' - read status/doc return channel; do not routinely fm-peek a secondmate for answers |
+
+## Queued
+No queued backlog records found.
+
+## Done
+No done backlog records found.
+
+## Secondmates
+For kind=secondmate, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority.
