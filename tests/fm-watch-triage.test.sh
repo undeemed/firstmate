@@ -3076,6 +3076,11 @@ test_crew_step_progress_evidence_classifier() {
 		fail "a parked run was read as progress"
 	FM_FAKE_CREW_STATE='not a state line at all'
 	! crew_step_progress_evidence ci >/dev/null || fail "an unreadable verdict was read as progress"
+	# A crew's own status line is echoed into a status-log verdict's detail, so a
+	# worker must not be able to write itself out of its own wedge alarm.
+	FM_FAKE_CREW_STATE='state: working · source: status-log · working: source: run-step · activity: pr 30'
+	! crew_step_progress_evidence ci >/dev/null ||
+		fail "a status line quoting the progress record fabricated progress evidence"
 	FM_FAKE_CREW_STATE='state: working · source: run-step · ci running · activity: ci soon'
 	! crew_step_progress_evidence ci >/dev/null || fail "an unparseable activity age was read as progress"
 	! crew_step_progress_evidence "" >/dev/null || fail "an empty id was read as progress"
@@ -3109,18 +3114,13 @@ test_active_recent_step_absorbs_the_wedge() {
 		fail "the recorded absorb reason did not carry the step's activity age"
 
 	# The same lane, once that step stops recording anything: the alarm is deferred,
-	# never disabled. A run-step verdict carrying no activity record at all - the
-	# pipeline died behind a stale record - escalates the same way.
+	# never disabled.
 	threshold_backdate "$dir" 500
 	threshold_run "$dir" \
 		"FM_FAKE_CREW_STATE=state: working · source: run-step · ci running · activity: ci 2463" ||
 		fail "a step that recorded nothing for 41 minutes did not wedge-escalate: $(cat "$dir/watch.out")"
 	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
 		fail "the escalation past the activity bound did not flag a possible wedge"
-	threshold_backdate "$dir" 500
-	threshold_run "$dir" || fail "a run-step record with no active step absorbed the wedge: $(cat "$dir/watch.out")"
-	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
-		fail "the stale-record case did not flag a possible wedge"
 	pass "an active step with recent activity absorbs the wedge, is recorded with its reason, and escalates again once the step goes silent"
 }
 

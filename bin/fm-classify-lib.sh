@@ -1532,9 +1532,16 @@ crew_step_progress_evidence() {  # <id>
   local line rest step age _
   [ -n "${1:-}" ] || return 1
   line=$("$FM_CREW_STATE_BIN" "$1" 2>/dev/null) || return 1
-  case "$line" in "state: working"*) ;; *) return 1 ;; esac
-  case "$line" in *"source: run-step"*) ;; *) return 1 ;; esac
-  case "$line" in *"activity: "*) rest=${line##*activity: } ;; *) return 1 ;; esac
+  # Read the state and source as TOKENS, from their first occurrence, never as
+  # substrings: a crew's own status line is echoed into the detail of a
+  # status-log verdict, so a worker that appends "source: run-step · activity: pr 30"
+  # would otherwise fabricate progress evidence and silence its own wedge alarm.
+  case "$line" in "state: "*) ;; *) return 1 ;; esac
+  rest=${line#state: }
+  [ "${rest%% *}" = working ] || return 1
+  rest=${line#*source: }
+  [ "${rest%% *}" = run-step ] || return 1
+  case "$rest" in *"activity: "*) rest=${rest##*activity: } ;; *) return 1 ;; esac
   read -r step age _ <<< "$rest"
   case "$age" in ''|*[!0-9]*) return 1 ;; esac
   [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || return 1
