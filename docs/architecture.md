@@ -287,6 +287,8 @@ A ship brief records its mode as a fixed machine-readable line and the spawn ref
 When a selected delivery path calls for a diff, `bin/fm-review-diff.sh` refreshes the authoritative base and, when task meta records `pr=`, always fetches and compares against `refs/pull/<n>/head` by default (recorded `pr_head=` is only an offline fallback) before falling back to the local branch with a warning.
 Where a no-mistakes pipeline stores evidence in the repo, it publishes that PR-viewable validation evidence to an orphan evidence branch that shares no history with code branches, so it never enters the crew branch or the default branch.
 This repo uses that setting, and its own `.no-mistakes/` directory remains local state that stays gitignored and is rejected by CI if tracked; [`configuration.md`](configuration.md) owns the setting.
+Every outbound forge write made through `bin/` first appends one line to the acting home's own `state/forge-write-audit.log`, and refuses the write when that line cannot be appended.
+Many homes share one forge credential and the forge cannot tell them apart afterwards, so the acting home's local record is the only thing that answers which home acted; [`bin/fm-pr-merge.sh`](../bin/fm-pr-merge.sh)'s header owns the format, and the record's own first line states that a direct `gh` invocation or a browser action is not captured.
 PR-based task merges go through `bin/fm-pr-merge.sh`, which records `pr=` and any available `pr_head=` through `bin/fm-pr-check.sh` before calling the forge CLI.
 The helper requires a full canonical URL and rejects malformed URLs or repo override flags before recording merge state.
 A `https://github.com/<owner>/<repo>/pull/<n>` URL invokes `gh-axi pr merge <n> --repo <owner>/<repo>`, defaults to `--squash`, and preserves explicit merge-method flags.
@@ -294,7 +296,7 @@ That implicit `--squash` is refused, naming the counts it read, when one live RE
 A `https://<host>/<path>/-/merge_requests/<n>` URL (see [docs/gitlab-merge-watch.md](gitlab-merge-watch.md)) invokes `glab mr merge <n> -R https://<host>/<path>`, so the instance comes from the URL, and adds no merge-method flag because the project's own merge method applies.
 That path merges only after one live read of the merge request confirms it is open, mergeable, conflict-free, with blocking discussions resolved and a successful pipeline at the current head, and it binds the merge to that verified head; recorded metadata is never the authority for those conditions because a rebase leaves it stale.
 Pipeline-raised PRs (for example no-mistakes-raised) that have no owning task meta merge through the same guard as `bin/fm-pr-merge.sh --pipeline <pr-url>`.
-That class replaces task-meta recording with a fail-closed green gate against the live forge, merges pinned to the exact gated head with `--match-head-commit`, and records each gate pass to `state/pr-merge-audit.log`; the script's header owns the exact gate list.
+That class replaces task-meta recording with a fail-closed green gate against the live forge, merges pinned to the exact gated head with `--match-head-commit`, and refuses when its own home cannot record the write; the script's header owns the exact gate list.
 Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed before the worktree is returned.
 [`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns the landed-work proofs, PR-discovery fallback, and stale-lock recovery procedure.
 

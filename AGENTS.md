@@ -106,7 +106,7 @@ state/               runtime records and signals; gitignored
   .pr-check-quarantine/  private non-runnable storage for checks neutralized by the non-executing migration
   .pr-check-migration.log  private per-task outcomes distinguishing rebuilt or canonically registered replacement polls, quarantined unarmed polls, and incomplete migrations
   .pr-check-migration-scan-v1  private marker proving the non-executing scan disabled every unsafe legacy check; .pr-check-migration-v1 separately records completed private repairs
-  pr-merge-audit.log  append-only audit of gate-passing pipeline-class merges, written by fm-pr-merge.sh --pipeline before the head-pinned merge: UTC time, pr=, head=, class=pipeline, url=
+  forge-write-audit.log  append-only record of every outbound forge write made through bin/, written by the acting home before the call so a shared credential cannot hide which home acted; a direct gh invocation or a browser action is not captured, so no line is not proof no write happened. fm-pr-merge.sh's header owns the format
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   pending-replies/   parent-owned secondmate pending-reply records (correlation id, delivery vs reply, recovery, escalation, settling, and their sibling `pending-replies-archive/` retention); fm-pending-reply-lib.sh

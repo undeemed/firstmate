@@ -27,6 +27,14 @@
 #   (r) the implicit --squash default is refused on a stacked PR, naming the
 #       counts it read live from REST, while a small PR still squashes, an
 #       explicit method still wins, and GitLab is never consulted for counts
+#   (s) every merge is recorded in the home's forge write audit log BEFORE the
+#       forge is called, naming the home and the task, and the log states on
+#       creation what it does not capture
+#   (t) a forge write that cannot be recorded refuses the merge outright
+#   (u) neither caller arguments nor the environment reach the audit log
+#
+# The forge mocks copy the audit log as they are invoked, so a case can assert
+# what the log already held at the moment the forge was called.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -88,6 +96,7 @@ add_gh_mocks() {
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+[ -z "${FM_TEST_AUDIT_SNAPSHOT:-}" ] || cp "$FM_STATE_OVERRIDE/forge-write-audit.log" "$FM_TEST_AUDIT_SNAPSHOT" 2>/dev/null || :
 exit 0
 SH
   cat > "$case_dir/fakebin/gh" <<SH
@@ -149,6 +158,7 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
   "mr merge")
+    [ -z "${FM_TEST_AUDIT_SNAPSHOT:-}" ] || cp "$FM_STATE_OVERRIDE/forge-write-audit.log" "$FM_TEST_AUDIT_SNAPSHOT" 2>/dev/null || :
     [ ! -e "$case_dir/glab-merge-fails" ] || { echo "error: mr merge failed" >&2 ; exit 1 ; }
     exit 0
     ;;
@@ -241,7 +251,9 @@ glab_merge_line() {
 run_pr_merge() {
   local case_dir=$1 rc; shift
   FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$case_dir" \
   FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_TEST_AUDIT_SNAPSHOT="${FM_TEST_AUDIT_SNAPSHOT:-}" \
   FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
   FM_TEST_GLAB_LOG="$case_dir/glab.log" \
   FM_TEST_GLAB_JSON="$case_dir/mr.json" \
@@ -1148,6 +1160,7 @@ SH
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+[ -z "${FM_TEST_AUDIT_SNAPSHOT:-}" ] || cp "$FM_STATE_OVERRIDE/forge-write-audit.log" "$FM_TEST_AUDIT_SNAPSHOT" 2>/dev/null || :
 exit 0
 SH
   chmod +x "$case_dir/fakebin/gh" "$case_dir/fakebin/gh-axi"
@@ -1158,10 +1171,11 @@ SH
 }
 
 test_pipeline_merges_green_pr() {
-  local case_dir rc
+  local case_dir rc FM_TEST_AUDIT_SNAPSHOT
   case_dir=$(make_case pipeline-green)
   add_pipeline_mocks "$case_dir"
   : > "$case_dir/gh-axi.log"
+  FM_TEST_AUDIT_SNAPSHOT="$case_dir/audit-at-call"
 
   set +e
   run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 \
@@ -1172,11 +1186,15 @@ test_pipeline_merges_green_pr() {
   expect_code 0 "$rc" "pipeline-green: fm-pr-merge --pipeline should succeed on a green PR"
   grep -qxF "pr merge 9 --repo example/repo --match-head-commit $PIPELINE_HEAD_SHA --squash" "$case_dir/gh-axi.log" \
     || fail "pipeline-green: gh-axi pr merge was not invoked with --match-head-commit <head> and default --squash"
-  assert_grep "class=pipeline" "$case_dir/state/pr-merge-audit.log" \
+  assert_present "$case_dir/audit-at-call" \
+    "pipeline-green: the forge was called before the write was recorded"
+  assert_grep "class=pipeline" "$case_dir/audit-at-call" \
     "pipeline-green: audit line was not recorded"
-  assert_grep "head=$PIPELINE_HEAD_SHA" "$case_dir/state/pr-merge-audit.log" \
+  assert_grep "task=-" "$case_dir/audit-at-call" \
+    "pipeline-green: a pipeline merge has no owning task and must say so"
+  assert_grep "head=$PIPELINE_HEAD_SHA" "$case_dir/audit-at-call" \
     "pipeline-green: audit line did not record the gated head"
-  pass "fm-pr-merge --pipeline merges a green PR pinned to head and writes an audit line"
+  pass "fm-pr-merge --pipeline merges a green PR pinned to head and records the write first"
 }
 
 # Shared refusal driver: run --pipeline and assert non-zero + no merge invoked.
@@ -1333,8 +1351,8 @@ test_pipeline_refuses_match_head_commit_override() {
     "pipeline-pin-override: refusal did not explain the head pin override"
   assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
     "pipeline-pin-override: gh-axi pr merge was invoked despite the pin override"
-  assert_absent "$case_dir/state/pr-merge-audit.log" \
-    "pipeline-pin-override: audit line was written despite the pin override"
+  assert_absent "$case_dir/state/forge-write-audit.log" \
+    "pipeline-pin-override: a merge was recorded despite the pin override"
   pass "fm-pr-merge --pipeline refuses caller-supplied --match-head-commit overrides"
 }
 
@@ -1346,8 +1364,8 @@ test_pipeline_refuses_stacked_default_squash() {
   expect_pipeline_refusal "$case_dir" pipeline-stack
   assert_grep 'it carries 249 commits and 379 changed files' "$case_dir/stderr" \
     "pipeline-stack: the refusal did not name the counts it actually read"
-  assert_absent "$case_dir/state/pr-merge-audit.log" \
-    "pipeline-stack: a merge was audited despite the squash refusal"
+  assert_absent "$case_dir/state/forge-write-audit.log" \
+    "pipeline-stack: a merge was recorded despite the squash refusal"
   pass "fm-pr-merge --pipeline refuses the default squash on a stacked PR"
 }
 
@@ -1387,8 +1405,8 @@ test_pipeline_refuses_auto_extra_arg() {
     "pipeline-auto-override: refusal did not explain the auto-merge rejection"
   assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
     "pipeline-auto-override: gh-axi pr merge was invoked despite --auto"
-  assert_absent "$case_dir/state/pr-merge-audit.log" \
-    "pipeline-auto-override: audit line was written despite --auto"
+  assert_absent "$case_dir/state/forge-write-audit.log" \
+    "pipeline-auto-override: a merge was recorded despite --auto"
   pass "fm-pr-merge --pipeline refuses caller-supplied --auto in extra args"
 }
 
@@ -1409,3 +1427,102 @@ test_pipeline_refuses_match_head_commit_override
 test_pipeline_refuses_auto_extra_arg
 test_pipeline_refuses_stacked_default_squash
 test_pipeline_explicit_squash_merges_a_stack
+
+# --- forge write audit log --------------------------------------------------
+# Fourteen homes share one forge credential and the forge reports the same
+# provenance for all of them, so the only record that can say which home merged
+# is the one the acting home writes itself, before it acts.
+
+AUDIT_LOG=state/forge-write-audit.log
+
+test_audit_precedes_github_merge() {
+  local case_dir FM_TEST_AUDIT_SNAPSHOT
+  case_dir=$(make_case audit-github)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 5555555555555555555555555555555555555555
+  : > "$case_dir/gh-axi.log"
+  FM_TEST_AUDIT_SNAPSHOT="$case_dir/audit-at-call"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "audit-github: fm-pr-merge failed"
+
+  assert_present "$case_dir/audit-at-call" \
+    "audit-github: gh-axi pr merge ran before the write was recorded"
+  assert_grep "home=$case_dir" "$case_dir/audit-at-call" \
+    "audit-github: the record does not name the home that acted"
+  assert_grep "task=task-x1" "$case_dir/audit-at-call" \
+    "audit-github: the record does not name the task"
+  assert_grep "action=pr-merge	target=https://github.com/example/repo/pull/31" \
+    "$case_dir/audit-at-call" "audit-github: the record does not name the action and its target"
+  head -1 "$case_dir/$AUDIT_LOG" | grep -qF 'absence of a line is not proof that no write occurred' \
+    || fail "audit-github: the log does not state on creation what it fails to capture"
+  pass "fm-pr-merge records a GitHub merge, and the log's own limit, before calling the forge"
+}
+
+test_audit_precedes_gitlab_merge() {
+  local case_dir FM_TEST_AUDIT_SNAPSHOT
+  case_dir=$(make_gitlab_case audit-gitlab)
+  FM_TEST_AUDIT_SNAPSHOT="$case_dir/audit-at-call"
+
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "audit-gitlab: fm-pr-merge failed"
+
+  assert_present "$case_dir/audit-at-call" \
+    "audit-gitlab: glab mr merge ran before the write was recorded"
+  assert_grep "task=task-x1	action=mr-merge	target=$MR_URL" "$case_dir/audit-at-call" \
+    "audit-gitlab: the record does not name the task, action, and target"
+  assert_grep "head=$MR_HEAD" "$case_dir/audit-at-call" \
+    "audit-gitlab: the record does not name the verified head"
+  pass "fm-pr-merge records a GitLab merge before calling the forge"
+}
+
+test_audit_failure_refuses_the_merge() {
+  local case_dir rc
+  case_dir=$(make_case audit-unwritable)
+  mkdir -p "$case_dir/wt"
+  # A directory where the log belongs: the append fails however it is attempted.
+  mkdir -p "$case_dir/$AUDIT_LOG"
+  add_gh_mocks "$case_dir" 6666666666666666666666666666666666666666
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/32 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "audit-unwritable: an unrecordable merge should refuse"
+  assert_grep 'forge write audit log could not be appended' "$case_dir/stderr" \
+    "audit-unwritable: the refusal did not name the unwritable log"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "audit-unwritable: the forge was called even though the write could not be recorded"
+  pass "fm-pr-merge refuses to merge rather than act unlogged"
+}
+
+test_audit_excludes_credential_material() {
+  local case_dir
+  case_dir=$(make_case audit-no-secrets)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 7777777777777777777777777777777777777777
+  : > "$case_dir/gh-axi.log"
+
+  export GH_TOKEN=ghp_environmentcredential000
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/33 -- \
+    --squash --auth-token=ghp_argumentcredential111 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "audit-no-secrets: fm-pr-merge failed"
+  unset GH_TOKEN
+
+  # Non-vacuous: the secret-shaped argument really did reach the forge call.
+  grep -qxF 'pr merge 33 --repo example/repo --squash --auth-token=ghp_argumentcredential111' \
+    "$case_dir/gh-axi.log" || fail "audit-no-secrets: the extra argument never reached the merge"
+  assert_no_grep 'ghp_argumentcredential111' "$case_dir/$AUDIT_LOG" \
+    "audit-no-secrets: a caller argument reached the audit log"
+  assert_no_grep 'ghp_environmentcredential000' "$case_dir/$AUDIT_LOG" \
+    "audit-no-secrets: an environment credential reached the audit log"
+  pass "the audit log carries no caller argument and no environment credential"
+}
+
+test_audit_precedes_github_merge
+test_audit_precedes_gitlab_merge
+test_audit_failure_refuses_the_merge
+test_audit_excludes_credential_material
