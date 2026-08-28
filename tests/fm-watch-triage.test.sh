@@ -3190,11 +3190,12 @@ step_progress_case() { # <name> <window> <task> <branch> <age>
 step_progress_run() { # <dir> <window> <crew-state>
 	local dir=$1 window=$2 crew_state=$3 pid rc=0
 	: >"$dir/watch.out"
-	PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
-		FM_FAKE_NM_STATUS="$dir/nm.toon" FM_FAKE_CREW_STATE="$crew_state" \
-		FM_STATE_OVERRIDE="$dir/state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
-		FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
-		FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >"$dir/watch.out" &
+	# Through `env`, because words that arrive by expansion are arguments, not the
+	# assignment prefix watch_bg's own literal knobs are.
+	watch_bg "$dir/state" "$dir/fakebin" "$dir/watch.out" env \
+		"FM_FAKE_TMUX_WINDOW=$window" "FM_FAKE_TMUX_CAPTURE=$dir/pane.txt" \
+		"FM_FAKE_NM_STATUS=$dir/nm.toon" "FM_FAKE_CREW_STATE=$crew_state" \
+		FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999
 	pid=$!
 	wait_for_exit "$pid" 100 || {
 		reap "$pid"
