@@ -25,7 +25,8 @@
 # stays bounded by new appends instead of re-reading each task's whole lifetime
 # log every time. crew_worktree_written_since reads the task's meta file and walks
 # a bounded slice of its worktree instead of a status file, so callers run it only
-# at the moment they would otherwise escalate. commit_key_syntax_markers also
+# at the moment they would otherwise escalate, and crew_step_progress_evidence
+# makes one bounded `no-mistakes axi status` read at that same moment. commit_key_syntax_markers also
 # writes: after the drain has printed the stated-key syntax warnings it persists
 # each task's warned-through byte marker (state/.<task>.key-syntax-cursor), and a
 # marker that cannot be written simply re-warns next drain (see "Fleet-wide
@@ -53,6 +54,13 @@ case $- in *u*) _fm_classify_nounset=on ;; *) _fm_classify_nounset=off ;; esac
 . "$_FM_CLASSIFY_LIB_DIR/fm-timeout-lib.sh"
 [ "$_fm_classify_nounset" = on ] || set +u
 unset _fm_classify_nounset
+
+# bin/fm-nm-run-lib.sh owns the bounded `no-mistakes` call and the TOON scalar
+# reads, so the active-step progress probe below borrows them rather than growing
+# a second copy of either.
+# shellcheck source=bin/fm-nm-run-lib.sh
+# shellcheck disable=SC1091
+. "$_FM_CLASSIFY_LIB_DIR/fm-nm-run-lib.sh"
 
 # Captain-relevant status verbs. A status line carrying any of these is work
 # firstmate must see. Lines without these verbs are no-verb signals: the watcher
@@ -1496,6 +1504,195 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
       -type f -newer "$anchor" -print -quit 2>/dev/null || true)
   fi
   [ -n "$hit" ]
+}
+
+# Seconds an ACTIVE pipeline step may go with no recorded activity before its lane
+# is escalated as a possible wedge anyway. This is a progress bound, not a pacing
+# knob: a step waiting on an external service legitimately burns no CPU and moves
+# no files, but it still records what it last did, so the honest question is how
+# long ago it last did it. Measured 2026-08-27 on a healthy lane, a `ci` step
+# waiting on GitHub checks reported `8m1s ago: log: CI checks running, waiting for
+# results...`, so the default sits at roughly twice that legitimate silence.
+FM_STEP_ACTIVITY_MAX_SECS=${FM_STEP_ACTIVITY_MAX_SECS:-900}
+# Wall-clock bound on the one `no-mistakes axi status` read the probe makes, for
+# the same reason the worktree walk is bounded: it runs synchronously inside the
+# poll that was about to escalate, so a hung CLI costs that poll the bound and
+# nothing more. Hitting it reads as no evidence, so the lane escalates as before.
+FM_STEP_ACTIVITY_TIMEOUT=${FM_STEP_ACTIVITY_TIMEOUT:-10}
+# Sample width for the CORROBORATING cpu read below, which never gates an absorb.
+FM_STEP_CPU_SAMPLE_SECS=${FM_STEP_CPU_SAMPLE_SECS:-2}
+
+# Seconds in a Go-style duration ("8m1s", "1h2m3s", "45s"), the form the
+# no-mistakes CLI prints ages in; 1 when the string is not one. Fractions are
+# truncated, because the caller compares against a bound in whole seconds.
+fm_duration_secs() {  # <duration>
+  local d=$1 total=0 num unit seen=0
+  while [ -n "$d" ]; do
+    num=${d%%[hms]*}
+    [ "$num" != "$d" ] || return 1
+    unit=${d:${#num}:1}
+    d=${d:$(( ${#num} + 1 ))}
+    num=${num%%.*}
+    case "$num" in ''|*[!0-9]*) return 1 ;; esac
+    case "$unit" in
+      h) total=$(( total + num * 3600 )) ;;
+      m) total=$(( total + num * 60 )) ;;
+      s) total=$(( total + num )) ;;
+      *) return 1 ;;
+    esac
+    seen=1
+  done
+  [ "$seen" -eq 1 ] || return 1
+  printf '%s' "$total"
+}
+
+# Split one TOON table row into the global array FM_TOON_ROW, on commas OUTSIDE
+# double quotes, dropping the quotes. Splitting on every comma would be wrong for
+# exactly the field this probe reads: a step's last_activity carries the log line
+# it last wrote ("...CI checks running, waiting for results..."), commas and all.
+fm_toon_row_fields() {  # <row>
+  local s=$1 field="" quoted=0 i c
+  FM_TOON_ROW=()
+  for (( i = 0; i < ${#s}; i++ )); do
+    c=${s:i:1}
+    case "$c" in
+      '"') quoted=$(( 1 - quoted )); continue ;;
+      ',')
+        if [ "$quoted" -eq 0 ]; then
+          FM_TOON_ROW+=( "$(fm_nm_trim "$field")" )
+          field=""
+          continue
+        fi
+        ;;
+    esac
+    field+=$c
+  done
+  FM_TOON_ROW+=( "$(fm_nm_trim "$field")" )
+}
+
+# Position of column <name> in a TOON header's comma-separated column list; 1 when
+# the header does not carry that column, so a CLI that renames or drops it reads as
+# no evidence rather than as the wrong column.
+fm_toon_col_index() {  # <columns> <name>
+  local cols=$1 name=$2 i=0 c
+  local IFS=,
+  for c in $cols; do
+    if [ "$c" = "$name" ]; then printf '%s' "$i"; return 0; fi
+    i=$(( i + 1 ))
+  done
+  return 1
+}
+
+# Cumulative CPU ticks (utime+stime) charged to <pid>; 1 when that cannot be read,
+# including on a kernel with no /proc. Corroboration only, so an unreadable pid is
+# never an outcome any decision turns on.
+fm_proc_cpu_ticks() {  # <pid>
+  local stat rest
+  local -a f=()
+  stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  rest=${stat#*") "}
+  [ "$rest" != "$stat" ] || return 1
+  read -r -a f <<< "$rest"
+  # Skipping through comm's closing paren (comm may hold spaces) leaves the process
+  # state as field 3, so utime and stime, fields 14 and 15 of proc(5), are here.
+  [ "${#f[@]}" -ge 13 ] || return 1
+  case "${f[11]}${f[12]}" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' $(( f[11] + f[12] ))
+}
+
+# 0 when <pid> was charged more CPU across one short sample. CORROBORATING ONLY:
+# a step waiting on an external service burns almost nothing and is still making
+# progress, so this never gates an absorb - it only enriches the recorded reason,
+# so a lane that turns out to be genuinely wedged is easier to read back.
+fm_pid_cpu_advanced() {  # <pid>
+  local pid=$1 secs=$FM_STEP_CPU_SAMPLE_SECS before after
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  case "$secs" in ''|*[!0-9]*|0) secs=2 ;; esac
+  before=$(fm_proc_cpu_ticks "$pid") || return 1
+  sleep "$secs"
+  after=$(fm_proc_cpu_ticks "$pid") || return 1
+  [ "$after" -gt "$before" ]
+}
+
+# Print the evidence phrase for <id>'s pipeline step when that step is ACTIVE and
+# was active recently, and return 0; print nothing and return 1 otherwise. This is
+# the wedge detector's fourth liveness input, and the only one that can see the
+# shape which produced three false possible-wedge escalations on 2026-08-27: a run
+# whose steps had all completed through `pr`, whose `ci` step was running and
+# waiting on GitHub, and which therefore burned almost no CPU, wrote no file, and
+# rendered nothing into its pane for many minutes at a time while being perfectly
+# healthy. Neither pane quietness, nor the run step alone, nor the worktree write
+# probe can tell that lane from a wedged one; the step's own last_activity can,
+# because it answers when that step last DID something rather than whether anything
+# is alive.
+#
+# 1 for every other outcome - no recorded worktree, a torn-down worktree, a
+# secondmate home, a detached HEAD, no CLI, a read that outlives its bound, a run
+# attributed to another branch, no active step, a missing or unparseable
+# last_activity, and an activity age past FM_STEP_ACTIVITY_MAX_SECS - so anything
+# this cannot evaluate leaves the caller's escalation schedule exactly as it was.
+#
+# Attribution: the caller has already established through bin/fm-crew-state.sh
+# (branch AND code identity, under bin/fm-nm-run-lib.sh's rule) that an active run
+# belongs to this crew. This read adds the CLI's own branch field as a second,
+# cheap guard, because `axi status` answers with the active-or-most-recent run of
+# the install and will describe ANOTHER lane's run when this worktree has none of
+# its own - verified 2026-08-27 from a worktree at detached HEAD, which was
+# answered with a different lane's running ci step.
+crew_step_progress_evidence() {  # <id> <state>
+  local id=$1 state=$2 wt kind branch out bound line cols in_table=0
+  local i_step i_activity i_pid step activity pid age phrase
+  [ -n "$id" ] || return 1
+  wt=$(grep '^worktree=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  [ -n "$wt" ] && [ -d "$wt" ] || return 1
+  kind=$(grep '^kind=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  [ "$kind" != secondmate ] || return 1
+  command -v no-mistakes >/dev/null 2>&1 || return 1
+  branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ -n "$branch" ] || return 1
+  bound=$FM_STEP_ACTIVITY_TIMEOUT
+  case "$bound" in ''|*[!0-9]*|0) bound=10 ;; esac
+  out=$(fm_nm_run "$wt" "$bound" axi status)
+  [ -n "$out" ] || return 1
+  [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")" = "$branch" ] || return 1
+  while IFS= read -r line; do
+    if [ "$in_table" -eq 0 ]; then
+      case "$line" in
+        *active_steps\[*\]\{*)
+          cols=${line#*\{}
+          cols=${cols%%\}*}
+          i_step=$(fm_toon_col_index "$cols" step) || return 1
+          i_activity=$(fm_toon_col_index "$cols" last_activity) || return 1
+          i_pid=$(fm_toon_col_index "$cols" agent_pid) || i_pid=""
+          in_table=1
+          ;;
+      esac
+      continue
+    fi
+    # Rows run until the next key or table header.
+    case "$line" in
+      *\[*\]\{*) break ;;
+      *,*) ;;
+      *) break ;;
+    esac
+    fm_toon_row_fields "$line"
+    [ "${#FM_TOON_ROW[@]}" -gt "$i_activity" ] || continue
+    step=${FM_TOON_ROW[$i_step]}
+    activity=${FM_TOON_ROW[$i_activity]}   # "<duration> ago: <what it did>"
+    case "$activity" in *" ago:"*) ;; *) continue ;; esac
+    age=$(fm_duration_secs "${activity%% ago:*}") || continue
+    [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || continue
+    phrase="active pipeline step ${step:-unknown}, last activity ${age}s ago"
+    if [ -n "$i_pid" ]; then
+      pid=${FM_TOON_ROW[$i_pid]:-}
+      if [ -n "$pid" ] && fm_pid_cpu_advanced "$pid"; then
+        phrase="$phrase, its step agent still advancing CPU"
+      fi
+    fi
+    printf '%s' "$phrase"
+    return 0
+  done <<< "$out"
+  return 1
 }
 
 # 0 (benign/absorb) if EVERY task referenced by a no-verb "signal:" wake is provably

@@ -3031,6 +3031,279 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain() {
 
 # --- triage debug log stays size capped -------------------------------------
 
+# --- active pipeline step: the progress signal, not a liveness signal ---------
+# Measured 2026-08-27: a lane whose steps had all completed through `pr` and whose
+# `ci` step was running and waiting on GitHub checks raised possible-wedge twice in
+# nine minutes. It burned almost no CPU, wrote no file, and rendered nothing into
+# its supervising pane, because the work was a headless step waiting on an external
+# service - every liveness signal the watcher had said "nothing is happening", and
+# every one of them was wrong. The step's own last_activity is the progress signal
+# that separates that lane from a wedged one, so these cases pin it.
+
+# Install a fake `no-mistakes` into <fakebin> whose `axi status` prints the file
+# named by FM_FAKE_NM_STATUS, so a phase can change what the pipeline reports
+# without touching the fixture. An absent or empty file stands for a CLI that
+# answers nothing at all (the pipeline died, or the read timed out).
+make_fake_no_mistakes() { # <fakebin>
+	cat >"$1/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+set -u
+[ "${1:-}" = axi ] && [ "${2:-}" = status ] || exit 0
+[ -n "${FM_FAKE_NM_STATUS:-}" ] && [ -f "$FM_FAKE_NM_STATUS" ] || exit 0
+cat "$FM_FAKE_NM_STATUS"
+SH
+	chmod +x "$1/no-mistakes"
+}
+
+# `axi status` TOON for a run on <branch> whose ci step is active and last recorded
+# activity <ago> ago. The activity text deliberately carries a comma, exactly as the
+# real CLI's does, so a reader that splits the row on every comma reads the wrong
+# column and fails these cases.
+nm_status_ci_active() { # <branch> <ago>
+	cat <<TOON
+run:
+  id: "01M13GY9G42SEFPG9PNS8RDG2D"
+  branch: $1
+  status: running
+  head: c9606ca5
+  pr: "https://example.test/pr/48"
+  steps[2]{step,status,findings,duration_ms}:
+    pr,completed,0,281083
+    ci,running,0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,45m41s,"$2 ago: log: CI checks running, waiting for results...","",starting
+TOON
+}
+
+# A worktree on its own branch, the shape the progress probe requires before it
+# will read anything: the recorded worktree must exist and must be on a branch.
+make_case_worktree() { # <dir> <branch>
+	git init -q "$1" 2>/dev/null || fail "could not create the case worktree"
+	git -C "$1" config user.email crew@example.test
+	git -C "$1" config user.name crew
+	git -C "$1" checkout -q -b "$2"
+	git -C "$1" commit -q --allow-empty -m "base"
+}
+
+# The classifier itself. Every negative outcome must read as NO evidence, so a lane
+# the probe cannot evaluate keeps escalating exactly as it does today.
+test_crew_step_progress_evidence_classifier() {
+	local dir state fakebin wt evidence
+	dir=$(make_case classify-step-progress)
+	state="$dir/state"
+	fakebin="$dir/fakebin"
+	wt="$dir/wt"
+	make_fake_no_mistakes "$fakebin"
+	make_case_worktree "$wt" fm/ci-wait
+	printf 'window=test:fm-ci\nkind=ship\nworktree=%s\n' "$wt" >"$state/ci.meta"
+	export FM_FAKE_NM_STATUS="$dir/nm.toon"
+	export PATH="$fakebin:$PATH"
+
+	# The case that prompted this: an active ci step waiting on GitHub, 8m1s since
+	# its last recorded activity, and no CPU being burned anywhere.
+	nm_status_ci_active fm/ci-wait 8m1s >"$FM_FAKE_NM_STATUS"
+	evidence=$(crew_step_progress_evidence ci "$state") ||
+		fail "an active ci step that recorded progress 8m1s ago was not read as progress"
+	case "$evidence" in
+	*"active pipeline step ci"*"481s"*) ;;
+	*) fail "the evidence phrase did not name the active step and its activity age: $evidence" ;;
+	esac
+	# The activity text carries a comma; a naive row split would report the truncated
+	# text as the age and silently read the wrong column.
+	case "$evidence" in *"CI checks"*) fail "the row split leaked the activity text into the age: $evidence" ;; esac
+
+	# Past the bound: an active step that has recorded nothing for 26 minutes is not
+	# evidence of progress, whatever the record says it is doing.
+	nm_status_ci_active fm/ci-wait 26m3s >"$FM_FAKE_NM_STATUS"
+	! crew_step_progress_evidence ci "$state" >/dev/null ||
+		fail "a step silent past FM_STEP_ACTIVITY_MAX_SECS was read as progress"
+	# ... and the bound is the knob, not a blanket absorb.
+	FM_STEP_ACTIVITY_MAX_SECS=3600 crew_step_progress_evidence ci "$state" >/dev/null ||
+		fail "a widened bound did not admit the same 26m-old activity"
+
+	# No active step at all (every step completed): nothing to absorb on.
+	grep -v 'active_steps\|    ci,running,45m41s' <<<"$(nm_status_ci_active fm/ci-wait 8m1s)" >"$FM_FAKE_NM_STATUS"
+	! crew_step_progress_evidence ci "$state" >/dev/null ||
+		fail "a run with no active step was read as progress"
+
+	# The CLI answered with ANOTHER lane's run. `axi status` reports the install's
+	# active-or-most-recent run, so this is the shape that would absorb one crew's
+	# wedge on another crew's progress.
+	nm_status_ci_active fm/someone-else 8m1s >"$FM_FAKE_NM_STATUS"
+	! crew_step_progress_evidence ci "$state" >/dev/null ||
+		fail "a run attributed to another branch was read as this crew's progress"
+
+	# Unparseable activity, and a CLI that answers nothing at all (a died pipeline
+	# or a read that hit its bound): both are absence of evidence.
+	nm_status_ci_active fm/ci-wait "a while" >"$FM_FAKE_NM_STATUS"
+	! crew_step_progress_evidence ci "$state" >/dev/null ||
+		fail "an unparseable last_activity was read as progress"
+	: >"$FM_FAKE_NM_STATUS"
+	! crew_step_progress_evidence ci "$state" >/dev/null ||
+		fail "a CLI that answered nothing was read as progress"
+
+	# Nothing to read against: a torn-down worktree, a detached HEAD (no branch to
+	# attribute a run to), and a secondmate's provisioned home.
+	nm_status_ci_active fm/ci-wait 8m1s >"$FM_FAKE_NM_STATUS"
+	printf 'window=test:fm-gone\nkind=ship\nworktree=%s\n' "$dir/missing" >"$state/gone.meta"
+	! crew_step_progress_evidence gone "$state" >/dev/null ||
+		fail "a torn-down worktree was read as progress"
+	! crew_step_progress_evidence "" "$state" >/dev/null || fail "an empty id was read as progress"
+	git -C "$wt" checkout -q --detach
+	! crew_step_progress_evidence ci "$state" >/dev/null ||
+		fail "a detached-HEAD worktree was read as progress"
+	git -C "$wt" checkout -q fm/ci-wait
+	printf 'window=test:fm-mate\nkind=secondmate\nworktree=%s\n' "$wt" >"$state/mate.meta"
+	! crew_step_progress_evidence mate "$state" >/dev/null ||
+		fail "a secondmate home was read as crew step progress"
+	unset FM_FAKE_NM_STATUS
+	pass "crew_step_progress_evidence: an active step with recent last_activity is progress; a silent step, a foreign run, and anything unreadable are not"
+}
+
+# CPU is corroboration, never the question. It enriches the recorded reason where a
+# step agent exists, and its absence changes nothing - which is what makes the
+# ci-waiting-on-GitHub case above absorbable at all.
+test_step_agent_cpu_is_corroboration_only() {
+	local dir state fakebin wt burner evidence
+	[ -r /proc/self/stat ] || {
+		pass "step-agent CPU corroboration needs /proc, absent here (skipped)"
+		return 0
+	}
+	dir=$(make_case classify-step-cpu)
+	state="$dir/state"
+	fakebin="$dir/fakebin"
+	wt="$dir/wt"
+	make_fake_no_mistakes "$fakebin"
+	make_case_worktree "$wt" fm/cpu
+	printf 'window=test:fm-cpu\nkind=ship\nworktree=%s\n' "$wt" >"$state/cpu.meta"
+	export FM_FAKE_NM_STATUS="$dir/nm.toon"
+	export PATH="$fakebin:$PATH"
+	bash -c 'while :; do :; done' &
+	burner=$!
+	nm_status_ci_active fm/cpu 8m1s >"$FM_FAKE_NM_STATUS"
+	sed -i "s/\"\",starting/\"$burner\",starting/" "$FM_FAKE_NM_STATUS"
+	evidence=$(FM_STEP_CPU_SAMPLE_SECS=1 crew_step_progress_evidence cpu "$state") ||
+		fail "a step with a CPU-burning agent was not read as progress"
+	case "$evidence" in
+	*"advancing CPU"*) ;;
+	*) fail "a demonstrably busy step agent was not recorded as corroboration: $evidence" ;;
+	esac
+	kill "$burner" 2>/dev/null || true
+	wait "$burner" 2>/dev/null || true
+	# The same reading with a dead agent pid still reports progress: the absorb turns
+	# on last_activity, so losing the corroborating signal only loses the note.
+	evidence=$(FM_STEP_CPU_SAMPLE_SECS=1 crew_step_progress_evidence cpu "$state") ||
+		fail "losing the CPU corroboration turned recent step progress into no evidence"
+	case "$evidence" in *"advancing CPU"*) fail "a dead step agent was reported as advancing CPU: $evidence" ;; esac
+	unset FM_FAKE_NM_STATUS
+	pass "a CPU-advancing step agent is recorded as corroboration, and its absence never withholds the progress verdict"
+}
+
+# Build the fixture both behavioral cases share: an already-classified stale pane
+# whose idle window opened <age> seconds ago, so the very first poll lands straight
+# on the at-threshold wedge branch, plus a worktree on its own branch and a fake
+# CLI. Echoes the case directory.
+step_progress_case() { # <name> <window> <task> <branch> <age>
+	local name=$1 window=$2 task=$3 branch=$4 age=$5 dir state key pane_hash back
+	dir=$(make_case "$name")
+	state="$dir/state"
+	make_fake_no_mistakes "$dir/fakebin"
+	make_case_worktree "$dir/wt" "$branch"
+	printf 'validating, nothing rendered' >"$dir/pane.txt"
+	printf 'window=%s\nkind=ship\nworktree=%s\n' "$window" "$dir/wt" >"$state/$task.meta"
+	printf 'working: handed to validation\n' >"$state/$task.status"
+	printf '%s' "$(seen_sig "$state/$task.status")" >"$state/.seen-${task}_status"
+	key=$(printf '%s' "$window" | tr ':/.' '___')
+	pane_hash=$(hash_text "validating, nothing rendered")
+	printf '%s' "$pane_hash" >"$state/.hash-$key"
+	printf '1\n' >"$state/.count-$key"
+	printf '%s' "$pane_hash" >"$state/.stale-$key"
+	back=$(($(date +%s) - age))
+	echo "$back" >"$state/.stale-since-$key"
+	set_mtime "$back" "$state/.stale-since-$key"
+	printf '%s\n' "$dir"
+}
+
+# Run one watcher over a step-progress case with <crew-state> as the authoritative
+# verdict; 0 when it escalated, 1 when it absorbed and had to be stopped.
+step_progress_run() { # <dir> <window> <crew-state>
+	local dir=$1 window=$2 crew_state=$3 pid rc=0
+	: >"$dir/watch.out"
+	PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+		FM_FAKE_NM_STATUS="$dir/nm.toon" FM_FAKE_CREW_STATE="$crew_state" \
+		FM_STATE_OVERRIDE="$dir/state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+		FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+		FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >"$dir/watch.out" &
+	pid=$!
+	wait_for_exit "$pid" 100 || {
+		reap "$pid"
+		rc=1
+	}
+	ack_stopped_cycle "$dir/state" || fail "could not acknowledge the watcher stop"
+	return "$rc"
+}
+
+# Acceptance case 1: an ACTIVE step with recent last_activity and no CPU being
+# burned anywhere must not raise possible-wedge, and the absorb must be readable
+# back out of the watcher debug log with its reason.
+test_active_recent_step_absorbs_the_wedge() {
+	local dir key back
+	dir=$(step_progress_case wedge-step-progress test:fm-ci ci fm/ci-wait 500)
+	key=test_fm-ci
+	nm_status_ci_active fm/ci-wait 8m1s >"$dir/nm.toon"
+	if step_progress_run "$dir" test:fm-ci 'state: working · source: run-step · ci running'; then
+		fail "a lane whose ci step recorded progress 8m1s ago still raised possible wedge: $(cat "$dir/watch.out")"
+	fi
+	[ ! -s "$dir/watch.out" ] || fail "an absorbed lane printed a wake reason: $(cat "$dir/watch.out")"
+	[ ! -s "$dir/state/.wake-queue" ] || fail "an absorbed lane enqueued a wake"
+	[ ! -e "$dir/state/.wedge-escalations-$key" ] || fail "an absorbed lane advanced the escalation counter"
+	[ -e "$dir/state/.pipeline-since-$key" ] || fail "the step-progress deferral chain was not recorded"
+	back=$(cat "$dir/state/.stale-since-$key" 2>/dev/null || echo 0)
+	[ "$back" -gt "$(($(date +%s) - 60))" ] || fail "the deferral did not restart the idle timer, so the next window cannot re-probe"
+	grep -F "active pipeline step ci" "$dir/state/.watch-triage.log" >/dev/null ||
+		fail "the absorb was not recorded in the watcher debug log with its reason: $(cat "$dir/state/.watch-triage.log" 2>/dev/null)"
+	grep -F "last activity 481s ago" "$dir/state/.watch-triage.log" >/dev/null ||
+		fail "the recorded absorb reason did not carry the step's activity age"
+
+	# The same lane, once that step stops recording anything: the alarm is deferred,
+	# never disabled.
+	nm_status_ci_active fm/ci-wait 41m3s >"$dir/nm.toon"
+	echo "$(($(date +%s) - 500))" >"$dir/state/.stale-since-$key"
+	set_mtime "$(($(date +%s) - 500))" "$dir/state/.stale-since-$key"
+	step_progress_run "$dir" test:fm-ci 'state: working · source: run-step · ci running' ||
+		fail "a step that recorded nothing for 41 minutes did not wedge-escalate: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
+		fail "the escalation past the activity bound did not flag a possible wedge"
+	pass "an active step with recent activity absorbs the wedge, is recorded with its reason, and escalates again once the step goes silent"
+}
+
+# Acceptance cases 2 and 3: BOTH conditions are required. A run-step record with no
+# active run behind it is the stale-record case, and progress with no attributed
+# run-step verdict is the unattributed case; each escalates exactly as today.
+test_step_progress_needs_both_conditions() {
+	local dir key
+	dir=$(step_progress_case wedge-step-both test:fm-both both fm/both 500)
+	# Condition 2 alone: the record still says run-step, but the pipeline is gone.
+	: >"$dir/nm.toon"
+	step_progress_run "$dir" test:fm-both 'state: working · source: run-step · ci running' ||
+		fail "a run-step record with no live run absorbed the wedge: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
+		fail "the stale-record case did not flag a possible wedge"
+	key=test_fm-both
+	[ ! -e "$dir/state/.pipeline-since-$key" ] || fail "an escalation left a step-progress deferral chain behind"
+
+	# Condition 1 alone: a healthy-looking run report, but the crew's authoritative
+	# state does not attribute an actively-running step to this crew's own code.
+	nm_status_ci_active fm/both 8m1s >"$dir/nm.toon"
+	echo "$(($(date +%s) - 500))" >"$dir/state/.stale-since-$key"
+	set_mtime "$(($(date +%s) - 500))" "$dir/state/.stale-since-$key"
+	step_progress_run "$dir" test:fm-both 'state: working · source: pane · busy signature' ||
+		fail "a pane-sourced working verdict absorbed the wedge on another read's progress: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
+		fail "the unattributed case did not flag a possible wedge"
+	pass "the step-progress absorb needs both an attributed active run step and recent step activity; either alone still escalates"
+}
+
 test_triage_log_size_cap_accepts_spaced_wc_counts() {
 	local dir state fakebin out status_file pid lines i
 	dir=$(make_case triage-log-spaced-wc)
@@ -3716,6 +3989,10 @@ test_write_deferral_resurfaces_on_the_bounded_cadence
 test_secondmate_home_supervision_churn_is_not_write_evidence
 test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain
+test_crew_step_progress_evidence_classifier
+test_step_agent_cpu_is_corroboration_only
+test_active_recent_step_absorbs_the_wedge
+test_step_progress_needs_both_conditions
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_procevent_captured_result_surfaces_proactively
 test_procevent_unacknowledged_result_redrains_until_handled
