@@ -1518,7 +1518,8 @@ FM_STEP_ACTIVITY_MAX_SECS=${FM_STEP_ACTIVITY_MAX_SECS:-900}
 # healthy. Neither pane quietness, nor the run step alone, nor the worktree write
 # probe can tell that lane from a wedged one; the step's own last_activity can,
 # because it measures PROGRESS - when that step last did something - where every
-# other input measures only liveness.
+# other input measures only liveness. This function is the one owner of that
+# policy; every other mention of it points here.
 #
 # Both required conditions come off ONE fm-crew-state.sh line, the same read
 # crew_absorb_state makes: `working` from source `run-step` is that reader's own
@@ -1528,15 +1529,13 @@ FM_STEP_ACTIVITY_MAX_SECS=${FM_STEP_ACTIVITY_MAX_SECS:-900}
 # FM_STEP_ACTIVITY_MAX_SECS all return 1, so anything that cannot be evaluated
 # leaves the caller's escalation schedule exactly as it was.
 crew_step_progress_evidence() {  # <id>
-  local line rest step age
+  local line rest step age _
   [ -n "${1:-}" ] || return 1
   line=$("$FM_CREW_STATE_BIN" "$1" 2>/dev/null) || return 1
   case "$line" in "state: working"*) ;; *) return 1 ;; esac
   case "$line" in *"source: run-step"*) ;; *) return 1 ;; esac
   case "$line" in *"activity: "*) rest=${line##*activity: } ;; *) return 1 ;; esac
-  step=${rest%% *}
-  age=${rest#* }
-  age=${age%%[! 0-9]*}
+  read -r step age _ <<< "$rest"
   case "$age" in ''|*[!0-9]*) return 1 ;; esac
   [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || return 1
   printf 'active pipeline step %s, last activity %ss ago' "$step" "$age"

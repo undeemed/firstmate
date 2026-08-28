@@ -65,11 +65,7 @@ fm_nm_duration_secs() {  # <duration>
 # "<duration> ago: <what it did>" activity, so a row that matches IS an active
 # step, while a completed-steps row, a renamed or dropped column, and an
 # unparseable age all stop matching and report nothing.
-#
-# This is the pipeline's own PROGRESS record, as distinct from every liveness
-# signal a supervisor can read from outside: a step waiting on an external service
-# (a ci step waiting on GitHub checks) burns almost no CPU, writes no file, and
-# renders nothing, yet still records what it last did and when.
+
 fm_nm_active_step_activity() {  # <toon-output>
   local line age
   while IFS= read -r line; do
