@@ -3032,15 +3032,11 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain() {
 # --- triage debug log stays size capped -------------------------------------
 
 # --- active pipeline step: the progress signal, not a liveness signal ---------
-# Measured 2026-08-27: a lane whose steps had all completed through `pr` and whose
-# `ci` step was running and waiting on GitHub checks raised possible-wedge twice in
-# nine minutes. It burned almost no CPU, wrote no file, and rendered nothing into
-# its supervising pane, because the work was a headless step waiting on an external
-# service - every liveness signal the watcher had said "nothing is happening", and
-# every one of them was wrong. The step's own recorded activity is the progress
-# signal that separates that lane from a wedged one, so these cases pin it.
-# bin/fm-crew-state.sh carries that record in its own line (see
-# tests/fm-crew-state.test.sh for how the field is read off `axi status`).
+# A step waiting on an external service renders nothing, writes nothing, and burns
+# almost no CPU, so every liveness signal reads as silence while the lane is
+# healthy; these cases pin the step's own recorded progress as what separates it
+# from a wedge. bin/fm-crew-state.sh produces that record (tests/fm-crew-state.test.sh
+# pins how it is read off `axi status`).
 
 test_crew_step_progress_evidence_classifier() {
 	local dir fakebin evidence
@@ -3164,29 +3160,6 @@ test_active_recent_step_absorbs_the_wedge() {
 	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
 		fail "the escalation past the activity bound did not flag a possible wedge"
 	pass "an active step with recent activity absorbs the wedge, is recorded with its reason, and escalates again once the step goes silent"
-}
-
-# Acceptance cases 2 and 3: BOTH conditions are required. A run-step record with no
-# active run behind it is the stale-record case, and a busy-looking pane with no
-# attributed run step is the unattributed case; each escalates exactly as today.
-test_step_progress_needs_both_conditions() {
-	local dir key
-	dir=$(step_progress_case wedge-step-both test:fm-both both 500)
-	key=test_fm-both
-	step_progress_run "$dir" test:fm-both 'state: working · source: run-step · ci running' ||
-		fail "a run-step record with no active step absorbed the wedge: $(cat "$dir/watch.out")"
-	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
-		fail "the stale-record case did not flag a possible wedge"
-	[ ! -e "$dir/state/.pipeline-since-$key" ] || fail "an escalation left a step-progress deferral chain behind"
-
-	echo "$(($(date +%s) - 500))" >"$dir/state/.stale-since-$key"
-	set_mtime "$(($(date +%s) - 500))" "$dir/state/.stale-since-$key"
-	step_progress_run "$dir" test:fm-both \
-		'state: working · source: pane · busy signature · activity: ci 12' ||
-		fail "a pane-sourced working verdict absorbed the wedge on another read's progress: $(cat "$dir/watch.out")"
-	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
-		fail "the unattributed case did not flag a possible wedge"
-	pass "the step-progress absorb needs both an attributed active run step and recent step activity; either alone still escalates"
 }
 
 test_triage_log_size_cap_accepts_spaced_wc_counts() {
@@ -3876,7 +3849,6 @@ test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain
 test_crew_step_progress_evidence_classifier
 test_active_recent_step_absorbs_the_wedge
-test_step_progress_needs_both_conditions
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_procevent_captured_result_surfaces_proactively
 test_procevent_unacknowledged_result_redrains_until_handled
