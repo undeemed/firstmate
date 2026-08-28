@@ -53,19 +53,12 @@
 #                          without burying every other event. Any genuine change
 #                          resets both the count and the cadence. Unless afk is
 #                          active. Two evidence classes defer that escalation
-#                          instead (wedge_defer): a pane whose own task worktree
-#                          was written during the quiet window, because files
-#                          appearing there are liveness the pane and the run step
-#                          cannot show; and a pane whose own pipeline step is
-#                          ACTIVE and recently active, because a step waiting on
-#                          an external service - a ci step waiting on GitHub
-#                          checks - legitimately burns no CPU, writes no file, and
-#                          renders nothing, so only the step's own last_activity
-#                          separates it from a wedge. Both deferrals re-surface
-#                          once per PAUSE_RESURFACE_SECS, and a pane that writes
-#                          nothing, a step that has recorded nothing for
-#                          FM_STEP_ACTIVITY_MAX_SECS, and anything the probes
-#                          cannot evaluate keep the unchanged schedule.
+#                          instead (wedge_defer): a task worktree written during
+#                          the quiet window, and an actively-progressing pipeline
+#                          step (crew_step_progress_evidence in
+#                          bin/fm-classify-lib.sh owns why). Both re-surface once
+#                          per PAUSE_RESURFACE_SECS, and anything the probes
+#                          cannot evaluate keeps the unchanged schedule.
 #                          A genuinely busy pane
 #                          (window_is_busy true) is exempt from the above, but
 #                          only up to BUSY_TURN_MAX_SECS with no completed turn
@@ -677,20 +670,20 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [interval]
 # its own rendered pane cannot show (see this file's header for the two evidence
 # classes and the call sites for their probes). Deliberately a DEFERRAL, not a
 # cancellation: the idle timer restarts, so the next window probes again, and
-# <chain-prefix> names this evidence's own since/resurfaced marker pair so the
-# whole chain ages and still re-surfaces once every PAUSE_RESURFACE_SECS through
-# the shared resurface_absorbed, and evidence that churns without real progress
-# cannot stay invisible. The escalation counter is left alone: it is neither
+# the window's deferral chain keeps ageing across both evidence classes, so it
+# still re-surfaces once every PAUSE_RESURFACE_SECS through the shared
+# resurface_absorbed and evidence that churns without real progress cannot stay
+# invisible. The escalation counter is left alone: it is neither
 # advanced (this is not an escalation) nor reset (a later genuine escalation must
 # still carry the demand-deep-inspection history it had earned).
-wedge_defer() {  # <window> <since-file> <triage-label> <idle-age> <chain-prefix> <evidence>
-  local win=$1 since_file=$2 label=$3 age=$4 prefix=$5 evidence=$6 key csf cage
+wedge_defer() {  # <window> <since-file> <triage-label> <idle-age> <evidence>
+  local win=$1 since_file=$2 label=$3 age=$4 evidence=$5 key csf cage
   key=$(window_key "$win")
-  csf="$STATE/.$prefix-since-$key"
+  csf="$STATE/.defer-since-$key"
   [ -e "$csf" ] || date +%s > "$csf"
   cage=$(age_of "$csf")
   date +%s > "$since_file"
-  resurface_absorbed "$win" "$STATE/.$prefix-resurfaced-$key" "$cage" \
+  resurface_absorbed "$win" "$STATE/.defer-resurfaced-$key" "$cage" \
     "stale: $win (idle ${age}s, $evidence, deferred for ${cage}s, rechecked on a long cadence not a wedge; confirm it is real progress)"
   triage_log "absorbed $label ($evidence, idle ${age}s): $win"
 }
@@ -700,8 +693,7 @@ wedge_defer() {  # <window> <since-file> <triage-label> <idle-age> <chain-prefix
 # long-finished one cannot make the next deferral resurface immediately.
 clear_defer_tracking() {  # <window-key>
   local key=$1
-  rm -f "$STATE/.writing-since-$key" "$STATE/.writing-resurfaced-$key" \
-    "$STATE/.pipeline-since-$key" "$STATE/.pipeline-resurfaced-$key"
+  rm -f "$STATE/.defer-since-$key" "$STATE/.defer-resurfaced-$key"
 }
 
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
@@ -730,11 +722,11 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       interval=$(wedge_escalate_interval "$n")
       if [ "$age" -ge "$interval" ]; then
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
-          wedge_defer "$win" "$since_file" "$label" "$age" writing "writing its worktree"
+          wedge_defer "$win" "$since_file" "$label" "$age" "writing its worktree"
           return 0
         fi
         if evidence=$(crew_step_progress_evidence "$task"); then
-          wedge_defer "$win" "$since_file" "$label" "$age" pipeline "$evidence"
+          wedge_defer "$win" "$since_file" "$label" "$age" "$evidence"
           return 0
         fi
         n=$(( n + 1 ))
