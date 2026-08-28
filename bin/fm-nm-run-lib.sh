@@ -56,8 +56,10 @@ fm_nm_strip_quotes() {
 # "<duration> ago: <what it did>" activity, so a row that matches IS an active
 # step, while a completed-steps row, a renamed or dropped column, and an
 # unparseable age all stop matching and report nothing. The duration is Go's own
-# fixed h-m-s form, whose seconds unit is always present, and its fraction is
-# truncated because callers compare against whole-second bounds.
+# h-m-s form, its fraction truncated because callers compare against
+# whole-second bounds; a sub-second age renders in ms/us/ns units instead, which
+# this expression deliberately does not match, so it reads as no evidence - the
+# escalate-safe direction.
 fm_nm_active_step_activity() {  # <toon-output>
   local line
   local re='^[[:space:]]*([A-Za-z_-]+),.*"(([0-9]+)h)?(([0-9]+)m)?([0-9]+)(\.[0-9]+)?s ago:'
