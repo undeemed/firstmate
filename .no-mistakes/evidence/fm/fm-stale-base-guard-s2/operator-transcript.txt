@@ -1,0 +1,25 @@
+=== Scene 1: operator spawns a ship task while the project clone is silently 3 commits behind ===
+$ fm spawn demo-task /tmp/cbd-manual-demo.EbvAQh/demo/project --mode no-mistakes --yolo off
+warning: /tmp/cbd-manual-demo.EbvAQh/demo/home/data/demo-task/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: project is 3 commit(s) behind origin/main, so demo-task's brief was written from stale files; sync that copy with bin/fm-fleet-sync.sh project, re-check the brief against the refreshed files, then spawn again
+(exit status: 1)
+
+--- the clone with unlanded work afterwards: HEAD unchanged, nothing touched, no stash ---
+HEAD before: ce414d07246aac45e7cb47cdc7c22ee3db9ec1a1
+HEAD after:  ce414d07246aac45e7cb47cdc7c22ee3db9ec1a1
+git status --porcelain:
+A  uncommitted.txt
+git stash list: 0 entries
+
+=== Scene 2: operator syncs the clone as the refusal instructs, then spawns again ===
+(clone fast-forwarded to origin/main, as bin/fm-fleet-sync.sh would do)
+$ fm spawn demo-task /tmp/cbd-manual-demo.EbvAQh/demo/project --mode no-mistakes --yolo off
+warning: /tmp/cbd-manual-demo.EbvAQh/demo/home/data/demo-task/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned demo-task harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-demo-task worktree=/tmp/cbd-manual-demo.EbvAQh/demo/pool
+(exit status: 0)
+
+=== Scene 3: origin unreachable during the clone freshness fetch - warns, still launches ===
+$ fm spawn demo-offline /tmp/cbd-manual-demo3.opV4ZN/offline/project --mode no-mistakes --yolo off   # clone fetch fails (network blip)
+warning: could not check project against origin's default branch; launching without a base-freshness check - confirm the brief matches current origin
+spawned demo-offline harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-demo-offline worktree=/tmp/cbd-manual-demo3.opV4ZN/offline/pool
+(exit status: 0)

@@ -1,0 +1,4 @@
+ok - ship and scout spawns from a stale clone refuse before an endpoint exists, never modifying its unlanded work
+ok - syncing the clone clears the refusal, at no more than one clone fetch per spawn
+ok - a failed clone fetch degrades to a warning and launches the worker
+# all fm-spawn-clone-base-drift tests passed
