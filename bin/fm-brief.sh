@@ -58,6 +58,10 @@
 # stopping - pause or blocked, including a finished block with nothing queued -
 # before it goes quiet, because a still pane with no declared state costs
 # supervision a deep inspection to tell apart from a wedge.
+# Every scaffold also carries the same status-honesty contract: `done:` is a
+# claim that the deliverable its definition of done names exists, so it must
+# name that evidence, and work that is only intended, committed locally, or
+# analyzed stays `working:` or `blocked:`.
 # Every scaffold also carries the same progress-visibility contract: stacked
 # ASCII progress bars in the worker's OWN output, every percentage derived from
 # a real done/total count it can name, and no bar at all when there is no
@@ -246,6 +250,18 @@ A status line you were already going to append may end with one compact inline b
 EOF
 PROGRESS_SECTION=${PROGRESS_SECTION%$'\n'}
 
+# Status-honesty contract, byte-identical in every scaffold so no delivery mode
+# can be the one variant a worker reads as permission to report an intention.
+# Quoted heredoc for the same reason as PROGRESS_SECTION above: its backticks
+# must reach the reading agent verbatim.
+IFS= read -r -d '' STATUS_HONESTY <<'EOF' || true
+# Status honesty
+Append `done:` ONLY when the deliverable your definition of done names provably exists, and name that evidence in the line: the pull request URL, the report path, the merged commit, or the committed branch it requires.
+Reporting `done:` for work you have not finished - no PR where your definition of done requires one, no report written, an unpushed commit, or an analysis you are about to turn into the deliverable - is a false report, not a status update.
+If you intend to finish but have not finished, the line is `working:`, or `blocked:` when you need help - never `done:`.
+EOF
+STATUS_HONESTY=${STATUS_HONESTY%$'\n'}
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -318,6 +334,8 @@ Every \`[key=...]\` token must sit BEFORE the colon; written later in the line i
 \`resolved\` separately closes an escalated decision or blocker, and only a \`resolved\` line carrying that decision's exact key closes it: a later \`done\` or \`working\` event never does, even when the answer is what started that work.
 The main firstmate's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main firstmate, append \`resolved [key=<slug>]: {how it cleared}\` yourself (the same key you opened it with, or a bare \`resolved: {how it cleared}\` when you opened it unkeyed) as your domain resumes.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
+
+$STATUS_HONESTY
 
 $PROGRESS_SECTION
 
@@ -414,6 +432,8 @@ The report is the only thing that survives, so anything worth keeping must be in
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+
+$STATUS_HONESTY
 
 $PROGRESS_SECTION
 
@@ -556,6 +576,8 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+
+$STATUS_HONESTY
 
 $PROGRESS_SECTION
 

@@ -832,6 +832,52 @@ test_every_scaffold_carries_the_progress_contract() {
   pass "fm-brief.sh: every scaffold carries the progress-bar contract without loosening status appends"
 }
 
+# Three workers in one session appended `done:` with no deliverable - one with no
+# PR open at all. The prohibition must reach EVERY generated variant, so a future
+# scaffold change cannot leave one delivery mode reading an intention as
+# completion.
+test_every_scaffold_forbids_intention_as_completion() {
+  local home id brief
+  home="$TMP_ROOT/status-honesty-home"
+  mkdir -p "$home/data"
+
+  for id_mode in "honesty-a1:no-mistakes" "honesty-a2:direct-PR" "honesty-a3:local-only"; do
+    id=${id_mode%%:*}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_mode##*:}" >/dev/null 2>&1 \
+      || fail "$id: ship scaffold failed"
+  done
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" honesty-a4 some-proj --scout >/dev/null 2>&1 \
+    || fail "scout scaffold failed"
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" honesty-a5 --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "secondmate charter scaffold failed"
+
+  for id in honesty-a1 honesty-a2 honesty-a3 honesty-a4 honesty-a5; do
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep '# Status honesty' "$brief" \
+      "$id: brief is missing the status-honesty section"
+    # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+    assert_grep 'no PR where your definition of done requires one' "$brief" \
+      "$id: brief does not name the observed false-report failure shape"
+    assert_grep 'is a false report, not a status update' "$brief" \
+      "$id: brief does not call an unfinished done a false report"
+  done
+
+  # Wording of the rest of the block, pinned once: it is one interpolated
+  # variable, so the loop above already proves every kind carries these bytes.
+  brief="$home/data/honesty-a1/brief.md"
+  # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+  assert_grep 'Append `done:` ONLY when the deliverable your definition of done names provably exists' "$brief" \
+    "brief does not require the deliverable to exist before done"
+  assert_grep 'the pull request URL, the report path, the merged commit, or the committed branch' "$brief" \
+    "brief does not require the done line to name its evidence"
+  # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+  assert_grep 'the line is `working:`, or `blocked:` when you need help - never `done:`' "$brief" \
+    "brief does not send an unfinished worker to the working or blocked verb"
+  pass "fm-brief.sh: every scaffold forbids reporting an intention as completion"
+}
+
 test_scout_and_secondmate_load_decision_hold_policy() {
   local home scout charter
   home="$TMP_ROOT/decision-policy-home"
@@ -998,6 +1044,7 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_ship_and_scout_declare_every_stop
 test_every_scaffold_carries_the_progress_contract
+test_every_scaffold_forbids_intention_as_completion
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_every_scaffold_states_the_key_before_the_colon
