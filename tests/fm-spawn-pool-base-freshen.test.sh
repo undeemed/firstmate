@@ -8,31 +8,10 @@
 # unreachable.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/spawn-helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/spawn-helpers.sh"
 
-SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-pool-base-freshen)
-
-make_spawn_fakebin() {
-	local dir=$1 fakebin
-	fakebin=$(fm_fakebin "$dir")
-	cat >"$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:?FM_FAKE_PANE_PATH unset}"; exit 0 ;;
-esac
-case "${1:-}" in
-  display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows|has-session|new-session|new-window|kill-window|send-keys) exit 0 ;;
-esac
-exit 0
-SH
-	chmod +x "$fakebin/tmux"
-	fm_fake_exit0 "$fakebin" treehouse
-	printf '%s\n' "$fakebin"
-}
 
 make_case() {
 	local name=$1 id=$2 default=${3:-main} case_dir home project origin pool publisher fakebin initial
@@ -42,12 +21,8 @@ make_case() {
 	origin="$case_dir/origin.git"
 	pool="$case_dir/pool"
 	publisher="$case_dir/publisher"
-	fakebin=$(make_spawn_fakebin "$case_dir/fake")
-
-	mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
-	printf 'codex\n' >"$home/config/crew-harness"
-	printf 'brief for %s\n' "$id" >"$home/data/$id/brief.md"
-	touch "$home/state/.last-watcher-beat"
+	fakebin=$(fm_spawn_fake_terminal "$case_dir/fake")
+	fm_spawn_home "$home" "$id"
 
 	git init --quiet -b "$default" "$project"
 	printf 'base\n' >"$project/README.md"
@@ -64,6 +39,13 @@ make_case() {
 	git -C "$publisher" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm advance-main
 	git -C "$publisher" push --quiet origin "$default"
 
+	# The clone itself follows origin; only the pooled worktree stays back at the
+	# allocation-time commit, which is the drift these cases measure. A clone left
+	# behind is the separate stale-brief refusal owned by
+	# tests/fm-spawn-clone-base-drift.test.sh.
+	git -C "$project" fetch --quiet origin
+	git -C "$project" merge --quiet --ff-only "origin/$default"
+
 	printf '%s\n' "$case_dir|$home|$project|$pool|$fakebin|$initial|$default"
 }
 
@@ -73,24 +55,13 @@ $1
 EOF
 }
 
-run_spawn() {
-	local id=$1
-	shift
-	FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
-		FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
-		FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
-		FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_FAKE_PANE_PATH="$POOL_DIR" \
-		PATH="$FAKEBIN_DIR:$PATH" \
-		"$SPAWN" "$id" "$PROJECT_DIR" "$@" 2>&1
-}
-
 test_stale_pool_base_refreshes_before_branching() {
 	local rec id out status current branch_head
 	id='pool-current-base-r1'
 	rec=$(make_case current-base "$id")
 	read_case_record "$rec"
 
-	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
 	status=$?
 	expect_code 0 "$status" "spawn should refresh a stale pooled worktree"
 	assert_contains "$out" "spawned $id" "spawn did not report success"
@@ -110,9 +81,8 @@ test_stale_pool_base_refreshes_before_branching() {
 	# this case still measures base-refresh idempotency and nothing else.
 	rm -f "$HOME_DIR/state/pool-current-base-r1.meta"
 	id='pool-current-base-repeat-r1'
-	mkdir -p "$HOME_DIR/data/$id"
-	printf 'brief for %s\n' "$id" >"$HOME_DIR/data/$id/brief.md"
-	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+	fm_spawn_home "$HOME_DIR" "$id"
+	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
 	status=$?
 	expect_code 0 "$status" "repeating the base refresh should be idempotent"
 	[ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$current" ] ||
@@ -132,7 +102,7 @@ test_non_main_default_branch_refreshes_before_branching() {
 	rec=$(make_case current-trunk "$id" trunk)
 	read_case_record "$rec"
 
-	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
 	status=$?
 	expect_code 0 "$status" "spawn should refresh a stale pooled worktree on a non-main default branch"
 	current=$(git -C "$POOL_DIR" rev-parse "origin/$DEFAULT_BRANCH")
@@ -150,7 +120,7 @@ test_unreachable_origin_refuses_stale_pool_base() {
 	git -C "$POOL_DIR" remote set-url origin "file://$CASE_DIR/missing-origin.git"
 	before=$(git -C "$POOL_DIR" rev-parse HEAD)
 
-	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
 	status=$?
 	[ "$status" -ne 0 ] || fail "spawn succeeded despite an unreachable origin"
 	assert_contains "$out" "could not fetch origin" \
@@ -170,9 +140,9 @@ test_direct_pr_and_scout_refresh_before_launch() {
 		rec=$(make_case "$contract" "$id")
 		read_case_record "$rec"
 		if [ "$contract" = scout ]; then
-			out=$(run_spawn "$id" --scout)
+			out=$(fm_spawn_run "$id" --scout)
 		else
-			out=$(run_spawn "$id" --mode direct-PR --yolo off)
+			out=$(fm_spawn_run "$id" --mode direct-PR --yolo off)
 		fi
 		status=$?
 		expect_code 0 "$status" "$contract spawn should refresh a stale pooled worktree"
@@ -196,7 +166,7 @@ test_dirty_pool_refuses_without_discarding_work() {
 	before=$(git -C "$POOL_DIR" rev-parse HEAD)
 	printf 'keep this local work\n' >"$POOL_DIR/uncommitted.txt"
 
-	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
 	status=$?
 	[ "$status" -ne 0 ] || fail "spawn succeeded despite a dirty pooled worktree"
 	assert_contains "$out" "is not clean" "spawn did not clearly refuse a dirty pooled worktree"
@@ -219,7 +189,7 @@ test_unresolved_remote_default_refuses_pool() {
 	git --git-dir="$CASE_DIR/origin.git" symbolic-ref HEAD refs/heads/missing-default
 	before=$(git -C "$POOL_DIR" rev-parse HEAD)
 
-	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
 	status=$?
 	[ "$status" -ne 0 ] || fail "spawn succeeded despite an unresolved remote default branch"
 	assert_contains "$out" "could not resolve origin's current default branch" \
