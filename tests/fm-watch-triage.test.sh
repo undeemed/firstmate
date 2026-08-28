@@ -3032,11 +3032,8 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain() {
 # --- triage debug log stays size capped -------------------------------------
 
 # --- active pipeline step: the progress signal, not a liveness signal ---------
-# A step waiting on an external service renders nothing, writes nothing, and burns
-# almost no CPU, so every liveness signal reads as silence while the lane is
-# healthy; these cases pin the step's own recorded progress as what separates it
-# from a wedge. bin/fm-crew-state.sh produces that record (tests/fm-crew-state.test.sh
-# pins how it is read off `axi status`).
+# The policy these cases pin is owned by crew_step_progress_evidence in
+# bin/fm-classify-lib.sh; tests/fm-crew-state.test.sh pins the record it reads.
 
 test_crew_step_progress_evidence_classifier() {
 	local dir fakebin evidence
@@ -3102,9 +3099,7 @@ step_progress_case() { # <name> <window> <task> <age>
 	printf '%s' "$pane_hash" >"$state/.hash-$key"
 	printf '1\n' >"$state/.count-$key"
 	printf '%s' "$pane_hash" >"$state/.stale-$key"
-	back=$(($(date +%s) - age))
-	echo "$back" >"$state/.stale-since-$key"
-	set_mtime "$back" "$state/.stale-since-$key"
+	echo "$(($(date +%s) - age))" >"$state/.stale-since-$key"
 	printf '%s\n' "$dir"
 }
 
@@ -3153,7 +3148,6 @@ test_active_recent_step_absorbs_the_wedge() {
 	# The same lane, once that step stops recording anything: the alarm is deferred,
 	# never disabled.
 	echo "$(($(date +%s) - 500))" >"$dir/state/.stale-since-$key"
-	set_mtime "$(($(date +%s) - 500))" "$dir/state/.stale-since-$key"
 	step_progress_run "$dir" test:fm-ci \
 		'state: working · source: run-step · ci running · activity: ci 2463' ||
 		fail "a step that recorded nothing for 41 minutes did not wedge-escalate: $(cat "$dir/watch.out")"

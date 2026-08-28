@@ -1584,11 +1584,6 @@ test_missing_run_head_falls_back_to_current_state() {
 }
 
 # (aa) the active step's own progress record rides the same read
-# A step waiting on an external service renders nothing, writes nothing, and burns
-# almost no CPU, so a supervisor cannot tell it from a wedge by watching it. What
-# it does do is record what it last did, and this reader already holds the output
-# that says so - reporting it here is what keeps a supervisor from asking the CLI a
-# second time and re-deriving this crew's attribution to do it.
 test_active_step_activity_is_reported() {
   reset_fakes
   local d; d=$(new_case activity)
