@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tear down a finished task: return the treehouse worktree, release the Orca
 # worktree, or retire a secondmate home; kill the recorded runtime endpoint,
-# clear volatile state, refresh/prune the project's clone for PR-based ship
+# clear volatile state, reap the per-task build cache spawn created outside the
+# worktree, refresh/prune the project's clone for PR-based ship
 # tasks, then print a backlog-refresh reminder for ship and scout teardowns
 # (a secondmate teardown prints none, since secondmates are not backlog items).
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
@@ -1724,6 +1725,41 @@ reap_task_backend_process_group() { # <label>
 # process that exits on its own between the two passes is simply absent from
 # the recheck. A missing lsof uses the backend process-group fallback; an lsof
 # scan error refuses before destructive teardown.
+# The build cache is the temp root's twin: bin/fm-spawn.sh records one home-scoped
+# per-task path in build_cache=, so the path itself proves ownership and another
+# home's cache or a shared per-project cache is unreachable here. It is removed
+# only when the record still names exactly this home's path for this task and no
+# process is using it. Every other outcome - a record naming something else, a
+# path that resolves elsewhere, a live build, or a scan that could not run - is
+# reported and left in place, because deleting a cache a build is still writing
+# into is irreversible, and a cleanup that quietly deletes the wrong thing is
+# worse than one that leaves work for a human. Never fails the teardown.
+reap_task_build_cache() { # <task-id>
+	local id=$1 recorded owned out busy size reason=
+	recorded=$(meta_value "$META" build_cache)
+	[ -n "$recorded" ] || return 0
+	owned="$FM_HOME/build-caches/$id"
+	if [ "$recorded" != "$owned" ]; then
+		reason="it is not this home's cache for this task ($owned)"
+	elif [ ! -d "$recorded" ]; then
+		return 0
+	elif ! out=$(lsof -w -n -P 2>/dev/null) || [ -z "$out" ]; then
+		reason="the process scan failed, so no live build could be ruled out"
+	else
+		busy=$(awk -v path="$recorded" 'index($0, path) { print $2; exit }' <<<"$out")
+		[ -z "$busy" ] || reason="process $busy is still using it"
+	fi
+	if [ -z "$reason" ]; then
+		size=$(du -sh "$recorded" 2>/dev/null | cut -f1) || true
+		if rm -rf -- "$recorded"; then
+			echo "reaped build cache for $id: $recorded (${size:-unknown} reclaimed)"
+			return 0
+		fi
+		reason="removing it failed"
+	fi
+	echo "warning: build cache left behind for $id: $recorded ($reason)" >&2
+}
+
 reap_task_worktree_processes() { # <label> <dir>...
 	local label=$1 pids pid identity current_pids i pass=1 max_passes=3
 	local -a tracked_pids tracked_identities remaining_pids remaining_identities
@@ -2903,6 +2939,10 @@ fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # it, whatever location that was.
 # Read before the state-file rm below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
+# Reap the out-of-worktree build cache the same way, and only here: every
+# landed-work refusal above has passed and the task's processes are already
+# reaped, so a refused teardown never reaps.
+reap_task_build_cache "$ID"
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 status_retire_presentation_task "$STATE" "$ID" || exit 1
