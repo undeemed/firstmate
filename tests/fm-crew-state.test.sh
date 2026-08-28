@@ -346,17 +346,8 @@ EOF
 }
 
 run_ci_waiting_on_checks() {  # <branch> <last-activity>
+  run_running "$1"
   cat <<EOF
-run:
-  id: "01RUN"
-  branch: $1
-  status: running
-  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
-  pr: "https://example.test/pr/48"
-  findings: none
-  steps[2]{step,status,findings,duration_ms}:
-    pr,completed,0,281083
-    ci,running,0,0
   active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
     ci,running,45m41s,"$2 ago: log: CI checks running, waiting for results...","",starting
 EOF

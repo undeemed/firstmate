@@ -674,23 +674,15 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [interval]
 }
 
 # Defer ONE wedge escalation for a pane the watcher has positive evidence for that
-# its own rendered pane cannot show. Two such evidence classes exist, and both come
-# through here:
-#   - the crew's own task worktree is demonstrably still being written
-#     (crew_worktree_written_since), the harder-to-fake signal that a crew writing
-#     source, then tests, then documentation is alive behind a static pane;
-#   - the crew's own pipeline step is ACTIVE and recently active
-#     (crew_step_progress_evidence), the only signal that separates a healthy step
-#     waiting on an external service - which burns no CPU, writes no file, and
-#     renders nothing - from a genuine wedge.
-# Deliberately a DEFERRAL, not a cancellation: the idle timer restarts, so the next
-# window probes again, and <prefix> names this evidence's own since/resurfaced
-# marker pair so the whole deferral chain ages and still re-surfaces once every
-# PAUSE_RESURFACE_SECS through the shared resurface_absorbed - the flat form of the
-# same bounded cadence a declared wait uses - and evidence that churns without real
-# progress cannot stay invisible. The escalation counter is left alone: it is
-# neither advanced (this is not an escalation) nor reset (a later genuine
-# escalation must still carry the demand-deep-inspection history it had earned).
+# its own rendered pane cannot show (see this file's header for the two evidence
+# classes and the call sites for their probes). Deliberately a DEFERRAL, not a
+# cancellation: the idle timer restarts, so the next window probes again, and
+# <chain-prefix> names this evidence's own since/resurfaced marker pair so the
+# whole chain ages and still re-surfaces once every PAUSE_RESURFACE_SECS through
+# the shared resurface_absorbed, and evidence that churns without real progress
+# cannot stay invisible. The escalation counter is left alone: it is neither
+# advanced (this is not an escalation) nor reset (a later genuine escalation must
+# still carry the demand-deep-inspection history it had earned).
 wedge_defer() {  # <window> <since-file> <triage-label> <idle-age> <chain-prefix> <evidence>
   local win=$1 since_file=$2 label=$3 age=$4 prefix=$5 evidence=$6 key csf cage
   key=$(window_key "$win")
@@ -719,13 +711,9 @@ clear_defer_tracking() {  # <window-key>
 # by both places a hash can be absorbed this way: the plain non-terminal path, and
 # the stale_is_terminal-overridden path (a captain-relevant status-log line that an
 # active run/busy pane outranked).
-# The costly reads - the worktree write probe, the crew-state re-read, and the
-# active-step progress probe - run ONLY here, inside the at-threshold branch that
-# is about to escalate: at most one of each per window per wedge interval, never
-# per poll. The crew state is re-read there rather than trusted from classification
-# time because the question at escalation is whether the run is running NOW: a
-# run-step record alone can be stale if the pipeline died since, so the progress
-# probe must agree before an escalation is deferred.
+# Both evidence probes run ONLY in the at-threshold branch below, on current reads
+# rather than classification-time ones, because the question at escalation is
+# whether this crew is progressing NOW.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n interval next reason evidence
   since=$(cat "$since_file" 2>/dev/null || true)
@@ -745,9 +733,6 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           wedge_defer "$win" "$since_file" "$label" "$age" writing "writing its worktree"
           return 0
         fi
-        # Both conditions off one authoritative read, never either alone: an
-        # actively-running pipeline step attributed to this crew's own code, AND
-        # progress recorded by that step recently.
         if evidence=$(crew_step_progress_evidence "$task"); then
           wedge_defer "$win" "$since_file" "$label" "$age" pipeline "$evidence"
           return 0
