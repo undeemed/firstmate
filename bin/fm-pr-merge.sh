@@ -54,8 +54,8 @@
 #     green gate - PR open, targets the repository default branch,
 #     mergeable_state=clean, all checks completed with none pending and none
 #     non-green, and no outstanding requested-changes review - then merges pinned
-#     to the exact gated head SHA (--match-head-commit) and records the merge to
-#     state/pr-merge-audit.log. This is an EXTENSION of the guard, not a bypass:
+#     to the exact gated head SHA (--match-head-commit). This is an EXTENSION of
+#     the guard, not a bypass:
 #     every gate that fails, and every forge read that fails, refuses loudly and
 #     exits non-zero, exactly as the task class refuses on missing meta.
 #     Pipeline-class extra args must not include --match-head-commit or --auto,
@@ -69,6 +69,11 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# Each merge below is an outbound forge write, so each one is recorded to this
+# home's own audit log before it is attempted and refuses rather than act
+# unlogged. bin/fm-forge-audit-lib.sh owns that record and its format.
+# shellcheck source=bin/fm-forge-audit-lib.sh
+. "$SCRIPT_DIR/fm-forge-audit-lib.sh"
 
 PIPELINE_HEAD=""
 
@@ -369,13 +374,8 @@ pipeline_merge_gate() {
   if [ "$DEFAULT_SQUASH" = yes ]; then
     squash_default_guard "$pull" || return 1
   fi
-  mkdir -p "$STATE" || {
-    pipeline_refuse "state directory unavailable for audit log"
-    return 1
-  }
-  printf '%s\tpr=%s\thead=%s\tclass=pipeline\turl=%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PR_NUMBER" "$head" "$URL" >>"$STATE/pr-merge-audit.log" || {
-    pipeline_refuse "audit log could not be written"
+  fm_forge_audit pr-merge - "$URL" class=pipeline "head=$head" || {
+    pipeline_refuse "the merge could not be recorded in the forge write audit log"
     return 1
   }
   PIPELINE_HEAD=$head
@@ -549,10 +549,12 @@ case "$PROVIDER" in
       squash_default_guard || exit 1
       merge_args=(--squash)
     fi
+    fm_forge_audit pr-merge "$ID" "$URL" || exit 1
     gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
     ;;
   gitlab)
     gitlab_verify_mergeable || exit 1
+    fm_forge_audit mr-merge "$ID" "$URL" "head=$FM_PR_MERGE_HEAD" || exit 1
     # --sha binds the merge to the head this run verified, so a push that lands
     # in between is refused by GitLab instead of merged unverified. --yes only
     # skips the interactive confirmation, which no supervised run can answer;
