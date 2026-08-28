@@ -291,6 +291,25 @@ test_free_worktree_still_spawns() {
   pass "an unrelated task's record does not block a free worktree"
 }
 
+# The per-task build cache belongs to the spawn: it creates one home-scoped
+# directory per task and records it, so teardown has a path it can prove belongs
+# to this task and to no co-tenant.
+test_spawn_creates_and_records_the_task_build_cache() {
+  local rec id status
+  id=collide-cache-n4
+  rec=$(make_collision_case cache)
+  read_collision_record "$rec"
+
+  run_collision_spawn "$id" > /dev/null
+  status=$?
+  expect_code 0 "$status" "a spawn onto a free worktree should succeed"
+  assert_grep "build_cache=$HOME_DIR/build-caches/$id" "$HOME_DIR/state/$id.meta" \
+    "the spawn did not record the task's build cache"
+  [ -d "$HOME_DIR/build-caches/$id" ] \
+    || fail "the spawn did not create the task's build cache directory"
+  pass "a spawn creates and records one home-scoped build cache per task"
+}
+
 # The durable-record refusal with orca's destructive abort cleanup armed: the
 # EXIT trap must kill no terminal, remove no worktree, and publish no fallback
 # metadata for the refused task.
@@ -435,5 +454,6 @@ test_orca_collision_refusal_runs_no_armed_cleanup
 test_orca_lease_refusal_runs_no_armed_cleanup
 test_same_task_relaunch_is_not_a_collision
 test_free_worktree_still_spawns
+test_spawn_creates_and_records_the_task_build_cache
 
 echo "# all fm-spawn-worktree-collision tests passed"

@@ -1,6 +1,7 @@
 projects/
 state/
 data/
+build-caches/
 scratchpad/
 .no-mistakes/
 .lavish/
