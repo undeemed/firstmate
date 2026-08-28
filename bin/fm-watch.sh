@@ -691,15 +691,15 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [interval]
 # progress cannot stay invisible. The escalation counter is left alone: it is
 # neither advanced (this is not an escalation) nor reset (a later genuine
 # escalation must still carry the demand-deep-inspection history it had earned).
-wedge_defer() {  # <window> <since-file> <triage-label> <idle-age> <chain-prefix> <evidence> <advice>
-  local win=$1 since_file=$2 label=$3 age=$4 prefix=$5 evidence=$6 advice=$7 key csf cage
+wedge_defer() {  # <window> <since-file> <triage-label> <idle-age> <chain-prefix> <evidence>
+  local win=$1 since_file=$2 label=$3 age=$4 prefix=$5 evidence=$6 key csf cage
   key=$(window_key "$win")
   csf="$STATE/.$prefix-since-$key"
   [ -e "$csf" ] || date +%s > "$csf"
   cage=$(age_of "$csf")
   date +%s > "$since_file"
   resurface_absorbed "$win" "$STATE/.$prefix-resurfaced-$key" "$cage" \
-    "stale: $win (idle ${age}s, $evidence, deferred for ${cage}s, rechecked on a long cadence not a wedge; $advice)"
+    "stale: $win (idle ${age}s, $evidence, deferred for ${cage}s, rechecked on a long cadence not a wedge; confirm it is real progress)"
   triage_log "absorbed $label ($evidence, idle ${age}s): $win"
 }
 
@@ -742,8 +742,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       interval=$(wedge_escalate_interval "$n")
       if [ "$age" -ge "$interval" ]; then
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
-          wedge_defer "$win" "$since_file" "$label" "$age" writing \
-            "writing its worktree" "confirm the writes are real progress"
+          wedge_defer "$win" "$since_file" "$label" "$age" writing "writing its worktree"
           return 0
         fi
         # Both conditions, never either alone: the crew's authoritative current
@@ -751,8 +750,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         # crew's own code, AND that step must have recorded progress recently.
         if [ "$(crew_absorb_state "$task")" = 'working run-step' ] &&
            evidence=$(crew_step_progress_evidence "$task" "$STATE"); then
-          wedge_defer "$win" "$since_file" "$label" "$age" pipeline \
-            "$evidence" "confirm the step is still progressing"
+          wedge_defer "$win" "$since_file" "$label" "$age" pipeline "$evidence"
           return 0
         fi
         n=$(( n + 1 ))
