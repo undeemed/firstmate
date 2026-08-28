@@ -55,13 +55,6 @@ case $- in *u*) _fm_classify_nounset=on ;; *) _fm_classify_nounset=off ;; esac
 [ "$_fm_classify_nounset" = on ] || set +u
 unset _fm_classify_nounset
 
-# bin/fm-nm-run-lib.sh owns the bounded `no-mistakes` call and the TOON scalar
-# reads, so the active-step progress probe below borrows them rather than growing
-# a second copy of either.
-# shellcheck source=bin/fm-nm-run-lib.sh
-# shellcheck disable=SC1091
-. "$_FM_CLASSIFY_LIB_DIR/fm-nm-run-lib.sh"
-
 # Captain-relevant status verbs. A status line carrying any of these is work
 # firstmate must see. Lines without these verbs are no-verb signals: the watcher
 # absorbs them only with positive provably-working evidence, while the daemon uses
@@ -1514,21 +1507,6 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
 # waiting on GitHub checks reported `8m1s ago: log: CI checks running, waiting for
 # results...`, so the default sits at roughly twice that legitimate silence.
 FM_STEP_ACTIVITY_MAX_SECS=${FM_STEP_ACTIVITY_MAX_SECS:-900}
-# Wall-clock bound on the one `no-mistakes axi status` read the probe makes, for
-# the same reason the worktree walk is bounded: it runs synchronously inside the
-# poll that was about to escalate, so a hung CLI costs that poll the bound and
-# nothing more. Hitting it reads as no evidence, so the lane escalates as before.
-FM_STEP_ACTIVITY_TIMEOUT=${FM_STEP_ACTIVITY_TIMEOUT:-10}
-
-# Seconds in a Go-style duration ("8m1s", "1h2m3s", "45s"), the form the
-# no-mistakes CLI prints ages in; 1 when the string is not one. The units come in
-# fixed h-m-s order, and fractions are truncated because the caller compares
-# against a bound in whole seconds.
-fm_duration_secs() {  # <duration>
-  local re='^(([0-9]+)(\.[0-9]+)?h)?(([0-9]+)(\.[0-9]+)?m)?(([0-9]+)(\.[0-9]+)?s)?$'
-  [ -n "${1:-}" ] && [[ $1 =~ $re ]] || return 1
-  printf '%s' $(( 10#0${BASH_REMATCH[2]} * 3600 + 10#0${BASH_REMATCH[5]} * 60 + 10#0${BASH_REMATCH[8]} ))
-}
 
 # Print the evidence phrase for <id>'s pipeline step when that step is ACTIVE and
 # was active recently, and return 0; print nothing and return 1 otherwise. This is
@@ -1542,46 +1520,26 @@ fm_duration_secs() {  # <duration>
 # because it measures PROGRESS - when that step last did something - where every
 # other input measures only liveness.
 #
-# 1 for every other outcome - no recorded worktree, a torn-down worktree, a
-# secondmate home, a detached HEAD, no CLI, a read that outlives its bound, a run
-# attributed to another branch, no active step, a missing or unparseable
-# last_activity, and an activity age past FM_STEP_ACTIVITY_MAX_SECS - so anything
-# this cannot evaluate leaves the caller's escalation schedule exactly as it was.
-#
-# Attribution: the caller has already established through bin/fm-crew-state.sh
-# (branch AND code identity, under bin/fm-nm-run-lib.sh's rule) that an active run
-# belongs to this crew. This read adds the CLI's own branch field as a second,
-# cheap guard, because `axi status` answers with the active-or-most-recent run of
-# the install and will describe ANOTHER lane's run when this worktree has none of
-# its own - verified 2026-08-27 from a worktree at detached HEAD, which was
-# answered with a different lane's running ci step.
-crew_step_progress_evidence() {  # <id> <state>
-  local id=$1 state=$2 wt kind branch out bound line age
-  [ -n "$id" ] || return 1
-  wt=$(grep '^worktree=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-  [ -n "$wt" ] && [ -d "$wt" ] || return 1
-  kind=$(grep '^kind=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-  [ "$kind" != secondmate ] || return 1
-  command -v no-mistakes >/dev/null 2>&1 || return 1
-  branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-  [ -n "$branch" ] || return 1
-  bound=$FM_STEP_ACTIVITY_TIMEOUT
-  case "$bound" in ''|*[!0-9]*|0) bound=10 ;; esac
-  out=$(fm_nm_run "$wt" "$bound" axi status)
-  [ -n "$out" ] || return 1
-  [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")" = "$branch" ] || return 1
-  while IFS= read -r line; do
-    # Only an active_steps row carries a quoted "<duration> ago: <what it did>"
-    # activity, so a row that matches IS an active step. A renamed or dropped
-    # column, a completed-steps row, and an unparseable age all stop matching and
-    # read as no evidence, which leaves the escalation schedule untouched.
-    [[ $line =~ ^[[:space:]]*([A-Za-z_-]+),.*\"([0-9.hms]+)\ ago: ]] || continue
-    age=$(fm_duration_secs "${BASH_REMATCH[2]}") || continue
-    [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || continue
-    printf 'active pipeline step %s, last activity %ss ago' "${BASH_REMATCH[1]}" "$age"
-    return 0
-  done <<< "$out"
-  return 1
+# Both required conditions come off ONE fm-crew-state.sh line, the same read
+# crew_absorb_state makes: `working` from source `run-step` is that reader's own
+# attribution of an ACTIVE run to this crew's branch and code identity, and its
+# `activity: <step> <seconds>` field is that run's progress record. A verdict from
+# any other source, a missing activity field, an unreadable line, and an age past
+# FM_STEP_ACTIVITY_MAX_SECS all return 1, so anything that cannot be evaluated
+# leaves the caller's escalation schedule exactly as it was.
+crew_step_progress_evidence() {  # <id>
+  local line rest step age
+  [ -n "${1:-}" ] || return 1
+  line=$("$FM_CREW_STATE_BIN" "$1" 2>/dev/null) || return 1
+  case "$line" in "state: working"*) ;; *) return 1 ;; esac
+  case "$line" in *"source: run-step"*) ;; *) return 1 ;; esac
+  case "$line" in *"activity: "*) rest=${line##*activity: } ;; *) return 1 ;; esac
+  step=${rest%% *}
+  age=${rest#* }
+  age=${age%%[! 0-9]*}
+  case "$age" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || return 1
+  printf 'active pipeline step %s, last activity %ss ago' "$step" "$age"
 }
 
 # 0 (benign/absorb) if EVERY task referenced by a no-verb "signal:" wake is provably

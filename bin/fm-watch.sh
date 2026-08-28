@@ -745,11 +745,10 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           wedge_defer "$win" "$since_file" "$label" "$age" writing "writing its worktree"
           return 0
         fi
-        # Both conditions, never either alone: the crew's authoritative current
-        # state must report an actively-running pipeline step attributed to this
-        # crew's own code, AND that step must have recorded progress recently.
-        if [ "$(crew_absorb_state "$task")" = 'working run-step' ] &&
-           evidence=$(crew_step_progress_evidence "$task" "$STATE"); then
+        # Both conditions off one authoritative read, never either alone: an
+        # actively-running pipeline step attributed to this crew's own code, AND
+        # progress recorded by that step recently.
+        if evidence=$(crew_step_progress_evidence "$task"); then
           wedge_defer "$win" "$since_file" "$label" "$age" pipeline "$evidence"
           return 0
         fi

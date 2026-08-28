@@ -345,6 +345,23 @@ run:
 EOF
 }
 
+run_ci_waiting_on_checks() {  # <branch> <last-activity>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: "https://example.test/pr/48"
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    pr,completed,0,281083
+    ci,running,0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,45m41s,"$2 ago: log: CI checks running, waiting for results...","",starting
+EOF
+}
+
 # ---------------------------------------------------------------------------
 # (a) active run-step is authoritative
 test_active_run_is_authoritative() {
@@ -1575,7 +1592,51 @@ test_missing_run_head_falls_back_to_current_state() {
   pass "missing run head falls back instead of matching by branch"
 }
 
+# (aa) the active step's own progress record rides the same read
+# A step waiting on an external service renders nothing, writes nothing, and burns
+# almost no CPU, so a supervisor cannot tell it from a wedge by watching it. What
+# it does do is record what it last did, and this reader already holds the output
+# that says so - reporting it here is what keeps a supervisor from asking the CLI a
+# second time and re-deriving this crew's attribution to do it.
+test_active_step_activity_is_reported() {
+  reset_fakes
+  local d; d=$(new_case activity)
+  make_repo_on_branch "$d/wt" fm/feat-act
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-act.meta" "window=fm:fm-feat-act" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_waiting_on_checks fm/feat-act 8m1s)"
+  local out; out=$(run_crew_state "$d" feat-act)
+  assert_contains "$out" "state: working" "a ci step waiting on checks is working"
+  assert_contains "$out" "activity: ci 481" "the active step and its activity age are reported"
+  # An hour-scale silence is reported just as faithfully: this reader measures the
+  # age, it never judges it.
+  FM_FAKE_AXI_STATUS="$(run_ci_waiting_on_checks fm/feat-act 1h2m3s)"
+  out=$(run_crew_state "$d" feat-act)
+  assert_contains "$out" "activity: ci 3723" "a long silence is reported with its real age"
+  pass "an active step's recorded activity age rides the run-step read"
+}
+
+# (ab) no active step, no activity claim. A run whose steps are all done, and the
+# coarse runs-list fallback that has no step detail at all, must report nothing
+# rather than an invented or stale progress record.
+test_no_active_step_reports_no_activity() {
+  reset_fakes
+  local d; d=$(new_case no-activity)
+  make_repo_on_branch "$d/wt" fm/feat-noact
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-noact.meta" "window=fm:fm-feat-noact" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-noact)"
+  local out; out=$(run_crew_state "$d" feat-noact)
+  assert_contains "$out" "source: run-step" "the run is still authoritative"
+  case "$out" in
+    *"activity: "*) fail "a run with no active step claimed an activity record: $out" ;;
+  esac
+  pass "a run reporting no active step makes no activity claim"
+}
+
 test_active_run_is_authoritative
+test_active_step_activity_is_reported
+test_no_active_step_reports_no_activity
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
 test_genuine_parked_not_superseded

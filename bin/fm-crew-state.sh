@@ -18,6 +18,12 @@
 #
 #   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
 #
+# A run-step read whose `axi status` reports an ACTIVE step ends its detail with
+# one more field, `activity: <step> <seconds>`: how long ago that step last
+# recorded doing something. It is the pipeline's own progress record, and it comes
+# free with the read this reader already makes, so a supervisor deciding whether a
+# quiet lane is wedged never asks the CLI a second time.
+#
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
 #      recording remote_host= is a remote secondmate: its worktree and endpoint
@@ -637,6 +643,15 @@ if [ "$HAVE_RUN" = 1 ]; then
       fi
       ;;
   esac
+
+  # The pipeline's own progress record, when this attributed run reports an active
+  # step: "activity: <step> <seconds>", the age of what that step last did. It
+  # rides the same read that already holds $RUN_OUT, so a supervisor never has to
+  # ask the CLI a second time (and never has to re-derive this crew's attribution)
+  # to tell a step waiting on an external service from a wedged one.
+  if [ "$RUN_SOURCE" = full ] && ACTIVITY=$(fm_nm_active_step_activity "$RUN_OUT"); then
+    RUN_DETAIL="$RUN_DETAIL${SEP}activity: $ACTIVITY"
+  fi
 
   emit "$RUN_STATE" run-step "$RUN_DETAIL"
 fi
