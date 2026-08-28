@@ -50,28 +50,21 @@ fm_nm_strip_quotes() {
   fm_nm_trim "$s"
 }
 
-# Seconds in a Go-style duration ("8m1s", "1h2m3s", "45s"), the form the CLI prints
-# ages in; 1 when the string is not one. The units come in fixed h-m-s order, and
-# fractions are truncated because callers compare against whole-second bounds.
-fm_nm_duration_secs() {  # <duration>
-  local re='^(([0-9]+)(\.[0-9]+)?h)?(([0-9]+)(\.[0-9]+)?m)?(([0-9]+)(\.[0-9]+)?s)?$'
-  [ -n "${1:-}" ] && [[ $1 =~ $re ]] || return 1
-  printf '%s' $(( 10#0${BASH_REMATCH[2]} * 3600 + 10#0${BASH_REMATCH[5]} * 60 + 10#0${BASH_REMATCH[8]} ))
-}
-
 # Print "<step> <seconds>" for the first ACTIVE step in captured `axi status`
 # output $1 and how long ago that step last recorded doing something; 1 when the
 # output reports no such step. Only an active_steps row carries a quoted
 # "<duration> ago: <what it did>" activity, so a row that matches IS an active
 # step, while a completed-steps row, a renamed or dropped column, and an
-# unparseable age all stop matching and report nothing.
-
+# unparseable age all stop matching and report nothing. The duration is Go's own
+# fixed h-m-s form, whose seconds unit is always present, and its fraction is
+# truncated because callers compare against whole-second bounds.
 fm_nm_active_step_activity() {  # <toon-output>
-  local line age
+  local line
+  local re='^[[:space:]]*([A-Za-z_-]+),.*"(([0-9]+)h)?(([0-9]+)m)?([0-9]+)(\.[0-9]+)?s ago:'
   while IFS= read -r line; do
-    [[ $line =~ ^[[:space:]]*([A-Za-z_-]+),.*\"([0-9.hms]+)\ ago: ]] || continue
-    age=$(fm_nm_duration_secs "${BASH_REMATCH[2]}") || continue
-    printf '%s %s' "${BASH_REMATCH[1]}" "$age"
+    [[ $line =~ $re ]] || continue
+    printf '%s %s' "${BASH_REMATCH[1]}" \
+      $(( 10#0${BASH_REMATCH[3]} * 3600 + 10#0${BASH_REMATCH[5]} * 60 + 10#${BASH_REMATCH[6]} ))
     return 0
   done <<< "${1:-}"
   return 1
