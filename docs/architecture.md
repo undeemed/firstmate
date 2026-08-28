@@ -199,6 +199,9 @@ The record check covers only tasks recorded in this home, and a lease is in prac
 An unleased crewmate or scout worktree recorded by another firstmate home sharing the same pool is invisible to both checks, so two homes on one pool can still collide; a durable pool-level claim visible to every home is the follow-up that would close that case.
 The refusal publishes no metadata, installs no hook, and returns, prunes, or kills nothing, because both `treehouse return --force` and an ordinary exit of a `treehouse get` subshell terminate every process whose cwd is inside the worktree, which would reap a live co-tenant's worker.
 
+Teardown reads the same durable claim records for the opposite reason: a process's cwd being inside a checkout proves ownership only while exactly one task records that checkout.
+When another task also records it, teardown reaps only the processes its own records attribute to it, refuses by name when a process cannot be attributed at all, and leaves the shared checkout itself exactly as found; `bin/fm-teardown.sh`'s header owns that evidence and its refusal mechanics.
+
 The firstmate repo has one extra exposure because it can dispatch crewmates to work on itself.
 Its operating checkout (`FM_ROOT`) and the disposable crewmate worktrees are all linked git worktrees of the same repository, so the valid discriminator is branch state, not whether the checkout is linked.
 The primary checkout is healthy on its default branch, and linked worktrees or secondmate homes are healthy at detached HEAD.
