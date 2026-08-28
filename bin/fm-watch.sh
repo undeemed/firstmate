@@ -52,22 +52,20 @@
 #                          one, so an already-reported wedge keeps reporting
 #                          without burying every other event. Any genuine change
 #                          resets both the count and the cadence. Unless afk is
-#                          active. A pane whose own task
-#                          worktree was written during the quiet window is
-#                          deferred rather than escalated (wedge_defer_writing),
-#                          because files appearing there are liveness the pane and
-#                          the run step cannot show; that deferral still
-#                          re-surfaces once per PAUSE_RESURFACE_SECS, and a pane
-#                          that writes nothing keeps the unchanged schedule.
-#                          A pane whose own pipeline step is ACTIVE and recently
-#                          active is deferred the same way
-#                          (wedge_defer_pipeline), because a step waiting on an
-#                          external service - a ci step waiting on GitHub checks -
-#                          legitimately burns no CPU, writes no file, and renders
-#                          nothing, so only the step's own last_activity separates
-#                          it from a wedge. A step that has recorded nothing for
-#                          FM_STEP_ACTIVITY_MAX_SECS, and anything the probe cannot
-#                          evaluate, keeps the unchanged schedule.
+#                          active. Two evidence classes defer that escalation
+#                          instead (wedge_defer): a pane whose own task worktree
+#                          was written during the quiet window, because files
+#                          appearing there are liveness the pane and the run step
+#                          cannot show; and a pane whose own pipeline step is
+#                          ACTIVE and recently active, because a step waiting on
+#                          an external service - a ci step waiting on GitHub
+#                          checks - legitimately burns no CPU, writes no file, and
+#                          renders nothing, so only the step's own last_activity
+#                          separates it from a wedge. Both deferrals re-surface
+#                          once per PAUSE_RESURFACE_SECS, and a pane that writes
+#                          nothing, a step that has recorded nothing for
+#                          FM_STEP_ACTIVITY_MAX_SECS, and anything the probes
+#                          cannot evaluate keep the unchanged schedule.
 #                          A genuinely busy pane
 #                          (window_is_busy true) is exempt from the above, but
 #                          only up to BUSY_TURN_MAX_SECS with no completed turn
@@ -675,51 +673,33 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [interval]
   wake "$reason"
 }
 
-# Defer ONE wedge escalation for a pane that went quiet while its own task
-# worktree is demonstrably still being written (crew_worktree_written_since in
-# fm-classify-lib.sh). The pane and the run step both say nothing is happening;
-# the worktree says otherwise, and files appearing in it is the harder signal to
-# fake, so the escalation is deferred rather than fired. Deliberately a DEFERRAL,
-# not a cancellation: the idle timer restarts, so the next window probes again,
-# and a .writing-since-<key> marker ages the whole deferral chain so the pane
-# still re-surfaces once every PAUSE_RESURFACE_SECS through the shared
-# resurface_absorbed above - the flat form of the same bounded cadence a declared
-# wait uses, throttled by its own .writing-resurfaced-<key> marker - and a crew whose
-# worktree churns without real progress cannot stay invisible. The escalation
-# counter is left alone: it is neither advanced (this is not an escalation) nor
-# reset (a later genuine escalation must still carry the demand-deep-inspection
-# history it had already earned).
-wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
-  local win=$1 since_file=$2 label=$3 age=$4 key wsf wage
+# Defer ONE wedge escalation for a pane the watcher has positive evidence for that
+# its own rendered pane cannot show. Two such evidence classes exist, and both come
+# through here:
+#   - the crew's own task worktree is demonstrably still being written
+#     (crew_worktree_written_since), the harder-to-fake signal that a crew writing
+#     source, then tests, then documentation is alive behind a static pane;
+#   - the crew's own pipeline step is ACTIVE and recently active
+#     (crew_step_progress_evidence), the only signal that separates a healthy step
+#     waiting on an external service - which burns no CPU, writes no file, and
+#     renders nothing - from a genuine wedge.
+# Deliberately a DEFERRAL, not a cancellation: the idle timer restarts, so the next
+# window probes again, and <prefix> names this evidence's own since/resurfaced
+# marker pair so the whole deferral chain ages and still re-surfaces once every
+# PAUSE_RESURFACE_SECS through the shared resurface_absorbed - the flat form of the
+# same bounded cadence a declared wait uses - and evidence that churns without real
+# progress cannot stay invisible. The escalation counter is left alone: it is
+# neither advanced (this is not an escalation) nor reset (a later genuine
+# escalation must still carry the demand-deep-inspection history it had earned).
+wedge_defer() {  # <window> <since-file> <triage-label> <idle-age> <chain-prefix> <evidence> <advice>
+  local win=$1 since_file=$2 label=$3 age=$4 prefix=$5 evidence=$6 advice=$7 key csf cage
   key=$(window_key "$win")
-  wsf="$STATE/.writing-since-$key"
-  [ -e "$wsf" ] || date +%s > "$wsf"
-  wage=$(age_of "$wsf")
+  csf="$STATE/.$prefix-since-$key"
+  [ -e "$csf" ] || date +%s > "$csf"
+  cage=$(age_of "$csf")
   date +%s > "$since_file"
-  resurface_absorbed "$win" "$STATE/.writing-resurfaced-$key" "$wage" \
-    "stale: $win (idle ${age}s, writing its worktree for ${wage}s, rechecked on a long cadence not a wedge; confirm the writes are real progress)"
-  triage_log "absorbed $label (worktree written since the idle window opened, idle ${age}s): $win"
-}
-
-# Defer ONE wedge escalation for a pane whose own pipeline step is provably still
-# progressing, on the evidence phrase crew_step_progress_evidence returns (an
-# ACTIVE step, and how long ago that step last recorded doing something). The pane,
-# the worktree, and a CPU sample all say nothing is happening for a step that is
-# simply waiting on an external service, so escalating on their silence is a
-# guaranteed-wrong alarm; the step's own progress record is what separates that
-# lane from a wedged one. Deliberately the SAME deferral shape as the write probe
-# above, with its own evidence chain: the idle timer restarts, the pane re-surfaces
-# once every PAUSE_RESURFACE_SECS through the shared resurface_absorbed, and a step
-# that stops recording progress escalates on the unchanged schedule.
-wedge_defer_pipeline() {  # <window> <since-file> <triage-label> <idle-age> <evidence>
-  local win=$1 since_file=$2 label=$3 age=$4 evidence=$5 key psf page
-  key=$(window_key "$win")
-  psf="$STATE/.pipeline-since-$key"
-  [ -e "$psf" ] || date +%s > "$psf"
-  page=$(age_of "$psf")
-  date +%s > "$since_file"
-  resurface_absorbed "$win" "$STATE/.pipeline-resurfaced-$key" "$page" \
-    "stale: $win (idle ${age}s, $evidence, deferred for ${page}s, rechecked on a long cadence not a wedge; confirm the step is still progressing)"
+  resurface_absorbed "$win" "$STATE/.$prefix-resurfaced-$key" "$cage" \
+    "stale: $win (idle ${age}s, $evidence, deferred for ${cage}s, rechecked on a long cadence not a wedge; $advice)"
   triage_log "absorbed $label ($evidence, idle ${age}s): $win"
 }
 
@@ -762,7 +742,8 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       interval=$(wedge_escalate_interval "$n")
       if [ "$age" -ge "$interval" ]; then
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
-          wedge_defer_writing "$win" "$since_file" "$label" "$age"
+          wedge_defer "$win" "$since_file" "$label" "$age" writing \
+            "writing its worktree" "confirm the writes are real progress"
           return 0
         fi
         # Both conditions, never either alone: the crew's authoritative current
@@ -770,7 +751,8 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         # crew's own code, AND that step must have recorded progress recently.
         if [ "$(crew_absorb_state "$task")" = 'working run-step' ] &&
            evidence=$(crew_step_progress_evidence "$task" "$STATE"); then
-          wedge_defer_pipeline "$win" "$since_file" "$label" "$age" "$evidence"
+          wedge_defer "$win" "$since_file" "$label" "$age" pipeline \
+            "$evidence" "confirm the step is still progressing"
           return 0
         fi
         n=$(( n + 1 ))
