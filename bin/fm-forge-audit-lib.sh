@@ -29,8 +29,6 @@
 # which covered only pipeline-class merges; a home that has one keeps that older
 # file untouched for its own history.
 
-FM_FORGE_AUDIT_LOG_NAME=forge-write-audit.log
-
 # Written once, as the log's first line, so the record carries its own limit.
 FM_FORGE_AUDIT_HEADER='# forge writes made through firstmate bin/ tooling; a direct gh invocation or a browser action is NOT captured, so the absence of a line is not proof that no write occurred.'
 
@@ -52,7 +50,7 @@ fm_forge_audit() {
     return 1
   fi
   state=${FM_STATE_OVERRIDE:-$home/state}
-  log="$state/$FM_FORGE_AUDIT_LOG_NAME"
+  log="$state/forge-write-audit.log"
 
   line=$(printf '%s\thome=%s\ttask=%s\taction=%s\ttarget=%s' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -64,14 +62,8 @@ fm_forge_audit() {
     line=$(printf '%s\t%s' "$line" "$(fm_forge_audit_scrub "$extra")")
   done
 
-  if ! mkdir -p "$state" 2>/dev/null; then
-    echo "error: the forge write audit log directory is unavailable: $state" >&2
-    return 1
-  fi
-  if [ ! -e "$log" ] && ! printf '%s\n' "$FM_FORGE_AUDIT_HEADER" >>"$log" 2>/dev/null; then
-    echo "error: the forge write audit log could not be created: $log" >&2
-    return 1
-  fi
+  mkdir -p "$state" 2>/dev/null
+  [ -e "$log" ] || line=$FM_FORGE_AUDIT_HEADER$'\n'$line
   if ! printf '%s\n' "$line" >>"$log" 2>/dev/null; then
     echo "error: the forge write audit log could not be appended: $log" >&2
     return 1
