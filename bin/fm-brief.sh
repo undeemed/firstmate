@@ -433,8 +433,10 @@ fi
 # exit-code meanings have one owner. Single-quoted so its backticks reach the
 # reading agent verbatim; the interpolating DOD heredocs below expand
 # "$LEAN_GATE" once and never rescan its bytes.
+# It teaches only the diff-against-base forms: on committed work, which is what
+# every ship delivery point has, the bare form reviews an empty diff and exits 1.
 # shellcheck disable=SC2016  # single quotes are deliberate: these backticks are literal brief text
-LEAN_GATE='run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; bare `ponytail-review` reviews uncommitted work, and `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+LEAN_GATE='run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
 Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.'
 
 # Ship task: shape Setup / Rule 1 / Definition of done by this task's explicit
