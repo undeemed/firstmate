@@ -1530,43 +1530,6 @@ fm_duration_secs() {  # <duration>
   printf '%s' $(( 10#0${BASH_REMATCH[2]} * 3600 + 10#0${BASH_REMATCH[5]} * 60 + 10#0${BASH_REMATCH[8]} ))
 }
 
-# Split one TOON table row into the global array FM_TOON_ROW, on commas OUTSIDE
-# double quotes, dropping the quotes. Splitting on every comma would be wrong for
-# exactly the field this probe reads: a step's last_activity carries the log line
-# it last wrote ("...CI checks running, waiting for results..."), commas and all.
-fm_toon_row_fields() {  # <row>
-  local s=$1 field="" quoted=0 i c
-  FM_TOON_ROW=()
-  for (( i = 0; i < ${#s}; i++ )); do
-    c=${s:i:1}
-    case "$c" in
-      '"') quoted=$(( 1 - quoted )); continue ;;
-      ',')
-        if [ "$quoted" -eq 0 ]; then
-          FM_TOON_ROW+=( "$(fm_nm_trim "$field")" )
-          field=""
-          continue
-        fi
-        ;;
-    esac
-    field+=$c
-  done
-  FM_TOON_ROW+=( "$(fm_nm_trim "$field")" )
-}
-
-# Position of column <name> in a TOON header's comma-separated column list; 1 when
-# the header does not carry that column, so a CLI that renames or drops it reads as
-# no evidence rather than as the wrong column.
-fm_toon_col_index() {  # <columns> <name>
-  local cols=$1 name=$2 i=0 c
-  local IFS=,
-  for c in $cols; do
-    if [ "$c" = "$name" ]; then printf '%s' "$i"; return 0; fi
-    i=$(( i + 1 ))
-  done
-  return 1
-}
-
 # Print the evidence phrase for <id>'s pipeline step when that step is ACTIVE and
 # was active recently, and return 0; print nothing and return 1 otherwise. This is
 # the wedge detector's fourth liveness input, and the only one that can see the
@@ -1593,8 +1556,7 @@ fm_toon_col_index() {  # <columns> <name>
 # its own - verified 2026-08-27 from a worktree at detached HEAD, which was
 # answered with a different lane's running ci step.
 crew_step_progress_evidence() {  # <id> <state>
-  local id=$1 state=$2 wt kind branch out bound line cols in_table=0
-  local i_step i_activity step activity age
+  local id=$1 state=$2 wt kind branch out bound line age
   [ -n "$id" ] || return 1
   wt=$(grep '^worktree=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
   [ -n "$wt" ] && [ -d "$wt" ] || return 1
@@ -1609,32 +1571,14 @@ crew_step_progress_evidence() {  # <id> <state>
   [ -n "$out" ] || return 1
   [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")" = "$branch" ] || return 1
   while IFS= read -r line; do
-    if [ "$in_table" -eq 0 ]; then
-      case "$line" in
-        *active_steps\[*\]\{*)
-          cols=${line#*\{}
-          cols=${cols%%\}*}
-          i_step=$(fm_toon_col_index "$cols" step) || return 1
-          i_activity=$(fm_toon_col_index "$cols" last_activity) || return 1
-          in_table=1
-          ;;
-      esac
-      continue
-    fi
-    # Rows run until the next key or table header.
-    case "$line" in
-      *\[*\]\{*) break ;;
-      *,*) ;;
-      *) break ;;
-    esac
-    fm_toon_row_fields "$line"
-    [ "${#FM_TOON_ROW[@]}" -gt "$i_activity" ] || continue
-    step=${FM_TOON_ROW[$i_step]}
-    activity=${FM_TOON_ROW[$i_activity]}   # "<duration> ago: <what it did>"
-    case "$activity" in *" ago:"*) ;; *) continue ;; esac
-    age=$(fm_duration_secs "${activity%% ago:*}") || continue
+    # Only an active_steps row carries a quoted "<duration> ago: <what it did>"
+    # activity, so a row that matches IS an active step. A renamed or dropped
+    # column, a completed-steps row, and an unparseable age all stop matching and
+    # read as no evidence, which leaves the escalation schedule untouched.
+    [[ $line =~ ^[[:space:]]*([A-Za-z_-]+),.*\"([0-9.hms]+)\ ago: ]] || continue
+    age=$(fm_duration_secs "${BASH_REMATCH[2]}") || continue
     [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || continue
-    printf 'active pipeline step %s, last activity %ss ago' "${step:-unknown}" "$age"
+    printf 'active pipeline step %s, last activity %ss ago' "${BASH_REMATCH[1]}" "$age"
     return 0
   done <<< "$out"
   return 1
