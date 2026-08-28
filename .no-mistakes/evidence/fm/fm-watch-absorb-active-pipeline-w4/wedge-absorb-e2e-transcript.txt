@@ -1,0 +1,37 @@
+
+=== STAGE 1: bin/fm-crew-state.sh reads the incident run shape ===
+-- axi status served to the reader (the 2026-08-27 incident shape):
+run:
+  id: "01RUN"
+  branch: fm/fm-forge-write-audit-log-a3
+  status: running
+  head: "30edeb943519212cfb7169873585c4957a756b79"
+  pr: "https://github.com/example/repo/pull/44"
+  findings: none
+    pr,completed,0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,44m31s,"6m51s ago: log: CI checks running, waiting for results...","",starting
+-- fm-crew-state.sh current-state line:
+state: working · source: run-step · validating (running) · activity: ci 411
+
+=== STAGE 2: the incident lane (ci waiting on GitHub, activity 411s ago) at the 240s wedge threshold ===
+-- watcher kept supervising (no exit): possible-wedge ABSORBED
+-- wake output (empty means no possible-wedge raised):
+-- wake queue file: absent - no wake ever enqueued
+-- escalation counter file: none - counter never advanced
+-- watcher debug log (state/.watch-triage.log):
+[2026-08-28T22:09:15+0000] absorbed non-terminal stale (active pipeline step ci, last activity 411s ago, idle 502s): test:fm-quiet
+
+=== STAGE 3: same lane shape, step silent for 2463s (> FM_STEP_ACTIVITY_MAX_SECS=900) ===
+-- watcher ESCALATED, wake reason:
+stale: test:fm-quiet (idle 502s, possible wedge, escalation 1)
+
+=== STAGE 4: stale record - state says run-step but the run reports no active step (no activity field) ===
+-- watcher ESCALATED, wake reason:
+stale: test:fm-quiet (idle 502s, possible wedge, escalation 1)
+
+=== STAGE 5: spoof - a worker's own status line quoting 'source: run-step · activity: pr 30' inside a status-log verdict ===
+-- watcher ESCALATED (spoof did not silence the alarm), wake reason:
+stale: test:fm-quiet (idle 502s, possible wedge, escalation 1)
+
+=== scratch: /tmp/fm-wedge-demo.atVRzl ===
