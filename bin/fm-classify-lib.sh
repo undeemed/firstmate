@@ -1523,27 +1523,13 @@ FM_STEP_ACTIVITY_TIMEOUT=${FM_STEP_ACTIVITY_TIMEOUT:-10}
 FM_STEP_CPU_SAMPLE_SECS=${FM_STEP_CPU_SAMPLE_SECS:-2}
 
 # Seconds in a Go-style duration ("8m1s", "1h2m3s", "45s"), the form the
-# no-mistakes CLI prints ages in; 1 when the string is not one. Fractions are
-# truncated, because the caller compares against a bound in whole seconds.
+# no-mistakes CLI prints ages in; 1 when the string is not one. The units come in
+# fixed h-m-s order, and fractions are truncated because the caller compares
+# against a bound in whole seconds.
 fm_duration_secs() {  # <duration>
-  local d=$1 total=0 num unit seen=0
-  while [ -n "$d" ]; do
-    num=${d%%[hms]*}
-    [ "$num" != "$d" ] || return 1
-    unit=${d:${#num}:1}
-    d=${d:$(( ${#num} + 1 ))}
-    num=${num%%.*}
-    case "$num" in ''|*[!0-9]*) return 1 ;; esac
-    case "$unit" in
-      h) total=$(( total + num * 3600 )) ;;
-      m) total=$(( total + num * 60 )) ;;
-      s) total=$(( total + num )) ;;
-      *) return 1 ;;
-    esac
-    seen=1
-  done
-  [ "$seen" -eq 1 ] || return 1
-  printf '%s' "$total"
+  local re='^(([0-9]+)(\.[0-9]+)?h)?(([0-9]+)(\.[0-9]+)?m)?(([0-9]+)(\.[0-9]+)?s)?$'
+  [ -n "${1:-}" ] && [[ $1 =~ $re ]] || return 1
+  printf '%s' $(( 10#0${BASH_REMATCH[2]} * 3600 + 10#0${BASH_REMATCH[5]} * 60 + 10#0${BASH_REMATCH[8]} ))
 }
 
 # Split one TOON table row into the global array FM_TOON_ROW, on commas OUTSIDE
