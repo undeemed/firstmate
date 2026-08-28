@@ -3160,45 +3160,6 @@ test_crew_step_progress_evidence_classifier() {
 	pass "crew_step_progress_evidence: an active step with recent last_activity is progress; a silent step, a foreign run, and anything unreadable are not"
 }
 
-# CPU is corroboration, never the question. It enriches the recorded reason where a
-# step agent exists, and its absence changes nothing - which is what makes the
-# ci-waiting-on-GitHub case above absorbable at all.
-test_step_agent_cpu_is_corroboration_only() {
-	local dir state fakebin wt burner evidence
-	[ -r /proc/self/stat ] || {
-		pass "step-agent CPU corroboration needs /proc, absent here (skipped)"
-		return 0
-	}
-	dir=$(make_case classify-step-cpu)
-	state="$dir/state"
-	fakebin="$dir/fakebin"
-	wt="$dir/wt"
-	make_fake_no_mistakes "$fakebin"
-	make_case_worktree "$wt" fm/cpu
-	printf 'window=test:fm-cpu\nkind=ship\nworktree=%s\n' "$wt" >"$state/cpu.meta"
-	export FM_FAKE_NM_STATUS="$dir/nm.toon"
-	export PATH="$fakebin:$PATH"
-	bash -c 'while :; do :; done' &
-	burner=$!
-	nm_status_ci_active fm/cpu 8m1s >"$FM_FAKE_NM_STATUS"
-	sed -i "s/\"\",starting/\"$burner\",starting/" "$FM_FAKE_NM_STATUS"
-	evidence=$(FM_STEP_CPU_SAMPLE_SECS=1 crew_step_progress_evidence cpu "$state") ||
-		fail "a step with a CPU-burning agent was not read as progress"
-	case "$evidence" in
-	*"advancing CPU"*) ;;
-	*) fail "a demonstrably busy step agent was not recorded as corroboration: $evidence" ;;
-	esac
-	kill "$burner" 2>/dev/null || true
-	wait "$burner" 2>/dev/null || true
-	# The same reading with a dead agent pid still reports progress: the absorb turns
-	# on last_activity, so losing the corroborating signal only loses the note.
-	evidence=$(FM_STEP_CPU_SAMPLE_SECS=1 crew_step_progress_evidence cpu "$state") ||
-		fail "losing the CPU corroboration turned recent step progress into no evidence"
-	case "$evidence" in *"advancing CPU"*) fail "a dead step agent was reported as advancing CPU: $evidence" ;; esac
-	unset FM_FAKE_NM_STATUS
-	pass "a CPU-advancing step agent is recorded as corroboration, and its absence never withholds the progress verdict"
-}
-
 # Build the fixture both behavioral cases share: an already-classified stale pane
 # whose idle window opened <age> seconds ago, so the very first poll lands straight
 # on the at-threshold wedge branch, plus a worktree on its own branch and a fake
@@ -3990,7 +3951,6 @@ test_secondmate_home_supervision_churn_is_not_write_evidence
 test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain
 test_crew_step_progress_evidence_classifier
-test_step_agent_cpu_is_corroboration_only
 test_active_recent_step_absorbs_the_wedge
 test_step_progress_needs_both_conditions
 test_triage_log_size_cap_accepts_spaced_wc_counts

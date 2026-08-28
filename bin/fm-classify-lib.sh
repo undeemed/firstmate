@@ -1519,8 +1519,6 @@ FM_STEP_ACTIVITY_MAX_SECS=${FM_STEP_ACTIVITY_MAX_SECS:-900}
 # poll that was about to escalate, so a hung CLI costs that poll the bound and
 # nothing more. Hitting it reads as no evidence, so the lane escalates as before.
 FM_STEP_ACTIVITY_TIMEOUT=${FM_STEP_ACTIVITY_TIMEOUT:-10}
-# Sample width for the CORROBORATING cpu read below, which never gates an absorb.
-FM_STEP_CPU_SAMPLE_SECS=${FM_STEP_CPU_SAMPLE_SECS:-2}
 
 # Seconds in a Go-style duration ("8m1s", "1h2m3s", "45s"), the form the
 # no-mistakes CLI prints ages in; 1 when the string is not one. The units come in
@@ -1569,37 +1567,6 @@ fm_toon_col_index() {  # <columns> <name>
   return 1
 }
 
-# Cumulative CPU ticks (utime+stime) charged to <pid>; 1 when that cannot be read,
-# including on a kernel with no /proc. Corroboration only, so an unreadable pid is
-# never an outcome any decision turns on.
-fm_proc_cpu_ticks() {  # <pid>
-  local stat rest
-  local -a f=()
-  stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
-  rest=${stat#*") "}
-  [ "$rest" != "$stat" ] || return 1
-  read -r -a f <<< "$rest"
-  # Skipping through comm's closing paren (comm may hold spaces) leaves the process
-  # state as field 3, so utime and stime, fields 14 and 15 of proc(5), are here.
-  [ "${#f[@]}" -ge 13 ] || return 1
-  case "${f[11]}${f[12]}" in ''|*[!0-9]*) return 1 ;; esac
-  printf '%s' $(( f[11] + f[12] ))
-}
-
-# 0 when <pid> was charged more CPU across one short sample. CORROBORATING ONLY:
-# a step waiting on an external service burns almost nothing and is still making
-# progress, so this never gates an absorb - it only enriches the recorded reason,
-# so a lane that turns out to be genuinely wedged is easier to read back.
-fm_pid_cpu_advanced() {  # <pid>
-  local pid=$1 secs=$FM_STEP_CPU_SAMPLE_SECS before after
-  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  case "$secs" in ''|*[!0-9]*|0) secs=2 ;; esac
-  before=$(fm_proc_cpu_ticks "$pid") || return 1
-  sleep "$secs"
-  after=$(fm_proc_cpu_ticks "$pid") || return 1
-  [ "$after" -gt "$before" ]
-}
-
 # Print the evidence phrase for <id>'s pipeline step when that step is ACTIVE and
 # was active recently, and return 0; print nothing and return 1 otherwise. This is
 # the wedge detector's fourth liveness input, and the only one that can see the
@@ -1609,8 +1576,8 @@ fm_pid_cpu_advanced() {  # <pid>
 # rendered nothing into its pane for many minutes at a time while being perfectly
 # healthy. Neither pane quietness, nor the run step alone, nor the worktree write
 # probe can tell that lane from a wedged one; the step's own last_activity can,
-# because it answers when that step last DID something rather than whether anything
-# is alive.
+# because it measures PROGRESS - when that step last did something - where every
+# other input measures only liveness.
 #
 # 1 for every other outcome - no recorded worktree, a torn-down worktree, a
 # secondmate home, a detached HEAD, no CLI, a read that outlives its bound, a run
@@ -1627,7 +1594,7 @@ fm_pid_cpu_advanced() {  # <pid>
 # answered with a different lane's running ci step.
 crew_step_progress_evidence() {  # <id> <state>
   local id=$1 state=$2 wt kind branch out bound line cols in_table=0
-  local i_step i_activity i_pid step activity pid age phrase
+  local i_step i_activity step activity age
   [ -n "$id" ] || return 1
   wt=$(grep '^worktree=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
   [ -n "$wt" ] && [ -d "$wt" ] || return 1
@@ -1649,7 +1616,6 @@ crew_step_progress_evidence() {  # <id> <state>
           cols=${cols%%\}*}
           i_step=$(fm_toon_col_index "$cols" step) || return 1
           i_activity=$(fm_toon_col_index "$cols" last_activity) || return 1
-          i_pid=$(fm_toon_col_index "$cols" agent_pid) || i_pid=""
           in_table=1
           ;;
       esac
@@ -1668,14 +1634,7 @@ crew_step_progress_evidence() {  # <id> <state>
     case "$activity" in *" ago:"*) ;; *) continue ;; esac
     age=$(fm_duration_secs "${activity%% ago:*}") || continue
     [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || continue
-    phrase="active pipeline step ${step:-unknown}, last activity ${age}s ago"
-    if [ -n "$i_pid" ]; then
-      pid=${FM_TOON_ROW[$i_pid]:-}
-      if [ -n "$pid" ] && fm_pid_cpu_advanced "$pid"; then
-        phrase="$phrase, its step agent still advancing CPU"
-      fi
-    fi
-    printf '%s' "$phrase"
+    printf 'active pipeline step %s, last activity %ss ago' "${step:-unknown}" "$age"
     return 0
   done <<< "$out"
   return 1
