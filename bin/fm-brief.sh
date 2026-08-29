@@ -6,7 +6,8 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only>
+#          [--herdr-lab] [--pr-body-required <file>]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -50,6 +51,16 @@
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns merge decisions, so yolo is
 # a spawn-time and firstmate-side input only (AGENTS.md section 7).
+# --pr-body-required <file> declares content the PUBLISHED pull request body must
+# end with, for a repository whose own policy requires it (an AI-assistance
+# disclosure, for example). It applies only to the two PR-publishing ship modes,
+# because local-only publishes nothing. The file's content is stored at
+# data/<task-id>/pr-body-required.md, and bin/fm-pr-check.sh carries it into the
+# published body and verifies it there over REST; that script's header owns the
+# publication contract. The brief tells the worker the content is declared and
+# that it must not hand-write it, because the pipeline composes the body itself
+# and a hand-written copy would be dropped or duplicated. Without this flag a
+# generated brief is unchanged and no body is ever read or written.
 # Every scaffold's status protocol distinguishes the configured
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
@@ -127,6 +138,7 @@ fi
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
+PR_BODY_REQUIRED=
 MODE=
 MODE_SET=0
 POS=()
@@ -138,6 +150,7 @@ for a in "$@"; do
     esac
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
+      pr_body_required) PR_BODY_REQUIRED=$a ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -150,6 +163,8 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
+    --pr-body-required) want_value=pr_body_required ;;
+    --pr-body-required=*) PR_BODY_REQUIRED=${a#--pr-body-required=} ;;
     # yolo never reaches the worker: it is firstmate's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -189,9 +204,31 @@ if [ "$NO_PROJECTS" -eq 1 ] && [ "$KIND" != secondmate ]; then
   exit 1
 fi
 
+# Declared body content is only meaningful where a body is published, and it is
+# read here so an unreadable or blank file stops the scaffold rather than
+# becoming a declaration the publication gate later refuses.
+PR_BODY_REQUIRED_TEXT=
+if [ -n "$PR_BODY_REQUIRED" ]; then
+  case "$KIND:$MODE" in
+    ship:no-mistakes|ship:direct-PR) ;;
+    ship:*) echo "error: --pr-body-required applies only to ship modes that publish a PR (no-mistakes, direct-PR)" >&2; exit 1 ;;
+    *) echo "error: --pr-body-required applies only to ship briefs" >&2; exit 1 ;;
+  esac
+  [ -f "$PR_BODY_REQUIRED" ] || { echo "error: --pr-body-required file not found: $PR_BODY_REQUIRED" >&2; exit 1; }
+  PR_BODY_REQUIRED_TEXT=$(cat "$PR_BODY_REQUIRED") || exit 1
+  PR_BODY_REQUIRED_TEXT=${PR_BODY_REQUIRED_TEXT%"${PR_BODY_REQUIRED_TEXT##*[![:space:]]}"}
+  [ -n "$PR_BODY_REQUIRED_TEXT" ] || { echo "error: --pr-body-required file is blank: $PR_BODY_REQUIRED" >&2; exit 1; }
+fi
+
 BRIEF="$DATA/$ID/brief.md"
 [ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
 mkdir -p "$DATA/$ID"
+
+PR_BODY_FILE="$DATA/$ID/pr-body-required.md"
+if [ -n "$PR_BODY_REQUIRED_TEXT" ]; then
+  [ -e "$PR_BODY_FILE" ] && { echo "error: $PR_BODY_FILE already exists" >&2; exit 1; }
+  printf '%s\n' "$PR_BODY_REQUIRED_TEXT" > "$PR_BODY_FILE" || exit 1
+fi
 
 shell_quote() {
   printf "'"
@@ -506,6 +543,18 @@ esac
 # $(...) command substitution used to strip. Drop that one newline so generated
 # briefs stay byte-identical to the historical Bash 5 output.
 DOD=${DOD%$'\n'}
+
+# Declared body content is prepended to the delivery contract rather than
+# emitted as its own template line, so a brief that declares nothing stays
+# byte-identical to a brief scaffolded before the flag existed.
+if [ -n "$PR_BODY_REQUIRED_TEXT" ]; then
+  DOD="# Required pull-request body content
+This task declares content the PUBLISHED pull request body must END with. It is stored at \`$PR_BODY_FILE\`.
+Do not write it into the body, a commit message, or the pipeline intent yourself: the pipeline composes the body, so a hand-written copy is dropped or duplicated.
+Firstmate carries the declared content into the published body when it records your PR, reads the body back from the forge to confirm it, and refuses loudly if the forge does not publish it.
+
+$DOD"
+fi
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.

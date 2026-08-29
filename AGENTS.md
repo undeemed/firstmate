@@ -88,6 +88,7 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   secondmates.md      local and remote secondmate routing table; firstmate-private, maintained by the secondmate seed helpers (section 6)
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
   <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
+  <id>/pr-body-required.md  content this task's PUBLISHED pull-request body must end with, written by `bin/fm-brief.sh --pr-body-required` and enforced by `bin/fm-pr-check.sh`; absent unless the task declares it
 projects/            cloned repos; gitignored; read-only except under hard rule 1's concrete captain-approved project operation exception
 state/               runtime records and signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
@@ -106,7 +107,7 @@ state/               runtime records and signals; gitignored
   .pr-check-quarantine/  private non-runnable storage for checks neutralized by the non-executing migration
   .pr-check-migration.log  private per-task outcomes distinguishing rebuilt or canonically registered replacement polls, quarantined unarmed polls, and incomplete migrations
   .pr-check-migration-scan-v1  private marker proving the non-executing scan disabled every unsafe legacy check; .pr-check-migration-v1 separately records completed private repairs
-  forge-write-audit.log  append-only record of every outbound forge write made through bin/, written by the acting home before the call so a shared credential cannot hide which home acted; a direct gh invocation or a browser action is not captured, so no line is not proof no write happened. fm-pr-merge.sh's header owns the format
+  forge-write-audit.log  append-only record of every outbound forge write made through bin/, written by the acting home before the call so a shared credential cannot hide which home acted; a direct gh invocation or a browser action is not captured, so no line is not proof no write happened. fm-forge-audit-lib.sh owns the format
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   pending-replies/   parent-owned secondmate pending-reply records (correlation id, delivery vs reply, recovery, escalation, settling, and their sibling `pending-replies-archive/` retention); fm-pending-reply-lib.sh
@@ -363,6 +364,7 @@ The worker reports the PR when CI first becomes green rather than waiting for me
 
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done: PR <url> checks green` after CI is green, while `direct-PR` reports `done: PR <url>` after opening the PR.
 Run `bin/fm-pr-check.sh <id> <PR url>` - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
+The pipeline composes the published body itself, so body content a brief merely asks for never arrives: when a repository's own policy requires published content such as an AI-assistance disclosure, declare it at brief time with `bin/fm-brief.sh --pr-body-required <file>`, and that same PR-ready step publishes it as the body's final lines, confirms it by reading the published body back from the forge, and refuses the task loudly rather than shipping without it.
 Tell the captain the PR's full URL, always the complete `https://...` link rather than a bare `#number`, a concise outcome summary, and the no-mistakes risk level when applicable.
 There is no line cap: before opening a PR, run the harness-agnostic `ponytail-review` wrapper on the diff (`ponytail-review` for uncommitted work, `ponytail-review <base>` such as `origin/main`, or `git diff main... | ponytail-review --stdin`), cut everything it names, and re-run it until it exits 0 with `Lean already. Ship.`
 Exit 2 means findings remain and must be cut, while exit 1 means the review could not run at all and must be reported rather than treated as a pass.

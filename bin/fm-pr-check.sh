@@ -5,6 +5,23 @@
 # live only in a private sidecar and are never interpolated into shell source.
 # A GitHub pull request URL and a GitLab merge request URL are both accepted,
 # including a merge request on a self-hosted GitLab instance.
+#
+# This is also the one point that enforces a task's declared PR body contract.
+# The pipeline that opens a PR composes the published body itself, so body
+# content a brief asks for never reaches the forge on its own. A task that
+# genuinely requires published content - a repository policy that demands an
+# AI-assistance disclosure, for example - declares it at brief time with
+# bin/fm-brief.sh --pr-body-required, which stores that content at
+# data/<task-id>/pr-body-required.md. When that file exists, this script reads
+# the PUBLISHED body back from the forge over REST, appends the declared block
+# as the body's final lines unless the body already ends with it, then reads
+# the body back over REST once more to confirm the published result. The
+# description sent is never the evidence. A task that declares nothing has its
+# body neither read nor written, so its published body is exactly what the
+# pipeline composed.
+# The refusal is loud and total: declared content that cannot be published
+# records no pr=, arms no merge poll, and stops the merge in
+# bin/fm-pr-merge.sh, which runs this script before it merges.
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -12,11 +29,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-forge-audit-lib.sh
+. "$SCRIPT_DIR/fm-forge-audit-lib.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -89,6 +109,76 @@ if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/d
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
+fi
+
+# --- declared PR body contract ----------------------------------------------
+# Trailing whitespace and CR carry no meaning in a rendered body, so both sides
+# are compared with them removed.
+body_trim_tail() {  # <text>
+  local s=${1-}
+  s=${s//$'\r'/}
+  printf '%s' "${s%"${s##*[![:space:]]}"}"
+}
+
+BODY_TMP=
+
+# Names the task and the exact content that is not published, then stops.
+body_refuse() {  # <reason> <declared-content>
+  [ -z "$BODY_TMP" ] || rm -f -- "$BODY_TMP"
+  printf 'error: task %s declares required pull request body content that %s does not carry: %s\n' \
+    "$ID" "$URL" "$1" >&2
+  printf -- '--- declared content, not published ---\n%s\n--- end declared content ---\n' "$2" >&2
+  exit 1
+}
+
+# One REST read of the published body, empty when the PR has none.
+body_read_published() {
+  gh api "repos/$OWNER/$REPO/pulls/$NUMBER" --jq '.body // ""' 2>/dev/null
+}
+
+REQUIRED_FILE="$DATA/$ID/pr-body-required.md"
+if [ -f "$REQUIRED_FILE" ]; then
+  REQUIRED=$(body_trim_tail "$(cat "$REQUIRED_FILE")")
+  [ -n "$REQUIRED" ] || {
+    echo "error: task $ID declares required pull request body content, but $REQUIRED_FILE is empty" >&2
+    exit 1
+  }
+  [ "$PROVIDER" = github ] \
+    || body_refuse "publishing declared body content is implemented for GitHub only" "$REQUIRED"
+  command -v gh >/dev/null 2>&1 \
+    || body_refuse "reading the published body needs gh on PATH" "$REQUIRED"
+
+  PUBLISHED=$(body_read_published) \
+    || body_refuse "the published body could not be read back over REST" "$REQUIRED"
+  PUBLISHED=$(body_trim_tail "$PUBLISHED")
+
+  case "$PUBLISHED" in
+    *"$REQUIRED") ;;
+    *)
+      BODY_TMP=$(mktemp "$STATE/.fm-pr-body.XXXXXX") || exit 1
+      if [ -n "$PUBLISHED" ]; then
+        printf '%s\n\n%s\n' "$PUBLISHED" "$REQUIRED" > "$BODY_TMP" || exit 1
+      else
+        printf '%s\n' "$REQUIRED" > "$BODY_TMP" || exit 1
+      fi
+      forge_audit pr-body-append "$ID" "$URL" || exit 1
+      # -F body=@- keeps a body of any length off argv.
+      gh api --method PATCH "repos/$OWNER/$REPO/pulls/$NUMBER" -F body=@- --silent \
+        < "$BODY_TMP" >/dev/null 2>&1 \
+        || body_refuse "the forge refused the body update" "$REQUIRED"
+      rm -f -- "$BODY_TMP"
+      BODY_TMP=
+      # The only evidence that counts: what the forge publishes, read back over
+      # REST rather than assumed from the update just sent.
+      PUBLISHED=$(body_read_published) \
+        || body_refuse "the published body could not be read back over REST after the update" "$REQUIRED"
+      PUBLISHED=$(body_trim_tail "$PUBLISHED")
+      case "$PUBLISHED" in
+        *"$REQUIRED") ;;
+        *) body_refuse "the published body still does not end with it after the update" "$REQUIRED" ;;
+      esac
+      ;;
+  esac
 fi
 
 META_TMP=
