@@ -138,6 +138,18 @@
 #   origin, resolves the current remote default branch, and resets to its tip.
 #   An unreachable origin, unresolved default branch, or non-clean worktree
 #   refuses the spawn rather than risking a PR based on stale history.
+#   That refresh moves the WORKER's base only. The brief it is handed was written
+#   from the project CLONE, so a fresh ship or scout spawn first measures that
+#   clone against its remote: exactly one bounded (30s) fetch of
+#   +refs/heads/<default>:refs/remotes/origin/<default> in the clone, then
+#   `rev-list --count HEAD..origin/<default>`. One or more commits behind refuses
+#   the spawn before any endpoint exists, naming bin/fm-fleet-sync.sh as the
+#   guarded repair, because fast-forwarding here would refresh the code and leave
+#   the already-written brief describing files that changed underneath it. The
+#   check only reads: a clone carrying unlanded work is refused, never touched.
+#   A missing origin remote skips it, and an unreachable origin, unresolvable
+#   default branch, or unmeasurable count warns and launches. A relaunch is
+#   exempt: it re-enters work already under way rather than acting on a new brief.
 # Occupied-checkout refusal: every local spawn also refuses to publish a
 #   worktree that another task already claims. A pool worktree is bound to a task
 #   only by that task's durable state/<id>.meta record: treehouse's occupancy for
@@ -1812,6 +1824,29 @@ if [ "$KIND" = ship ]; then
      && [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$STANDING_MODE")" ]; then
     echo "notice: $ID ships mode=$MODE while the standing posture for $PROJ_NAME is $STANDING_MODE - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
   fi
+fi
+
+# Stale-base guard for the brief's own source; this script's header owns the
+# mechanics and the rationale for refusing rather than fast-forwarding.
+assert_project_base_current() {  # <project-dir>
+  local proj=$1 name default behind
+  name=$(basename "$proj")
+  git -C "$proj" remote get-url origin >/dev/null 2>&1 || return 0
+  if ! { default=$(default_branch "$proj") \
+    && fm_run_timed 30 git -C "$proj" fetch --quiet origin "+refs/heads/$default:refs/remotes/origin/$default" \
+    && behind=$(git -C "$proj" rev-list --count "HEAD..refs/remotes/origin/$default" 2>/dev/null); }; then
+    echo "warning: could not check $name against origin's default branch; launching without a base-freshness check - confirm the brief matches current origin" >&2
+    return 0
+  fi
+  [ "$behind" -gt 0 ] || return 0
+  echo "error: $name is $behind commit(s) behind origin/$default, so $ID's brief was written from stale files; sync that copy with bin/fm-fleet-sync.sh $name, re-check the brief against the refreshed files, then spawn again" >&2
+  return 1
+}
+
+# A relaunch re-enters a worktree whose work is already under way, so its base is
+# whatever that task started from; only a fresh ship or scout brief is at risk.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  assert_project_base_current "$PROJ_ABS" || exit 1
 fi
 
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
