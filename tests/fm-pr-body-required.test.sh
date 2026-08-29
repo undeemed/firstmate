@@ -196,6 +196,42 @@ test_a_forge_without_a_supported_body_write_refuses() {
   pass "a forge whose body write is unimplemented refuses instead of dropping the content"
 }
 
+test_a_symlinked_declaration_is_refused_unread() {
+  local dir
+  dir=$(make_case declared-symlink)
+  printf '%s\n' 'oauth_token: SECRET-NOT-FOR-THE-FORGE' > "$dir/secret.txt"
+  ln -s "$dir/secret.txt" "$dir/home/data/task-a/pr-body-required.md"
+
+  run_task_check "$dir" && fail "a symlinked declaration reported success"
+  assert_grep 'error: task task-a declares required pull request body content' "$dir/check.err" \
+    "the symlink refusal did not name the task"
+  assert_no_grep 'SECRET-NOT-FOR-THE-FORGE' "$dir/check.err" \
+    "the refusal printed the symlink target's content"
+  assert_no_grep 'SECRET-NOT-FOR-THE-FORGE' "$dir/published-body" \
+    "the symlink target's content reached the published body"
+  [ "$(patch_calls "$dir")" = 0 ] || fail "a symlinked declaration updated the published body"
+  [ "$(body_reads "$dir")" = 0 ] || fail "a symlinked declaration read the published body"
+  assert_no_grep 'pr=' "$dir/home/state/task-a.meta" "a symlinked declaration recorded a PR anyway"
+  [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "a symlinked declaration armed a merge poll anyway"
+  pass "a symlinked declaration is refused without reading or publishing it"
+}
+
+test_a_hard_linked_declaration_is_refused_unread() {
+  local dir
+  dir=$(make_case declared-hardlink)
+  declare_body "$dir" "$DISCLOSURE"
+  ln "$dir/home/data/task-a/pr-body-required.md" "$dir/second-name"
+
+  run_task_check "$dir" && fail "a hard-linked declaration reported success"
+  assert_grep 'error: task task-a declares required pull request body content' "$dir/check.err" \
+    "the hard-link refusal did not name the task"
+  assert_no_grep "$DISCLOSURE" "$dir/check.err" "the refusal printed the untrusted file's content"
+  [ "$(patch_calls "$dir")" = 0 ] || fail "a hard-linked declaration updated the published body"
+  assert_no_grep 'pr=' "$dir/home/state/task-a.meta" "a hard-linked declaration recorded a PR anyway"
+  [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "a hard-linked declaration armed a merge poll anyway"
+  pass "a hard-linked declaration is refused without publishing it"
+}
+
 test_the_brief_declares_the_content_and_tells_the_worker_to_leave_it_alone() {
   local dir out
   dir="$TMP_ROOT/brief"
@@ -238,6 +274,24 @@ test_a_declaration_is_refused_where_no_body_is_published() {
   pass "a declaration is refused where no body is published and when it carries nothing"
 }
 
+test_an_empty_declaration_flag_is_refused() {
+  local dir out
+  dir="$TMP_ROOT/brief-empty-flag"
+  mkdir -p "$dir/data" "$dir/state"
+
+  out=$(FM_DATA_OVERRIDE="$dir/data" FM_STATE_OVERRIDE="$dir/state" \
+    "$BRIEF" task-empty demo --mode no-mistakes --pr-body-required= 2>&1) \
+    && fail "an empty --pr-body-required= value was accepted: $out"
+  assert_contains "$out" 'requires a value' "the empty-value refusal did not name the reason"
+
+  out=$(FM_DATA_OVERRIDE="$dir/data" FM_STATE_OVERRIDE="$dir/state" \
+    "$BRIEF" task-empty demo --mode no-mistakes --pr-body-required '' 2>&1) \
+    && fail "an empty --pr-body-required value was accepted: $out"
+  assert_contains "$out" 'requires a value' "the empty-value refusal did not name the reason"
+  [ ! -e "$dir/data/task-empty" ] || fail "a refused empty declaration left task files behind"
+  pass "an explicitly empty --pr-body-required value is refused loudly"
+}
+
 test_declared_content_is_published_as_the_last_line
 test_nothing_declared_leaves_the_published_body_untouched
 test_content_already_last_is_not_appended_twice
@@ -245,5 +299,8 @@ test_a_refused_update_stops_the_task_and_names_the_content
 test_a_dropped_update_is_caught_by_the_read_back
 test_an_unreadable_body_refuses_rather_than_assumes
 test_a_forge_without_a_supported_body_write_refuses
+test_a_symlinked_declaration_is_refused_unread
+test_a_hard_linked_declaration_is_refused_unread
 test_the_brief_declares_the_content_and_tells_the_worker_to_leave_it_alone
 test_a_declaration_is_refused_where_no_body_is_published
+test_an_empty_declaration_flag_is_refused
