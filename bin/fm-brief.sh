@@ -204,20 +204,17 @@ if [ "$NO_PROJECTS" -eq 1 ] && [ "$KIND" != secondmate ]; then
   exit 1
 fi
 
-# Declared body content is only meaningful where a body is published, and it is
-# read here so an unreadable or blank file stops the scaffold rather than
-# becoming a declaration the publication gate later refuses.
-PR_BODY_REQUIRED_TEXT=
+# Declared body content is only meaningful where a body is published, and a
+# blank file is refused here rather than becoming a declaration the publication
+# gate later refuses.
 if [ -n "$PR_BODY_REQUIRED" ]; then
   case "$KIND:$MODE" in
     ship:no-mistakes|ship:direct-PR) ;;
-    ship:*) echo "error: --pr-body-required applies only to ship modes that publish a PR (no-mistakes, direct-PR)" >&2; exit 1 ;;
-    *) echo "error: --pr-body-required applies only to ship briefs" >&2; exit 1 ;;
+    *) echo "error: --pr-body-required applies only to a ship brief in a mode that publishes a PR (no-mistakes, direct-PR)" >&2; exit 1 ;;
   esac
   [ -f "$PR_BODY_REQUIRED" ] || { echo "error: --pr-body-required file not found: $PR_BODY_REQUIRED" >&2; exit 1; }
-  PR_BODY_REQUIRED_TEXT=$(cat "$PR_BODY_REQUIRED") || exit 1
-  PR_BODY_REQUIRED_TEXT=${PR_BODY_REQUIRED_TEXT%"${PR_BODY_REQUIRED_TEXT##*[![:space:]]}"}
-  [ -n "$PR_BODY_REQUIRED_TEXT" ] || { echo "error: --pr-body-required file is blank: $PR_BODY_REQUIRED" >&2; exit 1; }
+  grep -q '[^[:space:]]' "$PR_BODY_REQUIRED" \
+    || { echo "error: --pr-body-required file is blank: $PR_BODY_REQUIRED" >&2; exit 1; }
 fi
 
 BRIEF="$DATA/$ID/brief.md"
@@ -225,10 +222,7 @@ BRIEF="$DATA/$ID/brief.md"
 mkdir -p "$DATA/$ID"
 
 PR_BODY_FILE="$DATA/$ID/pr-body-required.md"
-if [ -n "$PR_BODY_REQUIRED_TEXT" ]; then
-  [ -e "$PR_BODY_FILE" ] && { echo "error: $PR_BODY_FILE already exists" >&2; exit 1; }
-  printf '%s\n' "$PR_BODY_REQUIRED_TEXT" > "$PR_BODY_FILE" || exit 1
-fi
+[ -z "$PR_BODY_REQUIRED" ] || cp -- "$PR_BODY_REQUIRED" "$PR_BODY_FILE" || exit 1
 
 shell_quote() {
   printf "'"
@@ -547,7 +541,7 @@ DOD=${DOD%$'\n'}
 # Declared body content is prepended to the delivery contract rather than
 # emitted as its own template line, so a brief that declares nothing stays
 # byte-identical to a brief scaffolded before the flag existed.
-if [ -n "$PR_BODY_REQUIRED_TEXT" ]; then
+if [ -n "$PR_BODY_REQUIRED" ]; then
   DOD="# Required pull-request body content
 This task declares content the PUBLISHED pull request body must END with. It is stored at \`$PR_BODY_FILE\`.
 Do not write it into the body, a commit message, or the pipeline intent yourself: the pipeline composes the body, so a hand-written copy is dropped or duplicated.
