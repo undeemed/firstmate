@@ -150,7 +150,9 @@ for a in "$@"; do
     esac
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
-      pr_body_required) PR_BODY_REQUIRED=$a ;;
+      pr_body_required)
+        [ -n "$a" ] || { echo "error: --pr-body-required requires a value" >&2; exit 1; }
+        PR_BODY_REQUIRED=$a ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -164,7 +166,10 @@ for a in "$@"; do
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --pr-body-required) want_value=pr_body_required ;;
-    --pr-body-required=*) PR_BODY_REQUIRED=${a#--pr-body-required=} ;;
+    --pr-body-required=*)
+      PR_BODY_REQUIRED=${a#--pr-body-required=}
+      [ -n "$PR_BODY_REQUIRED" ] || { echo "error: --pr-body-required requires a value" >&2; exit 1; }
+      ;;
     # yolo never reaches the worker: it is firstmate's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -544,7 +549,7 @@ DOD=${DOD%$'\n'}
 if [ -n "$PR_BODY_REQUIRED" ]; then
   DOD="# Required pull-request body content
 This task declares content the PUBLISHED pull request body must END with. It is stored at \`$PR_BODY_FILE\`.
-Do not write it into the body, a commit message, or the pipeline intent yourself: the pipeline composes the body, so a hand-written copy is dropped or duplicated.
+Do not write it into the body, a commit message, or the pipeline intent yourself: in no-mistakes mode the pipeline composes the body and drops a hand-written copy, and in direct-PR mode you open the PR yourself and a hand-written copy risks being duplicated.
 Firstmate carries the declared content into the published body when it records your PR, reads the body back from the forge to confirm it, and refuses loudly if the forge does not publish it.
 
 $DOD"

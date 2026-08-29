@@ -121,10 +121,10 @@ body_trim_tail() {  # <text>
 }
 
 # Names the task and the exact content that is not published, then stops.
-body_refuse() {  # <reason> <declared-content>
+body_refuse() {  # <reason> [declared-content]
   printf 'error: task %s declares required pull request body content that %s does not carry: %s\n' \
     "$ID" "$URL" "$1" >&2
-  printf -- '--- declared content, not published ---\n%s\n--- end declared content ---\n' "$2" >&2
+  [ "$#" -lt 2 ] || printf -- '--- declared content, not published ---\n%s\n--- end declared content ---\n' "$2" >&2
   exit 1
 }
 
@@ -134,7 +134,10 @@ body_read_published() {
 }
 
 REQUIRED_FILE="$DATA/$ID/pr-body-required.md"
-if [ -f "$REQUIRED_FILE" ]; then
+if [ -e "$REQUIRED_FILE" ] || [ -L "$REQUIRED_FILE" ]; then
+  if [ ! -f "$REQUIRED_FILE" ] || [ -L "$REQUIRED_FILE" ] || [ "$(fm_pr_file_link_count "$REQUIRED_FILE")" != 1 ]; then
+    body_refuse "the declaration at $REQUIRED_FILE is not a regular file with one link, so it was not read"
+  fi
   REQUIRED=$(body_trim_tail "$(cat "$REQUIRED_FILE")")
   [ -n "$REQUIRED" ] || {
     echo "error: task $ID declares required pull request body content, but $REQUIRED_FILE is empty" >&2
@@ -154,7 +157,8 @@ if [ -f "$REQUIRED_FILE" ]; then
     *)
       UPDATED=$REQUIRED
       [ -z "$PUBLISHED" ] || UPDATED=$(printf '%s\n\n%s' "$PUBLISHED" "$REQUIRED")
-      forge_audit pr-body-append "$ID" "$URL" || exit 1
+      forge_audit pr-body-append "$ID" "$URL" \
+        || body_refuse "the outbound body write could not be recorded in the forge write audit" "$REQUIRED"
       # -F body=@- on a pipe keeps a body of any length off argv.
       printf '%s\n' "$UPDATED" \
         | gh api --method PATCH "repos/$OWNER/$REPO/pulls/$NUMBER" -F body=@- --silent >/dev/null 2>&1 \
