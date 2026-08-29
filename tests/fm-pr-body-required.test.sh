@@ -85,10 +85,6 @@ run_task_check() {  # <dir> [pr-url]
     "$PR_CHECK" task-a "$url" > "$dir/check.out" 2> "$dir/check.err"
 }
 
-published_last_line() {  # <dir>
-  awk 'NF { last = $0 } END { print last }' "$1/published-body"
-}
-
 patch_calls() {  # <dir>
   grep -c -- '--method PATCH' "$1/gh.log" || true
 }
@@ -104,7 +100,7 @@ test_declared_content_is_published_as_the_last_line() {
 
   run_task_check "$dir" || fail "the PR check refused a publishable declaration: $(cat "$dir/check.err")"
 
-  [ "$(published_last_line "$dir")" = "$DISCLOSURE" ] \
+  [ "$(tail -n 1 "$dir/published-body")" = "$DISCLOSURE" ] \
     || fail "the declared sentence is not the published body's last line: $(cat "$dir/published-body")"
   assert_grep 'Quality report' "$dir/published-body" "the pipeline's own body was lost"
   [ "$(patch_calls "$dir")" = 1 ] || fail "expected exactly one published body update"
@@ -156,27 +152,23 @@ assert_refused() {  # <dir> <case-name>
 }
 
 test_a_refused_update_stops_the_task_and_names_the_content() {
-  local dir rc
+  local dir
   dir=$(make_case declared-refused)
   declare_body "$dir" "$DISCLOSURE"
 
-  FM_TEST_GH_PATCH_FAIL=1 run_task_check "$dir"
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "a refused body update reported success"
+  FM_TEST_GH_PATCH_FAIL=1 run_task_check "$dir" && fail "a refused body update reported success"
   assert_refused "$dir" "a refused body update"
   pass "a forge that refuses the body update stops the task and names the content"
 }
 
 test_a_dropped_update_is_caught_by_the_read_back() {
-  local dir rc
+  local dir
   dir=$(make_case declared-dropped)
   declare_body "$dir" "$DISCLOSURE"
 
   # The forge accepts the update and publishes the old body: only the read-back
   # can see it, which is why the read-back is the contract.
-  FM_TEST_GH_PATCH_DROP=1 run_task_check "$dir"
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "a silently dropped body update reported success"
+  FM_TEST_GH_PATCH_DROP=1 run_task_check "$dir" && fail "a silently dropped body update reported success"
   assert_refused "$dir" "a silently dropped body update"
   assert_grep 'still does not end with it' "$dir/check.err" \
     "the refusal did not come from the read-back"
@@ -184,25 +176,22 @@ test_a_dropped_update_is_caught_by_the_read_back() {
 }
 
 test_an_unreadable_body_refuses_rather_than_assumes() {
-  local dir rc
+  local dir
   dir=$(make_case declared-unreadable)
   declare_body "$dir" "$DISCLOSURE"
 
-  FM_TEST_GH_GET_FAIL=1 run_task_check "$dir"
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "an unreadable published body reported success"
+  FM_TEST_GH_GET_FAIL=1 run_task_check "$dir" && fail "an unreadable published body reported success"
   assert_refused "$dir" "an unreadable published body"
   pass "a published body that cannot be read refuses instead of assuming it is compliant"
 }
 
 test_a_forge_without_a_supported_body_write_refuses() {
-  local dir rc
+  local dir
   dir=$(make_case declared-gitlab)
   declare_body "$dir" "$DISCLOSURE"
 
-  run_task_check "$dir" https://gitlab.com/g/p/-/merge_requests/7
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "a merge request with declared body content reported success"
+  run_task_check "$dir" https://gitlab.com/g/p/-/merge_requests/7 \
+    && fail "a merge request with declared body content reported success"
   assert_refused "$dir" "a merge request with declared body content"
   pass "a forge whose body write is unimplemented refuses instead of dropping the content"
 }
@@ -226,28 +215,25 @@ test_the_brief_declares_the_content_and_tells_the_worker_to_leave_it_alone() {
 }
 
 test_a_declaration_is_refused_where_no_body_is_published() {
-  local dir out rc
+  local dir out
   dir="$TMP_ROOT/brief-refusals"
   mkdir -p "$dir/data" "$dir/state"
   printf '%s\n' "$DISCLOSURE" > "$dir/disclosure.txt"
   : > "$dir/blank.txt"
 
   out=$(FM_DATA_OVERRIDE="$dir/data" FM_STATE_OVERRIDE="$dir/state" \
-    "$BRIEF" task-local demo --mode local-only --pr-body-required "$dir/disclosure.txt" 2>&1)
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "a local-only brief accepted declared body content"
-  assert_contains "$out" 'publish a PR' "the local-only refusal did not name the reason"
+    "$BRIEF" task-local demo --mode local-only --pr-body-required "$dir/disclosure.txt" 2>&1) \
+    && fail "a local-only brief accepted declared body content"
+  assert_contains "$out" 'publishes a PR' "the local-only refusal did not name the reason"
   [ ! -e "$dir/data/task-local" ] || fail "the refused local-only brief left task files behind"
 
   out=$(FM_DATA_OVERRIDE="$dir/data" FM_STATE_OVERRIDE="$dir/state" \
-    "$BRIEF" task-scout demo --scout --pr-body-required "$dir/disclosure.txt" 2>&1)
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "a scout brief accepted declared body content"
+    "$BRIEF" task-scout demo --scout --pr-body-required "$dir/disclosure.txt" 2>&1) \
+    && fail "a scout brief accepted declared body content"
 
   out=$(FM_DATA_OVERRIDE="$dir/data" FM_STATE_OVERRIDE="$dir/state" \
-    "$BRIEF" task-blank demo --mode no-mistakes --pr-body-required "$dir/blank.txt" 2>&1)
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "a blank declaration file was accepted"
+    "$BRIEF" task-blank demo --mode no-mistakes --pr-body-required "$dir/blank.txt" 2>&1) \
+    && fail "a blank declaration file was accepted"
   assert_contains "$out" 'blank' "the blank-declaration refusal did not name the reason"
   pass "a declaration is refused where no body is published and when it carries nothing"
 }
