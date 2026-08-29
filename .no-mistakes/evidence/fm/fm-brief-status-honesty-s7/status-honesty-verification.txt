@@ -1,0 +1,64 @@
+Status-honesty contract in generated briefs - verification transcript
+branch fm/fm-brief-status-honesty-s7  base c2ceb3f  target 3a7888d
+
+== 1. The block as a worker reads it (extracted from a generated brief) ==
+# Status honesty
+Append `done:` ONLY when the deliverable your definition of done names provably exists, and name that evidence in the line: the pull request URL, the report path, the merged commit, or the committed branch it requires.
+Reporting `done:` for work you have not finished - no PR where your definition of done requires one, no report written, an unpushed commit, or an analysis you are about to turn into the deliverable - is a false report, not a status update.
+If you intend to finish but have not finished, the line is `working:`, or `blocked:` when you need help - never `done:`.
+
+== 2. Present and byte-identical in every generated variant (sha256 of extracted section) ==
+ship --mode no-mistakes      789db02703fd8013
+ship --mode direct-PR        789db02703fd8013
+ship --mode local-only       789db02703fd8013
+--scout                      789db02703fd8013
+--secondmate charter         789db02703fd8013
+
+== 3. Placement in the generated brief (no-mistakes variant, in context) ==
+52-   daemon error, append `blocked: {the daemon error}` and stop; only firstmate manages the daemon.
+53-
+54:# Status honesty
+55-Append `done:` ONLY when the deliverable your definition of done names provably exists, and name that evidence in the line: the pull request URL, the report path, the merged commit, or the committed branch it requires.
+56-Reporting `done:` for work you have not finished - no PR where your definition of done requires one, no report written, an unpushed commit, or an analysis you are about to turn into the deliverable - is a false report, not a status update.
+57-If you intend to finish but have not finished, the line is `working:`, or `blocked:` when you need help - never `done:`.
+58-
+59-# Progress - do not be a black box
+60-The status protocol above owns WHEN you append a status line.
+
+== 4. Absent at the base commit (same generator invocations, base bin/fm-brief.sh) ==
+base-ship   occurrences of "Status honesty": 0
+base-scout  occurrences of "Status honesty": 0
+base-2m     occurrences of "Status honesty": 0
+
+== 5. New test fails against the pre-fix script, passes at target ==
+pre-fix:  not ok - honesty-a1: brief is missing the status-honesty section  (file exit 1)
+target:   ok - fm-brief.sh: every scaffold forbids reporting an intention as completion
+
+== 6. Full colocated test file at target (existing status-protocol safety tests intact) ==
+ok - fm-brief.sh: bash -n succeeds
+/tmp/fm-brief.xnvJf0/heredoc-in-substitution.sh:2
+ok - fm-brief.sh: no heredoc is nested inside a command substitution (Bash 3.2 parse-safe)
+ok - fm-brief.sh: --help renders the complete header
+ok - fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly
+ok - fm-brief.sh: ship --mode is required and closed-set validated
+ok - fm-brief.sh: the explicit ship mode wins over the registered posture
+ok - fm-brief.sh: --yolo and scout/secondmate --mode are refused, never silently dropped
+ok - fm-brief.sh: faster paths use configured authority without stacked review
+ok - fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe
+ok - fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar
+ok - fm-brief.sh: every ship mode carries the lean gate; scout and charter do not
+ok - fm-brief.sh: --herdr-lab emits the complete hard safety contract
+ok - fm-brief.sh: --herdr-lab uses its quoted Firstmate-owned helper path
+ok - fm-brief.sh: ship and scout scaffolds make omitted Herdr intent fail-visible
+ok - fm-brief.sh: the documented {TASK} fill cannot corrupt the Herdr safety gate
+ok - fm-brief.sh: Herdr lab contract covers scouts and rejects secondmate misuse
+ok - fm-brief.sh: --no-projects scaffolds a project-less charter and guards misuse
+ok - fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting
+ok - fm-brief.sh: relative directory inputs ignore CDPATH, render stable absolute charter paths, or fail loudly
+ok - fm-brief.sh: custom pause verb renders in every scaffold
+ok - fm-brief.sh: ship and scout briefs declare every stop; the charter keeps its idle contract
+ok - fm-brief.sh: every scaffold carries the progress-bar contract without loosening status appends
+ok - fm-brief.sh: every scaffold forbids reporting an intention as completion
+ok - fm-brief.sh: investigation and visual-review completions load the shared decision policy
+ok - fm-brief: scout and secondmate code paths still scaffold well-formed briefs
+ok - fm-brief.sh: every scaffold states a decision key before the colon
