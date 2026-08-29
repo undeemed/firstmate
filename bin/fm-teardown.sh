@@ -162,6 +162,9 @@
 #     removal, no worktree return or removal, and no run abort. The pool slot
 #     stays held until the co-tenant is torn down, which is the correct owner
 #     of that return.
+# --force does not relax any of this: it is the captain's authority to
+# discard THIS task's work, never authority to reach another task's live
+# worker.
 # Never widen any of this to a box-wide process pattern: a name or command
 # match reaches unrelated processes that merely look similar.
 set -eu
