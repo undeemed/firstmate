@@ -1,0 +1,20 @@
+Proof for acceptance criterion 6: with nothing declared, generated briefs
+are byte-identical between base c2ceb3f and target 764349c.
+Method: git archive each commit to the SAME path /tmp/fm-body-contract-scratch/tree,
+run bin/fm-brief.sh for every mode with identical arguments and the SAME output path,
+then diff -r and sha256sum the generated data trees.
+
+--- diff -r out-basefix/data out-targetfix/data ---
+(no differences)
+
+--- sha256 of every generated brief ---
+3eea22115910ac459a82df4f0fbc48d7478fef7ea7fc65dfb9a9ff7835d1d0de  out-basefix/data/task-direct-PR/brief.md
+5a1fc3e9f9ad8331d558008b2e5b5e22d8712f667f473ea9ffcab7b043885d81  out-basefix/data/task-local-only/brief.md
+496f2661cb3ef74001c2736b1732fd43610b21ef414d3af5a48546a51d3f83f5  out-basefix/data/task-no-mistakes/brief.md
+6282b0b4f48aaf5e2ff98bf6a4e7d27ab49888e0fc2d0222aaff4b85f068fb45  out-basefix/data/task-scout/brief.md
+0697e59978f64fcaf998d8d8bbe1bb701dfb6311b30366aecdad42e593c2c029  out-basefix/data/task-sm/brief.md
+3eea22115910ac459a82df4f0fbc48d7478fef7ea7fc65dfb9a9ff7835d1d0de  out-targetfix/data/task-direct-PR/brief.md
+5a1fc3e9f9ad8331d558008b2e5b5e22d8712f667f473ea9ffcab7b043885d81  out-targetfix/data/task-local-only/brief.md
+496f2661cb3ef74001c2736b1732fd43610b21ef414d3af5a48546a51d3f83f5  out-targetfix/data/task-no-mistakes/brief.md
+6282b0b4f48aaf5e2ff98bf6a4e7d27ab49888e0fc2d0222aaff4b85f068fb45  out-targetfix/data/task-scout/brief.md
+0697e59978f64fcaf998d8d8bbe1bb701dfb6311b30366aecdad42e593c2c029  out-targetfix/data/task-sm/brief.md

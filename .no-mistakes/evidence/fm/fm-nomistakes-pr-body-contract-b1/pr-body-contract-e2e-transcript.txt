@@ -1,0 +1,67 @@
+=================================================================
+STEP 1 - the captain declares the disclosure sentence at brief time
+=================================================================
+scaffolded: /tmp/fm-body-contract-scratch/e2e/home/data/task-osdisc/brief.md (ship, mode=no-mistakes; replace {TASK})
+
+--- stored declaration: data/task-osdisc/pr-body-required.md ---
+This pull request was produced with AI assistance, as this repository requires.
+--- what the generated brief tells the worker ---
+99:This task declares content the PUBLISHED pull request body must END with. It is stored at `/tmp/fm-body-contract-scratch/e2e/home/data/task-osdisc/pr-body-required.md`.
+100-Do not write it into the body, a commit message, or the pipeline intent yourself: in no-mistakes mode the pipeline composes the body and drops a hand-written copy, and in direct-PR mode you open the PR yourself and a hand-written copy risks being duplicated.
+101-Firstmate carries the declared content into the published body when it records your PR, reads the body back from the forge to confirm it, and refuses loudly if the forge does not publish it.
+
+=================================================================
+STEP 2 - the pipeline has opened PR #10; its published body today
+=================================================================
+## Summary
+
+Adds the thing.
+
+## Quality report
+
+- review: passed
+- tests: passed
+
+=================================================================
+STEP 3 - fm-pr-check.sh task-osdisc <pr-url> (the PR-ready gate)
+=================================================================
+armed: state/task-osdisc.check.sh
+[exit 0]
+
+--- published body AFTER, read from the forge file the stub serves ---
+## Summary
+
+Adds the thing.
+
+## Quality report
+
+- review: passed
+- tests: passed
+
+This pull request was produced with AI assistance, as this repository requires.
+--- last line of the PUBLISHED body ---
+This pull request was produced with AI assistance, as this repository requires.
+--- forge calls made (read, update, read-back) ---
+gh api repos/o/r/pulls/10 --jq .body // ""
+gh api --method PATCH repos/o/r/pulls/10 -F body=@- --silent
+gh api repos/o/r/pulls/10 --jq .body // ""
+
+--- outbound write recorded in the forge write audit ---
+2026-08-29T01:43:47Z	home=/tmp/fm-body-contract-scratch/e2e/home	task=task-osdisc	action=pr-body-append	target=https://github.com/o/r/pull/10
+
+=================================================================
+STEP 4 - the same declaration, but the forge silently drops the update
+=================================================================
+error: task task-drop declares required pull request body content that https://github.com/o/r/pull/10 does not carry: the published body still does not end with it after the update
+--- declared content, not published ---
+This pull request was produced with AI assistance, as this repository requires.
+--- end declared content ---
+[refused, exit 1]
+no pr= recorded, task stopped
+
+=================================================================
+STEP 5 - a task that declares nothing: body untouched, forge never asked
+=================================================================
+[exit 0]
+published body byte-identical (sha256 7a5aa14b191c4194d9cf8be6572121f7fbbb64c7d227fcbedffadb0ca4f7f428)
+body reads+writes made for the undeclared task: 0
