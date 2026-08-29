@@ -120,11 +120,8 @@ body_trim_tail() {  # <text>
   printf '%s' "${s%"${s##*[![:space:]]}"}"
 }
 
-BODY_TMP=
-
 # Names the task and the exact content that is not published, then stops.
 body_refuse() {  # <reason> <declared-content>
-  [ -z "$BODY_TMP" ] || rm -f -- "$BODY_TMP"
   printf 'error: task %s declares required pull request body content that %s does not carry: %s\n' \
     "$ID" "$URL" "$1" >&2
   printf -- '--- declared content, not published ---\n%s\n--- end declared content ---\n' "$2" >&2
@@ -155,19 +152,13 @@ if [ -f "$REQUIRED_FILE" ]; then
   case "$PUBLISHED" in
     *"$REQUIRED") ;;
     *)
-      BODY_TMP=$(mktemp "$STATE/.fm-pr-body.XXXXXX") || exit 1
-      if [ -n "$PUBLISHED" ]; then
-        printf '%s\n\n%s\n' "$PUBLISHED" "$REQUIRED" > "$BODY_TMP" || exit 1
-      else
-        printf '%s\n' "$REQUIRED" > "$BODY_TMP" || exit 1
-      fi
+      UPDATED=$REQUIRED
+      [ -z "$PUBLISHED" ] || UPDATED=$(printf '%s\n\n%s' "$PUBLISHED" "$REQUIRED")
       forge_audit pr-body-append "$ID" "$URL" || exit 1
-      # -F body=@- keeps a body of any length off argv.
-      gh api --method PATCH "repos/$OWNER/$REPO/pulls/$NUMBER" -F body=@- --silent \
-        < "$BODY_TMP" >/dev/null 2>&1 \
+      # -F body=@- on a pipe keeps a body of any length off argv.
+      printf '%s\n' "$UPDATED" \
+        | gh api --method PATCH "repos/$OWNER/$REPO/pulls/$NUMBER" -F body=@- --silent >/dev/null 2>&1 \
         || body_refuse "the forge refused the body update" "$REQUIRED"
-      rm -f -- "$BODY_TMP"
-      BODY_TMP=
       # The only evidence that counts: what the forge publishes, read back over
       # REST rather than assumed from the update just sent.
       PUBLISHED=$(body_read_published) \
