@@ -1,0 +1,13 @@
+# green run: tests/fm-spawn-worktree-collision.test.sh at commit 2dc795a8a8d7792d0150d08e1a683accc04b3af0
+
+ok - a second spawn onto an occupied checkout refuses and names the conflicting task
+ok - a refused spawn leaves the occupied checkout and its own scratch state untouched
+ok - a secondmate collision refuses before the first write into the home
+ok - a symlinked route into an occupied checkout is refused as the same collision
+ok - a worktree leased to another holder refuses and names that holder
+ok - an orca collision refusal disarms the destructive abort cleanup
+ok - an orca lease refusal disarms the destructive abort cleanup
+ok - a same-task relaunch into its own recorded worktree is not a collision
+ok - an unrelated task's record does not block a free worktree
+# all fm-spawn-worktree-collision tests passed
+# exit code: 0

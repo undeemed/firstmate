@@ -1,0 +1,12 @@
+# red run: new regression tests executed against PRISTINE BASE f6c9282c186a0e8692c544c01cec2098421fffb4 (pre-fix bin/fm-teardown.sh)
+# base tree extracted with: git archive f6c9282 | tar -x -C $BASE
+# test file copied verbatim from target commit 2dc795a8a8d7792d0150d08e1a683accc04b3af0; invocation list trimmed to one test per run
+
+## test_cotenant_process_survives_teardown (against base):
+not ok - cotenant-process-survives: the co-tenant's live process was reaped by another task's teardown
+## exit code: 1
+
+## test_unattributable_shared_worktree_process_refuses_teardown (against base):
+not ok - cotenant-unattributable-refusal: teardown should refuse: expected exit 1, got 0
+## exit code: 1
+
