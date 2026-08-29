@@ -128,7 +128,7 @@ seed_commitment() {
 
   tasks_in "$home" public-followup add "$obligation" \
     --request-context-file "$home/request.json" --purpose promised-final \
-    --expected-final-file "$home/expected.json" --expires-at 2026-10-01T00:00:00Z >/dev/null \
+    --expected-final-file "$home/expected.json" --expires-at 2126-10-01T00:00:00Z >/dev/null \
     || fail "could not create the public commitment"
   tasks_in "$home" public-followup bind-work "$obligation" \
     --relation-file "$home/relation.json" >/dev/null \
@@ -152,6 +152,9 @@ seed_commitment() {
 }
 
 # The pi-rearm shape: a report-ready promised-final bound to a secondmate.
+# The seeded followup window is compared to the REAL clock on every path that
+# does not pin FMX_NOW_OVERRIDE (rechain, pending escalation), so it must stay
+# far-future; a near-future date here is a time bomb that detonates on expiry.
 seed_repro_commitment() {   # <home> <obligation> <request> <work-home> <work-id>
   local home=$1 obligation=$2 request=$3 work_home=$4 work_id=$5
   jq -n --arg r "$request" \
@@ -159,8 +162,8 @@ seed_repro_commitment() {   # <home> <obligation> <request> <work-home> <work-id
       context_binding:{version:"ctx1", value:("ctx1_" + $r)},
       public_safe_summary:"reproduce a Pi recovery notification loop",
       received_at:"2026-08-21T01:12:00Z",
-      followup_expires_at:"2026-08-28T01:12:00Z",
-      reservation_expires_at:"2026-08-28T01:12:00Z"}' > "$home/request.json"
+      followup_expires_at:"2126-08-28T01:12:00Z",
+      reservation_expires_at:"2126-08-28T01:12:00Z"}' > "$home/request.json"
   jq -n '{type:"report-ready", project:"firstmate",
           required_deliverables:["report_path"], completion_policy:"all-required"}' \
     > "$home/expected.json"
@@ -169,7 +172,7 @@ seed_repro_commitment() {   # <home> <obligation> <request> <work-home> <work-id
       role:"fulfills", required:true, generation:1}' > "$home/relation.json"
   tasks_in "$home" public-followup add "$obligation" --request-context-file "$home/request.json" \
     --purpose promised-final --expected-final-file "$home/expected.json" \
-    --expires-at 2026-10-01T00:00:00Z >/dev/null || fail "add failed"
+    --expires-at 2126-10-01T00:00:00Z >/dev/null || fail "add failed"
   tasks_in "$home" public-followup bind-work "$obligation" --relation-file "$home/relation.json" >/dev/null \
     || fail "bind-work failed"
   FM_HOME="$home" bash -c \
@@ -1832,7 +1835,7 @@ test_rechain_refuses_unclaimed_existing_destination() {
   tasks_in "$home" public-followup add public-final-existing-b \
     --request-context-file "$home/request.json" --purpose promised-final \
     --expected-final-file "$home/collision-expected.json" \
-    --expires-at 2026-08-28T01:12:00Z >/dev/null || fail "could not seed destination collision"
+    --expires-at 2126-08-28T01:12:00Z >/dev/null || fail "could not seed destination collision"
 
   expect_failure "a first rechain must not adopt an unrelated existing obligation" \
     run_pf "$home" rechain public-final-existing-b --from public-final-existing-a \
@@ -2010,8 +2013,8 @@ test_expiry_escalation_uses_now_override() {
   local home out exp now_closing now_expired registry tmp
   home=$(make_home expiry-window)
   seed_repro_commitment "$home" pf-exp req-exp main work-exp
-  exp=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' '2026-08-28T01:12:00Z' +%s 2>/dev/null) \
-    || exp=$(date -u -d '2026-08-28T01:12:00Z' +%s)
+  exp=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' '2126-08-28T01:12:00Z' +%s 2>/dev/null) \
+    || exp=$(date -u -d '2126-08-28T01:12:00Z' +%s)
   now_closing=$((exp - 3600))
   now_expired=$((exp + 60))
   out=$(FMX_NOW_OVERRIDE="$now_expired" run_pf "$home" pending)

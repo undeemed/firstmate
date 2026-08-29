@@ -106,7 +106,7 @@
 # FM_PENDING_REPLY_RETAIN_SECS, whose default is the 604800s (7 day) durable
 # record window this repo already uses for retired-task ledgers, orphan markers,
 # and Relay follow-up context. The archive is inert append-only evidence in the
-# same class as state/pr-merge-audit.log: no poll scans it, so it costs nothing
+# same class as state/forge-write-audit.log: no poll scans it, so it costs nothing
 # to keep, and the request that explains a report is not reconstructible once
 # dropped. A record still awaiting a reply, and one whose escalation close has
 # not converged, is never eligible.
