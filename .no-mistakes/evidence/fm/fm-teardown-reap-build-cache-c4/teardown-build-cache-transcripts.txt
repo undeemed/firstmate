@@ -1,0 +1,38 @@
+=== fm-teardown.sh transcript: task-owned idle cache, successful teardown (criterion 1: reaped + size reported) ===
+--- stdout ---
+reaped build cache for task-x1: /tmp/fm-teardown-tests.nGsnYC/build-cache-reaped/build-caches/task-x1 (4.0K reclaimed)
+/tmp/fm-teardown-tests.nGsnYC/build-cache-reaped/project: already current
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.nGsnYC/build-cache-reaped/wt)
+Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+--- stderr ---
+
+=== fm-teardown.sh transcript: unlanded work refusal (criterion 4/5: refusal still refuses, no reap ran) ===
+--- stdout ---
+--- stderr ---
+REFUSED: worktree /tmp/fm-teardown-tests.nGsnYC/build-cache-refused/wt has work not on any remote and not landed.
+unpushed commits:
+bd78c65 unlanded work
+Push the branch, land its PR, or get the captain's explicit OK to discard, then --force.
+
+=== fm-teardown.sh transcript: co-tenant home's cache (criterion 2/3: kept, reason reported) ===
+--- stdout ---
+/tmp/fm-teardown-tests.nGsnYC/build-cache-co-tenant/project: already current
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.nGsnYC/build-cache-co-tenant/wt)
+Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+--- stderr ---
+warning: build cache left behind for task-x1: /tmp/fm-teardown-tests.nGsnYC/build-cache-co-tenant/other-home/build-caches/task-x1 (it is not this home's cache for this task (/tmp/fm-teardown-tests.nGsnYC/build-cache-co-tenant/build-caches/task-x1))
+
+=== fm-teardown.sh transcript: secondmate shared per-project cache (criterion 2: survives home retirement) ===
+--- stdout ---
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.nGsnYC/build-cache-secondmate/wt)
+--- stderr ---
+warning: build cache left behind for task-x1: /tmp/fm-teardown-tests.nGsnYC/build-cache-secondmate/project-shared-cache (it is not this home's cache for this task (/home/ubuntu/.no-mistakes/worktrees/5d83c95b53c3/01M15N8AT3X7S125AEGH5ST5SS/build-caches/task-x1))
+
+=== fm-teardown.sh transcript: live build inside the cache (hard constraint: prove idle or refuse) ===
+--- stdout ---
+/tmp/fm-teardown-tests.nGsnYC/build-cache-live-build/project: already current
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.nGsnYC/build-cache-live-build/wt)
+Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+--- stderr ---
+warning: build cache left behind for task-x1: /tmp/fm-teardown-tests.nGsnYC/build-cache-live-build/build-caches/task-x1 (process 492742 is still using it)
+

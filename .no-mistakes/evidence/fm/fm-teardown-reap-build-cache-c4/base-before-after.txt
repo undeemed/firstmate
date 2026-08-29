@@ -1,0 +1,9 @@
+=== before/after: success-path scenario vs BASE bin/ tree (git archive ed94a151 bin) ===
+not ok - build-cache-reaped: the task's own build cache survived teardown
+new test exit code against base: 1 (non-zero = FAILS before the fix)
+--- base teardown stdout ---
+/tmp/fm-teardown-tests.zGQ9Tm/build-cache-reaped/project: already current
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.zGQ9Tm/build-cache-reaped/wt)
+Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+--- cache dir after base teardown ---
+cache SURVIVED at /tmp/fm-teardown-tests.zGQ9Tm/build-cache-reaped/build-caches/task-x1 (pre-fix: teardown reclaimed nothing outside the worktree)
