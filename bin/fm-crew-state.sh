@@ -18,6 +18,11 @@
 #
 #   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
 #
+# A run-step read whose `axi status` reports an ACTIVE step ends its detail with
+# one more field, `activity: <step> <seconds>`: how long ago that step last
+# recorded doing something. It comes free with the read this reader already makes;
+# crew_step_progress_evidence in bin/fm-classify-lib.sh owns what it is for.
+#
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
 #      recording remote_host= is a remote secondmate: its worktree and endpoint
@@ -637,6 +642,12 @@ if [ "$HAVE_RUN" = 1 ]; then
       fi
       ;;
   esac
+
+  # The active step's progress record (see this file's header), off the $RUN_OUT
+  # this read already holds.
+  if [ "$RUN_SOURCE" = full ] && ACTIVITY=$(fm_nm_active_step_activity "$RUN_OUT"); then
+    RUN_DETAIL="$RUN_DETAIL${SEP}activity: $ACTIVITY"
+  fi
 
   emit "$RUN_STATE" run-step "$RUN_DETAIL"
 fi

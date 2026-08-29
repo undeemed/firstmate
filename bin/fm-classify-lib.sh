@@ -25,7 +25,8 @@
 # stays bounded by new appends instead of re-reading each task's whole lifetime
 # log every time. crew_worktree_written_since reads the task's meta file and walks
 # a bounded slice of its worktree instead of a status file, so callers run it only
-# at the moment they would otherwise escalate. commit_key_syntax_markers also
+# at the moment they would otherwise escalate, and crew_step_progress_evidence
+# makes one bounded `no-mistakes axi status` read at that same moment. commit_key_syntax_markers also
 # writes: after the drain has printed the stated-key syntax warnings it persists
 # each task's warned-through byte marker (state/.<task>.key-syntax-cursor), and a
 # marker that cannot be written simply re-warns next drain (see "Fleet-wide
@@ -1496,6 +1497,53 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
       -type f -newer "$anchor" -print -quit 2>/dev/null || true)
   fi
   [ -n "$hit" ]
+}
+
+# Seconds an ACTIVE pipeline step may go with no recorded activity before its lane
+# is escalated as a possible wedge anyway. This is a progress bound, not a pacing
+# knob: a step waiting on an external service legitimately burns no CPU and moves
+# no files, but it still records what it last did, so the honest question is how
+# long ago it last did it. Measured 2026-08-27 on a healthy lane, a `ci` step
+# waiting on GitHub checks reported `8m1s ago: log: CI checks running, waiting for
+# results...`, so the default sits at roughly twice that legitimate silence.
+FM_STEP_ACTIVITY_MAX_SECS=${FM_STEP_ACTIVITY_MAX_SECS:-900}
+
+# Print the evidence phrase for <id>'s pipeline step when that step is ACTIVE and
+# was active recently, and return 0; print nothing and return 1 otherwise. This is
+# the wedge detector's fourth liveness input, and the only one that can see the
+# shape which produced three false possible-wedge escalations on 2026-08-27: a run
+# whose steps had all completed through `pr`, whose `ci` step was running and
+# waiting on GitHub, and which therefore burned almost no CPU, wrote no file, and
+# rendered nothing into its pane for many minutes at a time while being perfectly
+# healthy. Neither pane quietness, nor the run step alone, nor the worktree write
+# probe can tell that lane from a wedged one; the step's own last_activity can,
+# because it measures PROGRESS - when that step last did something - where every
+# other input measures only liveness. This function is the one owner of that
+# policy; every other mention of it points here.
+#
+# Both required conditions come off ONE fm-crew-state.sh line, the same read
+# crew_absorb_state makes: `working` from source `run-step` is that reader's own
+# attribution of an ACTIVE run to this crew's branch and code identity, and its
+# `activity: <step> <seconds>` field is that run's progress record. A verdict from
+# any other source, a missing activity field, an unreadable line, and an age past
+# FM_STEP_ACTIVITY_MAX_SECS all return 1, so anything that cannot be evaluated
+# leaves the caller's escalation schedule exactly as it was.
+crew_step_progress_evidence() {  # <id>
+  local line rest step age _
+  [ -n "${1:-}" ] || return 1
+  line=$("$FM_CREW_STATE_BIN" "$1" 2>/dev/null) || return 1
+  # Read the state and source as TOKENS, from their first occurrence, never as
+  # substrings: a crew's own status line is echoed into the detail of a
+  # status-log verdict, so a worker that appends "source: run-step · activity: pr 30"
+  # would otherwise fabricate progress evidence and silence its own wedge alarm.
+  case "$line" in "state: working "*) ;; *) return 1 ;; esac
+  rest=${line#*source: }
+  case "$rest" in "run-step "*) ;; *) return 1 ;; esac
+  case "$rest" in *"activity: "*) rest=${rest##*activity: } ;; *) return 1 ;; esac
+  read -r step age _ <<< "$rest"
+  case "$age" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || return 1
+  printf 'active pipeline step %s, last activity %ss ago' "$step" "$age"
 }
 
 # 0 (benign/absorb) if EVERY task referenced by a no-verb "signal:" wake is provably
