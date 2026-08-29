@@ -216,6 +216,13 @@
 # fleet exhausts, and the resulting EDQUOT reads as a code failure. Path resolution,
 # the FM_TASKTMP_ROOT override, and the full measurement live in
 # bin/fm-tasktmp-lib.sh; fm-teardown.sh removes the recorded root.
+# Ship and scout spawns (never a secondmate: a secondmate is a home, not a
+# build) also get one home-scoped per-task build cache at
+# <home>/build-caches/<task-id> - gitignored, because the main home is the
+# firstmate checkout itself - recorded as build_cache= and exported into the
+# pane as CARGO_TARGET_DIR, so the build output a task leaves outside its
+# worktree has a path that proves this task owns it. fm-teardown.sh owns the
+# reap contract for the recorded cache.
 # Verified per-harness turn-end hooks are installed automatically where enabled; some live outside the worktree.
 # Kimi uses one surgically installed Firstmate region in $HOME/.kimi-code/config.toml,
 # a firstmate-owned global hook and registry, and a gitignored per-task pointer.
