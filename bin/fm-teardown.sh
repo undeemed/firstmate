@@ -124,10 +124,13 @@
 #     whose CURRENT WORKING DIRECTORY is this task's own worktree or tasktmp
 #     root via `lsof -a -d cwd` (cheap: bounded by process count, not by
 #     walking the worktree's file tree) and sends TERM, then KILL after a short
-#     grace period to any survivor whose process identity still matches. Both
-#     roots are unique per task and never
-#     shared, so this can never reach another task's or the primary's
-#     processes. Idempotent: nothing left to find is a silent no-op.
+#     grace period to any survivor whose process identity still matches.
+#     The tasktmp root is unique per task and never shared, so a cwd match
+#     under it is proof of ownership on its own. The worktree is NOT: a pool
+#     can hand one checkout to two tasks (proven by fm-worktree-collision-c5;
+#     bin/fm-spawn.sh now refuses that spawn), and a cwd match there would then
+#     reap the co-tenant's live worker. See the co-tenancy rules below.
+#     Idempotent: nothing left to find is a silent no-op.
 #   Fix 3 - sweep abandoned remote job workers. A remote job worker started
 #     from a worktree's own bin/ outlives that worktree's removal without
 #     being reachable by Fix 2, because its working directory is wherever it
@@ -138,6 +141,32 @@
 #     root still exists, so the account's healthy LaunchAgent worker and every
 #     live remote secondmate worker are out of scope. Best effort: a sweep
 #     failure never blocks this teardown.
+#
+# Co-tenancy (a second task recording this same checkout): every step that
+# acts on the worktree by DIRECTORY - the process reap, the branch reset and
+# hook removal, the treehouse return or `orca worktree rm`, and the
+# branch-matched no-mistakes run abort - would reach the co-tenant's live work,
+# not just this task's. bin/fm-worktree-claim-lib.sh answers whether another
+# task in this home records this worktree; when one does, teardown:
+#   - attributes each process under the shared checkout to a task through the
+#     per-task scratch root every process in that task's tree inherits
+#     (fm-spawn exports TMPDIR/GOTMPDIR under the task's recorded tasktmp, and
+#     that environment survives disowning and reparenting to init, which a ppid
+#     chain does not). Only processes attributed to THIS task are reaped;
+#     nothing is reaped by cwd alone.
+#   - REFUSES, naming those pids, when any process under the shared checkout
+#     cannot be attributed to a recorded task. That attribution runs before
+#     each reap pass, so the refusal always precedes any signal. A silent skip
+#     is as wrong as a silent kill, so teardown guesses in neither direction.
+#   - leaves the checkout itself exactly as found: no branch reset, no hook
+#     removal, no worktree return or removal, and no run abort. The pool slot
+#     stays held until the co-tenant is torn down, which is the correct owner
+#     of that return.
+# --force does not relax any of this: it is the captain's authority to
+# discard THIS task's work, never authority to reach another task's live
+# worker.
+# Never widen any of this to a box-wide process pattern: a name or command
+# match reaches unrelated processes that merely look similar.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -177,6 +206,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-retire-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-worktree-claim-lib.sh
+. "$SCRIPT_DIR/fm-worktree-claim-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
 	echo "error: invalid teardown request" >&2
 	exit 2
@@ -194,6 +225,11 @@ CONTROL_LOCK="$STATE/.control-$ID.lock"
 CONTROL_LOCK_HELD=0
 META_LOCK=
 META_LOCK_HELD=0
+# Other tasks in this home recording this task's worktree, and every recorded
+# scratch root that can attribute a process in that shared checkout to a task.
+# Empty for the normal exclusive-checkout case.
+COTENANT_IDS=()
+COTENANT_ATTRIB_ROOTS=()
 DESCENDANT_LOCK_PATHS=()
 DESCENDANT_TASK_STATES=()
 DESCENDANT_TASK_IDS=()
@@ -1658,20 +1694,79 @@ task_pid_list_contains() { # <pid-list> <pid>
 	printf '%s\n' "$1" | grep -Fxq "$2"
 }
 
+# Print the recorded scratch root <pid> inherited, which names the task that
+# owns it. fm-spawn exports TMPDIR and GOTMPDIR under the task's own recorded
+# tasktmp before the agent starts, so every process in that task's tree carries
+# the root, and a tool that derives its own scratch path from TMPDIR carries it
+# too. Prints nothing when no recorded root explains the process, which is
+# "cannot attribute", not "not ours".
+task_process_scratch_root() { # <pid>
+	local proc_root=${FM_PROC_ROOT_OVERRIDE:-/proc} line root
+	[ -r "$proc_root/$1/environ" ] || return 0
+	while IFS= read -r line; do
+		for root in ${COTENANT_ATTRIB_ROOTS[@]+"${COTENANT_ATTRIB_ROOTS[@]}"}; do
+			case "${line#*=}" in
+			"$root" | "$root"/*)
+				printf '%s\n' "$root"
+				return 0
+				;;
+			esac
+		done
+	done < <(tr '\0' '\n' <"$proc_root/$1/environ" 2>/dev/null)
+}
+
+# Sets TASK_PIDS, or prints the exact refusal that stops teardown with the
+# worktree, tasktmp, and records all still intact.
 task_pids_under_roots() { # <dir>...
 	TASK_PIDS=
-	TASK_PIDS_FAILED_DIR=
-	local dir dir_pids pids=""
+	local dir dir_pids pids="" pid kept unattributed
 	for dir in "$@"; do
 		[ -n "$dir" ] || continue
 		if ! dir_pids=$(pids_with_cwd_under "$dir"); then
-			TASK_PIDS_FAILED_DIR=$dir
+			echo "REFUSED: cannot determine leaked processes under $dir for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
 			return 1
+		fi
+		# A cwd match under a shared checkout proves nothing about ownership, so
+		# every process there is attributed before it can be reaped or spared.
+		if [ "${#COTENANT_IDS[@]}" -gt 0 ] && [ "$dir" = "$WT" ]; then
+			kept=
+			unattributed=
+			while IFS= read -r pid; do
+				[ -n "$pid" ] || continue
+				case "$(task_process_scratch_root "$pid")" in
+				'') unattributed="$unattributed $pid" ;;
+				"$TASK_TMP") kept="$kept
+$pid" ;;
+				esac
+			done <<<"$dir_pids"
+			if [ -n "$unattributed" ]; then
+				echo "REFUSED: process(es)$unattributed run in shared checkout $dir and belong to no task this home records, so $ID cannot claim or spare them. Attribute or stop them by hand, then retry; preserving the worktree/tasktmp." >&2
+				return 1
+			fi
+			dir_pids=$kept
 		fi
 		pids="$pids
 $dir_pids"
 	done
 	TASK_PIDS=$(printf '%s\n' "$pids" | grep -E '^[0-9]+$' | sort -un || true)
+}
+
+# Which other tasks in this home record this exact checkout, and which recorded
+# scratch roots can attribute a process in it (see this script's header).
+teardown_resolve_worktree_cotenants() {
+	local other other_tmp
+	COTENANT_IDS=()
+	COTENANT_ATTRIB_ROOTS=()
+	[ "$KIND" != secondmate ] || return 0
+	while IFS= read -r other; do
+		[ -n "$other" ] || continue
+		COTENANT_IDS+=("$other")
+		other_tmp=$(fm_meta_get "$STATE/$other.meta" tasktmp)
+		[ -z "$other_tmp" ] || COTENANT_ATTRIB_ROOTS+=("$other_tmp")
+	done < <(fm_worktree_claimants "$STATE" "$ID" "$WT")
+	[ "${#COTENANT_IDS[@]}" -gt 0 ] || return 0
+	echo "teardown: checkout $WT is also recorded by task(s) ${COTENANT_IDS[*]}; only processes this task's own records explain are reaped, and the checkout is left exactly as found, so its pool slot stays held until they are torn down" >&2
+	[ -z "$TASK_TMP" ] || COTENANT_ATTRIB_ROOTS+=("$TASK_TMP")
 }
 
 reap_task_backend_process_group() { # <label>
@@ -1733,10 +1828,7 @@ reap_task_worktree_processes() { # <label> <dir>...
 		return 0
 	fi
 	while [ "$pass" -le "$max_passes" ]; do
-		if ! task_pids_under_roots "$@"; then
-			echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-			return 1
-		fi
+		task_pids_under_roots "$@" || return 1
 		pids=$TASK_PIDS
 		[ -n "$pids" ] || return 0
 		tracked_pids=()
@@ -1744,10 +1836,7 @@ reap_task_worktree_processes() { # <label> <dir>...
 		while IFS= read -r pid; do
 			[ -n "$pid" ] || continue
 			if ! identity=$(task_process_identity "$pid"); then
-				if ! task_pids_under_roots "$@"; then
-					echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-					return 1
-				fi
+				task_pids_under_roots "$@" || return 1
 				if task_pid_list_contains "$TASK_PIDS" "$pid"; then
 					echo "REFUSED: cannot verify leaked process $pid identity for $ID; preserving the worktree/tasktmp for manual inspection or retry." >&2
 					return 1
@@ -1763,10 +1852,7 @@ EOF
 			pass=$((pass + 1))
 			continue
 		fi
-		if ! task_pids_under_roots "$@"; then
-			echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-			return 1
-		fi
+		task_pids_under_roots "$@" || return 1
 		current_pids=$TASK_PIDS
 		echo "teardown: reaping leaked $label process(es) for $ID: $(printf '%s' "$pids" | tr '\n' ' ')" >&2
 		for i in "${!tracked_pids[@]}"; do
@@ -1778,10 +1864,7 @@ EOF
 			fi
 		done
 		sleep 1
-		if ! task_pids_under_roots "$@"; then
-			echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-			return 1
-		fi
+		task_pids_under_roots "$@" || return 1
 		current_pids=$TASK_PIDS
 		remaining_pids=()
 		remaining_identities=()
@@ -1796,10 +1879,7 @@ EOF
 		done
 		if [ "${#remaining_pids[@]}" -gt 0 ]; then
 			echo "teardown: force-killing leaked $label process(es) for $ID: ${remaining_pids[*]}" >&2
-			if ! task_pids_under_roots "$@"; then
-				echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-				return 1
-			fi
+			task_pids_under_roots "$@" || return 1
 			current_pids=$TASK_PIDS
 			for i in "${!remaining_pids[@]}"; do
 				pid=${remaining_pids[$i]}
@@ -1812,10 +1892,7 @@ EOF
 		fi
 		pass=$((pass + 1))
 	done
-	if ! task_pids_under_roots "$@"; then
-		echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-		return 1
-	fi
+	task_pids_under_roots "$@" || return 1
 	[ -z "$TASK_PIDS" ] && return 0
 	echo "REFUSED: leaked $label processes for $ID remain after $max_passes reap attempts; preserving the worktree/tasktmp for manual inspection or retry." >&2
 	return 1
@@ -2732,8 +2809,10 @@ fi
 # kind=secondmate: a secondmate home's own runtime lifecycle is owned by the
 # dedicated process-event and firstmate-home removal machinery further below,
 # not by task-worktree cleanup.
+teardown_resolve_worktree_cotenants
 if [ "$KIND" != secondmate ]; then
-	conclude_task_no_mistakes_run "$WT"
+	# A run matching a shared checkout's branch cannot be attributed to $ID.
+	[ "${#COTENANT_IDS[@]}" -gt 0 ] || conclude_task_no_mistakes_run "$WT"
 	reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
 fi
 
@@ -2758,7 +2837,11 @@ if [ "$BACKEND" = herdr ]; then
 fi
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
-if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
+if [ "${#COTENANT_IDS[@]}" -gt 0 ]; then
+	# Every step below acts on the whole directory, so on a shared checkout each
+	# one would reset, strip, or reap the co-tenant's live work.
+	:
+elif [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
 	if [ "$ORCA_PATH_MATCH_VERIFIED" != 1 ]; then
 		require_orca_worktree_path_match_if_present "$ORCA_WORKTREE_ID" "$WT" || exit 1
 		ORCA_PATH_MATCH_VERIFIED=1
