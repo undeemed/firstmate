@@ -4,6 +4,8 @@
 # meta before merging so fm-teardown.sh's landed-check has a PR reference to
 # verify against, even on repos with no PR CI where the usual "checks green"
 # fm-pr-check.sh trigger never fires.
+# The merge audit records these tests assert are written through
+# bin/fm-forge-audit-lib.sh.
 #
 # Matrix:
 #   (a) merge records pr= and pr_head= before merging, and merges
