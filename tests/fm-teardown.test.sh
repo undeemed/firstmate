@@ -43,6 +43,7 @@
 #   (aa) task-owned, idle cache                 -> REAPED, bytes reported
 #   (ab) unlanded work refuses the teardown     -> cache untouched, no reap
 #   (ac) cache owned by another firstmate home  -> KEPT, skip reported
+#   (ad) secondmate's shared per-project cache  -> KEPT, skip reported
 #   (ae) live process inside the cache          -> KEPT, skip reported
 #
 # Also covers backlog teardown-lock-race: a git index.lock left in the worktree by a
@@ -2758,6 +2759,31 @@ test_cache_this_home_does_not_own_is_reported_not_reaped() {
   pass "a cache this home does not own survives a teardown and the skip is reported"
 }
 
+# A secondmate is a home, not a build: even a record naming a shared
+# per-project cache must survive the home's retirement.
+test_secondmate_teardown_leaves_shared_project_cache() {
+  local case_dir home cache rc
+  case_dir=$(make_case build-cache-secondmate)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+  home="$case_dir/secondmate-home"
+  cache="$case_dir/project-shared-cache"
+  seed_build_cache "$case_dir" "$cache"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "build-cache-secondmate: teardown should retire the secondmate home"
+  [ ! -d "$home" ] || fail "build-cache-secondmate: teardown did not retire the secondmate home"
+  [ -f "$cache/debug/libthing.rlib" ] \
+    || fail "build-cache-secondmate: a shared per-project cache was deleted by a secondmate teardown"
+  assert_grep "build cache left behind for task-x1" "$case_dir/stderr" \
+    "build-cache-secondmate: teardown did not report what it left behind"
+  assert_grep "not this home's cache for this task" "$case_dir/stderr" \
+    "build-cache-secondmate: teardown did not say why it left the cache"
+  pass "a shared per-project cache survives a secondmate teardown and the skip is reported"
+}
+
 test_live_build_keeps_build_cache() {
   local case_dir rc cache pid
   case_dir=$(make_case build-cache-live-build)
@@ -2847,4 +2873,5 @@ test_run_abort_precedes_process_reap_precedes_worktree_removal
 test_task_owned_build_cache_is_reaped_on_success
 test_build_cache_survives_refused_teardown
 test_cache_this_home_does_not_own_is_reported_not_reaped
+test_secondmate_teardown_leaves_shared_project_cache
 test_live_build_keeps_build_cache

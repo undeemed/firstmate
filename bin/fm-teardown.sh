@@ -1735,7 +1735,7 @@ reap_task_backend_process_group() { # <label>
 # into is irreversible, and a cleanup that quietly deletes the wrong thing is
 # worse than one that leaves work for a human. Never fails the teardown.
 reap_task_build_cache() { # <task-id>
-	local id=$1 recorded owned out busy size reason=
+	local id=$1 recorded owned phys scan busy size reason=
 	recorded=$(meta_value "$META" build_cache)
 	[ -n "$recorded" ] || return 0
 	owned="$FM_HOME/build-caches/$id"
@@ -1743,11 +1743,22 @@ reap_task_build_cache() { # <task-id>
 		reason="it is not this home's cache for this task ($owned)"
 	elif [ ! -d "$recorded" ]; then
 		return 0
-	elif ! out=$(lsof -w -n -P 2>/dev/null) || [ -z "$out" ]; then
+	elif ! phys=$(cd "$recorded" 2>/dev/null && pwd -P); then
+		reason="its physical path could not be resolved, so no live build could be ruled out"
+	elif ! scan=$(mktemp); then
 		reason="the process scan failed, so no live build could be ruled out"
 	else
-		busy=$(awk -v path="$recorded" 'index($0, path) { print $2; exit }' <<<"$out")
-		[ -z "$busy" ] || reason="process $busy is still using it"
+		if ! lsof -w -n -P >"$scan" 2>/dev/null || [ ! -s "$scan" ]; then
+			reason="the process scan failed, so no live build could be ruled out"
+		elif ! busy=$(awk -v rec="$recorded" -v phys="$phys" '
+			function uses(p) { return index($0, p "/") || substr($0, length($0) - length(p) + 1) == p }
+			uses(rec) || uses(phys) { print $2; exit }
+		' "$scan"); then
+			reason="the process scan failed, so no live build could be ruled out"
+		else
+			[ -z "$busy" ] || reason="process $busy is still using it"
+		fi
+		rm -f "$scan"
 	fi
 	if [ -z "$reason" ]; then
 		size=$(du -sh "$recorded" 2>/dev/null | cut -f1) || true
