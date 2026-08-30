@@ -216,6 +216,13 @@
 # fleet exhausts, and the resulting EDQUOT reads as a code failure. Path resolution,
 # the FM_TASKTMP_ROOT override, and the full measurement live in
 # bin/fm-tasktmp-lib.sh; fm-teardown.sh removes the recorded root.
+# Ship and scout spawns (never a secondmate: a secondmate is a home, not a
+# build) also get one home-scoped per-task build cache at
+# <home>/build-caches/<task-id> - gitignored, because the main home is the
+# firstmate checkout itself - recorded as build_cache= and exported into the
+# pane as CARGO_TARGET_DIR, so the build output a task leaves outside its
+# worktree has a path that proves this task owns it. fm-teardown.sh owns the
+# reap contract for the recorded cache.
 # Verified per-harness turn-end hooks are installed automatically where enabled; some live outside the worktree.
 # Kimi uses one surgically installed Firstmate region in $HOME/.kimi-code/config.toml,
 # a firstmate-owned global hook and registry, and a gitignored per-task pointer.
@@ -818,6 +825,7 @@ spawn_abort_cleanup() {
             [ -z "${MODE:-}" ] || echo "mode=$MODE"
             [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
             echo "tasktmp=${TASK_TMP:-}"
+            [ -z "${BUILD_CACHE:-}" ] || echo "build_cache=$BUILD_CACHE"
             echo "model=${MODEL:-default}"
             echo "effort=${EFFORT:-default}"
             echo "backend=orca"
@@ -2516,6 +2524,16 @@ else
 fi
 mkdir -p "$TASK_TMP/gotmp" "$TASK_TMP/tmp"
 
+# Per-task build cache, recorded as build_cache= and exported below as
+# CARGO_TARGET_DIR: one home-scoped path per task, so the build output a task
+# leaves outside its worktree is somewhere fm-teardown.sh can prove belongs to
+# this task and nothing else. A secondmate is a home, not a build, and gets none.
+BUILD_CACHE=
+if [ "$KIND" != secondmate ]; then
+  BUILD_CACHE="$FM_HOME/build-caches/$ID"
+  mkdir -p "$BUILD_CACHE"
+fi
+
 # Per-harness turn-end hook where enabled: a file that touches
 # state/<id>.turn-ended when the agent finishes a turn. Worktree-resident hooks
 # and token pointers stay out of git's view so they never block teardown's dirty
@@ -2910,7 +2928,7 @@ fi
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp build_cache model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -2926,6 +2944,7 @@ preserve_relaunch_meta() {
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   echo "tasktmp=$TASK_TMP"
+  [ -z "$BUILD_CACHE" ] || echo "build_cache=$BUILD_CACHE"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
@@ -3081,6 +3100,8 @@ LAUNCH="unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; $LAUN
 # when the agent starts; the brief sleep lets the exports land.
 spawn_send_text_line "$T" "export TMPDIR=$(shell_quote "$TASK_TMP/tmp")"
 spawn_send_text_line "$T" "export GOTMPDIR=$(shell_quote "$TASK_TMP/gotmp")"
+[ -z "$BUILD_CACHE" ] ||
+  spawn_send_text_line "$T" "export CARGO_TARGET_DIR=$(shell_quote "$BUILD_CACHE")"
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.

@@ -39,6 +39,13 @@
 #   (p) fm-pr-check when local HEAD lags                        -> record remote PR head
 #   (q) no-mistakes + NO pr= recorded, PR discovered by branch  -> ALLOW  (yolo/no-CI merge)
 #
+# Build-cache reaping (fm-teardown.sh's reap_task_build_cache):
+#   (aa) task-owned, idle cache                 -> REAPED, bytes reported
+#   (ab) unlanded work refuses the teardown     -> cache untouched, no reap
+#   (ac) cache owned by another firstmate home  -> KEPT, skip reported
+#   (ad) secondmate's shared per-project cache  -> KEPT, skip reported
+#   (ae) live process inside the cache          -> KEPT, skip reported
+#
 # Also covers backlog teardown-lock-race: a git index.lock left in the worktree by a
 # killed crew process (bin/fm-teardown.sh's teardown_treehouse_return).
 #   (r) provably-stale index.lock (old mtime, no live holder) -> lock removed, ALLOW
@@ -2787,6 +2794,139 @@ test_teardown_reaps_supervision_records_for_the_retired_task() {
   pass "teardown reaps every supervision record naming the retired task and leaves a live task's untouched"
 }
 
+# --- build-cache reaping (fm-teardown.sh's reap_task_build_cache) ------------
+# A task's build cache lives OUTSIDE its worktree, so returning the worktree
+# reclaims nothing. bin/fm-spawn.sh gives each task one home-scoped cache, and
+# teardown reaps exactly that path when no process is using it. Any other
+# recorded path is reported and left in place.
+
+# Teardown resolves the home-scoped cache from FM_HOME, so each case runs with the
+# case dir as the home. Record a cache in the task's meta, as a spawn does, and fill it with build output
+# so a reap is measurable and a survivor is visible.
+seed_build_cache() {  # <case-dir> <path>
+  printf 'build_cache=%s\n' "$2" >> "$1/state/task-x1.meta"
+  mkdir -p "$2/debug"
+  printf 'compiled artifact\n' > "$2/debug/libthing.rlib"
+}
+
+test_task_owned_build_cache_is_reaped_on_success() {
+  local case_dir rc cache
+  case_dir=$(make_case build-cache-reaped)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cache="$case_dir/build-caches/task-x1"
+  seed_build_cache "$case_dir" "$cache"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "build-cache-reaped: teardown should succeed"
+  [ ! -d "$cache" ] || fail "build-cache-reaped: the task's own build cache survived teardown"
+  assert_grep "reaped build cache for task-x1" "$case_dir/stdout" \
+    "build-cache-reaped: teardown did not report reaping the cache"
+  assert_grep "reclaimed" "$case_dir/stdout" \
+    "build-cache-reaped: teardown did not report the size reclaimed"
+  pass "a task-owned build cache is removed with the worktree and the bytes reclaimed are reported"
+}
+
+test_build_cache_survives_refused_teardown() {
+  local case_dir rc cache
+  case_dir=$(make_case build-cache-refused)
+  write_meta "$case_dir" no-mistakes ship
+  # Real content that never reached a remote or the default branch: work the
+  # landed-work check must still refuse to discard.
+  wt_commit_file "$case_dir" feature.txt hello "unlanded work"
+  cache="$case_dir/build-caches/task-x1"
+  seed_build_cache "$case_dir" "$cache"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  [ "$rc" -ne 0 ] || fail "build-cache-refused: teardown should refuse unlanded work"
+  assert_grep "REFUSED" "$case_dir/stderr" \
+    "build-cache-refused: teardown did not refuse the unlanded work"
+  [ -f "$cache/debug/libthing.rlib" ] \
+    || fail "build-cache-refused: cache cleanup ran on a refused teardown"
+  assert_no_grep "reaped build cache" "$case_dir/stdout" \
+    "build-cache-refused: teardown reported a reap on the refusal path"
+  pass "a refused teardown never reaps the build cache, so the landed-work safety is unchanged"
+}
+
+# A co-tenant home's cache is the dangerous near miss: same shape as this task's
+# own path, different home. Teardown reports it and deletes nothing.
+test_cache_this_home_does_not_own_is_reported_not_reaped() {
+  local case_dir cache rc
+  case_dir=$(make_case build-cache-co-tenant)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cache="$case_dir/other-home/build-caches/task-x1"
+  seed_build_cache "$case_dir" "$cache"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "build-cache-co-tenant: teardown should still succeed"
+  [ -f "$cache/debug/libthing.rlib" ] \
+    || fail "build-cache-co-tenant: a cache this home does not own was deleted"
+  assert_grep "build cache left behind for task-x1" "$case_dir/stderr" \
+    "build-cache-co-tenant: teardown did not report what it left behind"
+  assert_grep "not this home's cache for this task" "$case_dir/stderr" \
+    "build-cache-co-tenant: teardown did not say why it left the cache"
+  pass "a cache this home does not own survives a teardown and the skip is reported"
+}
+
+# A secondmate is a home, not a build: even a record naming a shared
+# per-project cache must survive the home's retirement.
+test_secondmate_teardown_leaves_shared_project_cache() {
+  local case_dir home cache rc
+  case_dir=$(make_case build-cache-secondmate)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+  home="$case_dir/secondmate-home"
+  cache="$case_dir/project-shared-cache"
+  seed_build_cache "$case_dir" "$cache"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "build-cache-secondmate: teardown should retire the secondmate home"
+  [ ! -d "$home" ] || fail "build-cache-secondmate: teardown did not retire the secondmate home"
+  [ -f "$cache/debug/libthing.rlib" ] \
+    || fail "build-cache-secondmate: a shared per-project cache was deleted by a secondmate teardown"
+  assert_grep "build cache left behind for task-x1" "$case_dir/stderr" \
+    "build-cache-secondmate: teardown did not report what it left behind"
+  assert_grep "not this home's cache for this task" "$case_dir/stderr" \
+    "build-cache-secondmate: teardown did not say why it left the cache"
+  pass "a shared per-project cache survives a secondmate teardown and the skip is reported"
+}
+
+test_live_build_keeps_build_cache() {
+  local case_dir rc cache pid
+  case_dir=$(make_case build-cache-live-build)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cache="$case_dir/build-caches/task-x1"
+  seed_build_cache "$case_dir" "$cache"
+
+  # A build still working in the cache, outside the worktree teardown reaps.
+  ( cd "$cache" && exec sleep 300 ) &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "build-cache-live-build: setup builder did not start"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  kill -KILL "$pid" 2>/dev/null || true
+
+  expect_code 0 "$rc" "build-cache-live-build: teardown should still succeed"
+  [ -f "$cache/debug/libthing.rlib" ] \
+    || fail "build-cache-live-build: a cache with a live build in it was deleted"
+  assert_grep "is still using it" "$case_dir/stderr" \
+    "build-cache-live-build: teardown did not report the live build that kept the cache"
+  pass "a build cache with a live process in it is never reaped, and the reason is reported"
+}
+
 test_teardown_reaps_supervision_records_for_the_retired_task
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
@@ -2848,3 +2988,8 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_task_owned_build_cache_is_reaped_on_success
+test_build_cache_survives_refused_teardown
+test_cache_this_home_does_not_own_is_reported_not_reaped
+test_secondmate_teardown_leaves_shared_project_cache
+test_live_build_keeps_build_cache
