@@ -288,6 +288,36 @@ fm_write_secondmate_meta() {
     "projects=$projects"
 }
 
+# fm_make_secondmate_home <id> <home>: a valid, empty registered secondmate home
+# (marker, AGENTS.md, and the three canonical backlog sections).
+fm_make_secondmate_home() {
+  local id=$1 home=$2
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects" "$home/bin"
+  printf '# Firstmate fixture\n' > "$home/AGENTS.md"
+  printf '%s\n' "$id" > "$home/.fm-secondmate-home"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+
+## Done
+EOF
+}
+
+# fm_append_secondmate_registry <parent> <id> <home>: register that home in the
+# parent's data/secondmates.md.
+fm_append_secondmate_registry() {
+  printf -- '- %s - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-07-13)\n' \
+    "$2" "$3" >> "$1/data/secondmates.md"
+}
+
+# fm_write_parent_secondmate_event <parent> <id> <home> <note>: the parent-side
+# meta plus one keyed status event for that secondmate.
+fm_write_parent_secondmate_event() {
+  fm_write_secondmate_meta "$1/state/$2.meta" "$3" "firstmate:fm-$2" sample
+  printf 'working [key=%s]: %s\n' "$2" "$4" > "$1/state/$2.status"
+}
+
 # --- common assertions ------------------------------------------------------
 
 # assert_contains <haystack> <needle> <msg>

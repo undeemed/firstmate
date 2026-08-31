@@ -132,6 +132,62 @@ EOF
     "mode=ship"
 }
 
+# Regression: the cross-home aggregation used to hand jq its accumulated per-home
+# records as one --argjson argument. The kernel refuses a single argument above
+# MAX_ARG_STRLEN (131072 bytes on Linux) and refuses any argv above ARG_MAX
+# (1 MiB on macOS), so once the fleet grew the whole snapshot died - and the
+# per-home child snapshot hit the same ceiling first, downgrading every home to
+# "unknown" instead. Two registered homes of 1000 landed rows each put roughly
+# 1.4 MB of real snapshot content - Done rows carried out through the landed
+# roll-up the snapshot already bounds - past every supported platform's ceiling.
+test_secondmate_aggregation_survives_payload_beyond_argv() {
+  local home fakebin mate id out payload pad i j
+  home=$(make_home oversized)
+  pad=$(printf '%0440d' 0)
+  i=0
+  while [ "$i" -lt 2 ]; do
+    i=$((i + 1))
+    id="bulk-mate-$i"
+    mate="$TMP_ROOT/oversized-$id"
+    fm_make_secondmate_home "$id" "$mate"
+    {
+      j=0
+      while [ "$j" -lt 1000 ]; do
+        j=$((j + 1))
+        printf -- '- [x] %s-landed-%s - Landed work item %s with a title long enough to carry weight in the roll-up https://github.com/acme/repo/pull/%s?trace=%s (repo: sample) (kind: ship) (merged 2026-07-05)\n' \
+          "$id" "$j" "$j" "$j" "$pad"
+      done
+    } >> "$mate/data/backlog.md"
+    fm_append_secondmate_registry "$home" "$id" "$mate"
+    fm_write_parent_secondmate_event "$home" "$id" "$mate" "watching scope"
+  done
+  fakebin=$(make_fakebin "$home")
+  mkdir -p "$TMP_ROOT/oversized-root"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" \
+    FM_ROOT_OVERRIDE="$TMP_ROOT/oversized-root" \
+    FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME=1000 \
+    FM_SNAPSHOT_SECONDMATE_MAX_BYTES=2000000 \
+    FM_SNAPSHOT_SECONDMATE_TIMEOUT=120 \
+    "$SNAPSHOT" --json) \
+    || fail "the snapshot failed on a fleet larger than argv can carry"
+  printf '%s' "$out" | jq -e '
+    (.secondmate_current.records | length) == 2
+      and all(.secondmate_current.records[];
+        .provenance.selected == "structured-home"
+        and .current.state != "unknown"
+        and (.landed | length) == 1000)
+      and (.secondmate_landed.records | length) == 2000
+  ' >/dev/null || fail "homes were dropped or downgraded instead of aggregated: $(
+    printf '%s' "$out" | jq -c '[.secondmate_current.records[] | {id,state:.current.state,reason:.current.reason,landed:(.landed|length)}]')"
+  payload=$(printf '%s' "$out" | jq -c '.secondmate_current.records')
+  env true short >/dev/null 2>&1 \
+    || fail "the argv control itself does not run on this platform"
+  if env true "$payload" >/dev/null 2>&1; then
+    fail "the aggregated payload still fits on argv here, so this fixture proves nothing"
+  fi
+  pass "cross-home aggregation survives a payload larger than argv can carry"
+}
+
 test_empty_fleet_json() {
   local home out view
   home=$(make_home empty)
@@ -801,6 +857,7 @@ test_parked_scout_decision_stays_pending() {
 
 test_empty_fleet_json
 test_fixture_snapshot_json
+test_secondmate_aggregation_survives_payload_beyond_argv
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state
