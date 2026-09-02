@@ -44,8 +44,7 @@ bind, port, allowed, app = sys.argv[1], int(sys.argv[2]), sys.argv[3].split(",")
 
 class Handler(BaseHTTPRequestHandler):
     def _hostname(self):
-        raw = self.headers.get("Host", "")
-        return raw.rsplit(":", 1)[0] if ":" in raw and not raw.endswith("]") else raw
+        return self.headers.get("Host", "").split(":", 1)[0]
 
     def _send(self, code, body):
         payload = body.encode()
@@ -103,6 +102,13 @@ alive() {  # <pid>
   kill -0 "$1" 2>/dev/null
 }
 
+wait_gone() {  # <pid> <failure message>
+  local deadline=$((SECONDS + 10))
+  while alive "$1" && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.1; done
+  alive "$1" && fail "$2"
+  return 0
+}
+
 prepare() {  # <env assignments...> -> ALLOWED= and HOST= lines
   # shellcheck disable=SC2016 # The reporting body runs in the child shell, after the lib is sourced there.
   # Every Lavish variable is cleared first: the host runner may carry the very
@@ -130,9 +136,7 @@ start_server 127.0.0.1 "$PORT" "127.0.0.1,localhost" lavish-axi
 STALE_PID=${SERVER_PIDS[-1]}
 out=$(prepare LAVISH_AXI_PORT="$PORT" LAVISH_AXI_ALLOWED_HOSTS="15.204.113.4 127.0.0.1 localhost")
 assert_contains "$out" "$TAILNET_NAME" "the repaired allowlist carries the identity the server rejected"
-deadline=$((SECONDS + 10))
-while alive "$STALE_PID" && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.1; done
-alive "$STALE_PID" && fail "a server rejecting this machine's own hostname was left running"
+wait_gone "$STALE_PID" "a server rejecting this machine's own hostname was left running"
 pass "a stale-allowlist server is shut down so the next start carries the repair"
 
 # --- 3. a server that already answers the identity is left alone -------------
@@ -164,9 +168,7 @@ start_server 0.0.0.0 "$PORT" "127.0.0.1,localhost" lavish-axi
 WIDE_PID=${SERVER_PIDS[-1]}
 out=$(prepare LAVISH_AXI_PORT="$PORT")
 assert_contains "$out" "HOST=0.0.0.0" "the restart lost the reachability the running server had"
-deadline=$((SECONDS + 10))
-while alive "$WIDE_PID" && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.1; done
-alive "$WIDE_PID" && fail "the wildcard-bound stale server was left running"
+wait_gone "$WIDE_PID" "the wildcard-bound stale server was left running"
 pass "a restart preserves the bind the running server was reachable on"
 
 # --- 6. an operator's own bind choice wins over the observed one -------------
@@ -175,6 +177,5 @@ start_server 0.0.0.0 "$PORT" "127.0.0.1,localhost" lavish-axi
 OWN_PID=${SERVER_PIDS[-1]}
 out=$(prepare LAVISH_AXI_PORT="$PORT" LAVISH_AXI_HOST=127.0.0.1)
 assert_contains "$out" "HOST=127.0.0.1" "an explicitly configured bind was overwritten"
-deadline=$((SECONDS + 10))
-while alive "$OWN_PID" && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.1; done
+wait_gone "$OWN_PID" "the stale server was left running"
 pass "an explicit bind is never overwritten by the observed one"
