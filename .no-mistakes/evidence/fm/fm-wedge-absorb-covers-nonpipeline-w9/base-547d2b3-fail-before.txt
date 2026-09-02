@@ -1,0 +1,2 @@
+# base 547d2b3 + target tests overlay: test_turn_progress_absorbs_the_nonpipeline_wedge (expected to fail before the fix)
+not ok - a lane that completed a model turn inside its quiet window still raised possible wedge: stale: test:fm-quiet (idle 504s, possible wedge, escalation 1)
