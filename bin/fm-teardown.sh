@@ -234,11 +234,9 @@ fm_backlog_directory_present "$STATE" "state directory" || {
   echo "error: teardown refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
 }
-# fm-wake-lib.sh binds STATE and the queue paths from the current environment,
-# so it is sourced here, after this script has resolved STATE. The source
-# boundary is a lint-cost cut only: this module's whole graph is already
-# inlined through the libraries above, and inlining it a second time is what
-# pushed this root past every memory ceiling (bin/fm-lint.sh's notes).
+# Sourced here, after STATE resolves, because fm-wake-lib.sh binds STATE and the
+# queue paths from the current environment. The graph is already inlined above,
+# so a second inline only costs memory (bin/fm-lint.sh's ceiling notes).
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # Supervision lease guard: post-landing cleanup is overlap territory between
