@@ -1,0 +1,9 @@
+== wall page open (viewer heartbeating every 5s) ==
+snapshot mtime t0: 1788329388
+snapshot mtime t0+7s: 1788329400
+-> capture ADVANCING while a viewer watches
+
+== closing the browser (viewer gone) ==
+snapshot mtime after viewer left +22s: 1788329406
+snapshot mtime +7s more: 1788329406
+-> capture STOPPED: idle desktop costs zero

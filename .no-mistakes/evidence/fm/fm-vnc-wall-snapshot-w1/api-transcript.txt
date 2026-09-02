@@ -1,0 +1,67 @@
+$ curl -s -o /dev/null -w "%{http_code} %{content_type}\n" http://127.0.0.1:6199/wall/
+200 text/html; charset=utf-8
+
+$ POST /wall/api/view {"visible":["wall-e2e","wall-dead"],"interval":0.1}   # client asks for 100ms
+{
+    "tiles": [
+        {
+            "name": "wall-e2e",
+            "display": 70,
+            "group": "secondmates",
+            "owner": "test-phase",
+            "up": true,
+            "status": "",
+            "captured_ago": null,
+            "changed_ago": null,
+            "error": ""
+        },
+        {
+            "name": "wall-dead",
+            "display": 71,
+            "group": "swarm",
+            "owner": "nobody",
+            "up": false,
+            "status": "",
+            "captured_ago": null,
+            "changed_ago": null,
+            "error": ""
+        }
+    ],
+    "interval": 2.0
+}
+$ ls state/desktop-wall/ (after one heartbeat, 4s later)
+/tmp/fm-wall-e2e-58053/state/desktop-wall/:
+total 8
+drwxrwxr-x 3 ubuntu ubuntu  100 Sep  2 06:07 .
+drwxrwxr-x 3 ubuntu ubuntu  100 Sep  2 06:07 ..
+drwxrwxr-x 2 ubuntu ubuntu   80 Sep  2 06:07 viewers
+-rw-rw-r-- 1 ubuntu ubuntu  151 Sep  2 06:07 wall-e2e.json
+-rw-rw-r-- 1 ubuntu ubuntu 1944 Sep  2 06:07 wall-e2e.webp
+
+/tmp/fm-wall-e2e-58053/state/desktop-wall/viewers/:
+total 8
+drwxrwxr-x 2 ubuntu ubuntu  80 Sep  2 06:07 .
+drwxrwxr-x 3 ubuntu ubuntu 100 Sep  2 06:07 ..
+-rw-rw-r-- 1 ubuntu ubuntu   3 Sep  2 06:07 wall-dead
+-rw-rw-r-- 1 ubuntu ubuntu   3 Sep  2 06:07 wall-e2e
+
+$ cat viewers/wall-e2e   # granted interval, floored to 2.0
+2.0
+
+$ snapshot meta
+{
+    "captured": 1788329268.4880111,
+    "changed": 1788329268.4880111,
+    "sha": "8128fae69072119d08d696e03a0f01343ef46a6140d41929bac44c42b86a1259",
+    "error": ""
+}
+
+$ file wall-e2e.webp
+/tmp/fm-wall-e2e-58053/state/desktop-wall/wall-e2e.webp: RIFF (little-endian) data, Web/P image, VP8 encoding, 480x270, Scaling: [none]x[none], YUV color, decoders should clamp
+
+$ wall-dead captured?  (display :71 is down - must never be captured)
+ls: cannot access '/tmp/fm-wall-e2e-58053/state/desktop-wall/wall-dead.webp': No such file or directory
+
+$ established RFB connections to 5970 while in snapshot mode (Option B: none)
+0
+0
