@@ -1,0 +1,4 @@
+# target c0398aa: new unit + watcher-integration tests (driver = fm-watch-triage.test.sh functions, only the 3 new cases invoked)
+ok - crew_turn_progress_evidence: a turn boundary inside the quiet window is progress; an older one, a missing record, and a missing anchor are not
+ok - a non-pipeline lane completing model turns is deferred, while the same lane with no turn since the window opened still wedge-escalates
+ok - a lane whose progress cannot be measured at all still wedge-escalates

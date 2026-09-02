@@ -1,0 +1,347 @@
+diff --git a/bin/fm-classify-lib.sh b/bin/fm-classify-lib.sh
+index 4d4162b..2883a69 100755
+--- a/bin/fm-classify-lib.sh
++++ b/bin/fm-classify-lib.sh
+@@ -25,8 +25,9 @@
+ # stays bounded by new appends instead of re-reading each task's whole lifetime
+ # log every time. crew_worktree_written_since reads the task's meta file and walks
+ # a bounded slice of its worktree instead of a status file, so callers run it only
+-# at the moment they would otherwise escalate, and crew_step_progress_evidence
+-# makes one bounded `no-mistakes axi status` read at that same moment. commit_key_syntax_markers also
++# at the moment they would otherwise escalate, crew_step_progress_evidence
++# makes one bounded `no-mistakes axi status` read at that same moment, and
++# crew_turn_progress_evidence stats that task's turn-boundary marker there too. commit_key_syntax_markers also
+ # writes: after the drain has printed the stated-key syntax warnings it persists
+ # each task's warned-through byte marker (state/.<task>.key-syntax-cursor), and a
+ # marker that cannot be written simply re-warns next drain (see "Fleet-wide
+@@ -1546,6 +1547,37 @@ crew_step_progress_evidence() {  # <id>
+   printf 'active pipeline step %s, last activity %ss ago' "$step" "$age"
+ }
+ 
++# Print the evidence phrase for a model turn <id> completed during the quiet
++# window that <anchor-file> opens, and return 0; print nothing and return 1
++# otherwise. This is the wedge detector's fifth liveness input, and the only one
++# that can see the shape measured on 2026-08-31 (see docs/verification/supervision.md):
++# a direct-PR lane has NO pipeline run at all, so crew_step_progress_evidence can
++# never apply to it, and a lane spending a long turn reading and reasoning writes
++# nothing for crew_worktree_written_since to find, yet raises `possible wedge`
++# while completing model turns behind a static pane.
++#
++# state/<id>.turn-ended is where firstmate ALREADY records that same event. The
++# per-harness turn-end hook fm-spawn installs touches it at every turn boundary -
++# one model response plus its tool calls - so a marker newer than the anchor is
++# positive proof the agent produced something during the quiet window. It is
++# chosen over the rendered token and cost counters that first suggested this fix
++# because it is firstmate's own record of the very event those counters report:
++# no vendor footer to parse, no second sample to take, and the same single
++# `-newer <anchor>` shape crew_worktree_written_since already uses.
++#
++# 1 for every other outcome, including a marker that has not moved, a task with
++# no marker at all, and a missing or unreadable anchor. A harness whose hook
++# fires only when a whole turn ends therefore records nothing mid-turn and simply
++# keeps the caller's existing escalation schedule, which is also what a genuinely
++# stopped crew gets: this probe can only ever defer an escalation on positive
++# evidence, never suppress one for want of it.
++crew_turn_progress_evidence() {  # <id> <state> <anchor-file>
++  local id=${1:-} state=${2:-} anchor=${3:-}
++  [ -f "$anchor" ] || return 1
++  [ "$state/$id.turn-ended" -nt "$anchor" ] || return 1
++  printf 'completing model turns, last turn boundary inside the quiet window'
++}
++
+ # 0 (benign/absorb) if EVERY task referenced by a no-verb "signal:" wake is provably
+ # working; 1 (actionable/surface) if any is not, or no task can be resolved. Pass the
+ # same space-separated file list as signal_reason_is_actionable. Files are mapped to
+diff --git a/bin/fm-watch.sh b/bin/fm-watch.sh
+index 639b64b..08e3431 100755
+--- a/bin/fm-watch.sh
++++ b/bin/fm-watch.sh
+@@ -52,12 +52,14 @@
+ #                          one, so an already-reported wedge keeps reporting
+ #                          without burying every other event. Any genuine change
+ #                          resets both the count and the cadence. Unless afk is
+-#                          active. Two evidence classes defer that escalation
++#                          active. Three evidence classes defer that escalation
+ #                          instead (wedge_defer): a task worktree written during
+-#                          the quiet window, and an actively-progressing pipeline
+-#                          step (crew_step_progress_evidence in
+-#                          bin/fm-classify-lib.sh owns why). Both re-surface once
+-#                          per PAUSE_RESURFACE_SECS, and anything the probes
++#                          the quiet window, an actively-progressing pipeline
++#                          step, and a model turn completed during that same
++#                          window (crew_step_progress_evidence and
++#                          crew_turn_progress_evidence in bin/fm-classify-lib.sh
++#                          own why). All three re-surface once per
++#                          PAUSE_RESURFACE_SECS, and anything the probes
+ #                          cannot evaluate keeps the unchanged schedule.
+ #                          A genuinely busy pane
+ #                          (window_is_busy true) is exempt from the above, but
+@@ -667,7 +669,7 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [interval]
+ }
+ 
+ # Defer ONE wedge escalation for a pane the watcher has positive evidence for that
+-# its own rendered pane cannot show (see this file's header for the two evidence
++# its own rendered pane cannot show (see this file's header for the evidence
+ # classes and the call sites for their probes). Deliberately a DEFERRAL, not a
+ # cancellation: the idle timer restarts, so the next window probes again, and
+ # the window's deferral chain keeps ageing across both evidence classes, so it
+@@ -703,9 +705,11 @@ clear_defer_tracking() {  # <window-key>
+ # by both places a hash can be absorbed this way: the plain non-terminal path, and
+ # the stale_is_terminal-overridden path (a captain-relevant status-log line that an
+ # active run/busy pane outranked).
+-# Both evidence probes run ONLY in the at-threshold branch below, on current reads
+-# rather than classification-time ones, because the question at escalation is
+-# whether this crew is progressing NOW.
++# Every evidence probe runs ONLY in the at-threshold branch below, on current
++# reads rather than classification-time ones, because the question at escalation
++# is whether this crew is progressing NOW. Probes keep the order they were added
++# in; reaching any of them means this poll was about to escalate, so ordering
++# only relabels the deferral.
+ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
+   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n interval next reason evidence
+   since=$(cat "$since_file" 2>/dev/null || true)
+@@ -729,6 +733,10 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
+           wedge_defer "$win" "$since_file" "$label" "$age" "$evidence"
+           return 0
+         fi
++        if evidence=$(crew_turn_progress_evidence "$task" "$STATE" "$since_file"); then
++          wedge_defer "$win" "$since_file" "$label" "$age" "$evidence"
++          return 0
++        fi
+         n=$(( n + 1 ))
+         echo "$n" > "$escalation_file"
+         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 4fa248f..c301f1f 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -9,7 +9,7 @@ firstmate's always-loaded operating contract and routing index for conditional p
+ ## Event-driven supervision
+ 
+ A zero-token bash watcher (`bin/fm-watch.sh`) sleeps on the fleet, classifies detected wakes in bash, and wakes the first mate only when something is actionable.
+-Actionable wakes include captain-relevant status signals, no-verb signals whose crew is not provably working, authenticated check output such as PR merge polling or a Relay mention, stale panes whose crew is not provably working whether their status log looks terminal or non-terminal, provably-working stale panes that persist past `FM_STALE_ESCALATE_SECS` with neither their own task worktree being written nor their own pipeline step recording recent activity, declared external waits and verified captain-held transfers that remain declared past their current recheck interval, and heartbeat backstop hits.
++Actionable wakes include captain-relevant status signals, no-verb signals whose crew is not provably working, authenticated check output such as PR merge polling or a Relay mention, stale panes whose crew is not provably working whether their status log looks terminal or non-terminal, provably-working stale panes that persist past `FM_STALE_ESCALATE_SECS` with none of their own task worktree being written, their own pipeline step recording recent activity, or their own model turns completing, declared external waits and verified captain-held transfers that remain declared past their current recheck interval, and heartbeat backstop hits.
+ Repeated provably-working stale escalations on the same unchanged pane add an escalation count to the wake reason and, at `FM_WEDGE_DEMAND_INSPECT_COUNT`, a `demand-deep-inspection` marker.
+ From that escalation onward the same unchanged pane re-surfaces on an interval that doubles from `FM_WEDGE_BACKOFF_SECS` up to `FM_WEDGE_BACKOFF_MAX_SECS`, so an already-reported wedge keeps reporting on a bounded cadence instead of waking the first mate every `FM_STALE_ESCALATE_SECS` forever.
+ Any genuine change - a changed pane hash, a busy pane, or a terminal or declared-pause status - clears the escalation count and returns the cadence to `FM_STALE_ESCALATE_SECS`.
+@@ -19,8 +19,11 @@ Every absence of write evidence, including a missing worktree record, a torn-dow
+ A pane whose own pipeline step is active and recently active is deferred the same way, because a step waiting on an external service reads as silence to every liveness signal while the lane is healthy.
+ That deferral requires both conditions and never either alone, and both come off one authoritative current-state read: `bin/fm-crew-state.sh` must attribute an actively-running step to that crew's own code, and the `activity:` field it reports for that step - how long ago the step last recorded doing something - must be newer than `FM_STEP_ACTIVITY_MAX_SECS`.
+ Anything the progress probe cannot evaluate - no active step, an activity age past the bound, a run attributed to another branch, an unreadable or timed-out read - leaves the existing escalation schedule untouched.
++A pane whose own model turns are still landing is deferred the same way, because that is the only evidence left for a lane running no pipeline at all: a `direct-PR` worker never has a step for the probe above to read, and a long turn spent reading and reasoning writes nothing for the worktree probe to find.
++The evidence is `state/<id>.turn-ended`, the record firstmate's own per-harness turn-end hook touches at every turn boundary, so a marker newer than the start of the quiet window means the worker completed a model response and its tool calls behind the static pane.
++A harness whose hook fires only when a whole turn ends records nothing mid-turn, which reads as no evidence and keeps the existing schedule, exactly as a missing marker, an older marker, or an unreadable one does.
+ A secondmate's recorded worktree is never probed for write activity, because it is a provisioned firstmate home whose own supervision keeps writing inside it whether or not the mate produces anything, so its panes keep escalating on the unchanged schedule.
+-A busy pane is otherwise exempt from staleness, but only until its latest `state/<id>.turn-ended` marker reaches `FM_BUSY_TURN_MAX_SECS`, or its `state/<id>.meta` spawn record reaches that age before any turn completes; past that bound it is routed through the same wedge escalation, with the identical reason, escalation count, both evidence deferrals, and `demand-deep-inspection` marker, for inspection only - never an automatic interrupt, signal, or restart.
++A busy pane is otherwise exempt from staleness, but only until its latest `state/<id>.turn-ended` marker reaches `FM_BUSY_TURN_MAX_SECS`, or its `state/<id>.meta` spawn record reaches that age before any turn completes; past that bound it is routed through the same wedge escalation, with the identical reason, escalation count, every evidence deferral, and `demand-deep-inspection` marker, for inspection only - never an automatic interrupt, signal, or restart.
+ A crew that declared an external wait (`paused:`) or a verified captain-held transfer is the one exception to that bound: its busy verdict supplies liveness while identifying the long-running foreground call as the declared wait, so it takes the bounded declared-wait recheck instead of a wedge escalation.
+ Lifting the declaration restores the unchanged busy-pane wedge path, while a pane that is no longer busy returns to the existing idle declared-wait classification.
+ 
+@@ -126,7 +129,7 @@ The watcher and daemon share `bin/fm-classify-lib.sh` for captain-relevant statu
+ Terminal verbs remain captain-relevant, while a nonterminal progress verb cannot become terminal merely because its prose contains a legacy free-text token such as `merged`; bare legacy free-text lines remain compatible.
+ The always-on watcher also uses that library's absorb classification on no-verb signals and first-sighting stale panes before status-log terminality is trusted, while the daemon maintains distinct wedge and declared-wait recheck cadences.
+ In away mode, seen-status dedupe does not clear possible-wedge aging for nonterminal progress, so housekeeping still re-escalates an unchanged idle pane at the configured bound.
+-Away-mode housekeeping has neither the worktree-write deferral nor the step-progress deferral of its own, so while `state/.afk` exists a quiet crew that is writing its own worktree, or whose pipeline step is still recording progress, escalates as a possible wedge at that bound.
++Away-mode housekeeping has none of the watcher's evidence deferrals of its own, so while `state/.afk` exists a quiet crew that is writing its own worktree, whose pipeline step is still recording progress, or whose model turns are still landing, escalates as a possible wedge at that bound.
+ The daemon escalates captain-relevant events, plus a bounded recheck for a declared pause or a verified captain-held transfer that remains idle, naming which human that wait is on, as one batched, single-line digest using the canonical `away-supervisor` kind from `bin/fm-operational-input.sh` so firstmate can distinguish it structurally from real messages.
+ Its supervisor injection path supports tmux and herdr panes, with `FM_SUPERVISOR_BACKEND` and `FM_SUPERVISOR_TARGET` resolved independently from the task-spawn backend.
+ Pane existence, busy checks, composer checks, capture, and verified submit route through `bin/fm-backend.sh`: tmux keeps the same submit core used by the tmux send backend, while herdr uses native agent-state submit confirmation on idle baselines, a composer empty fallback when native stays idle, and a pre-Enter rendered-footer transition when that baseline is unavailable.
+diff --git a/docs/verification/supervision.md b/docs/verification/supervision.md
+index 6dab530..da298b9 100644
+--- a/docs/verification/supervision.md
++++ b/docs/verification/supervision.md
+@@ -493,6 +493,38 @@ tests/fm-claude-stop-autoarm.test.sh
+ tests/fm-turnend-guard.test.sh
+ ```
+ 
++## Turn-boundary wedge evidence
++
++The wedge detector's turn-boundary progress probe (`crew_turn_progress_evidence` in [`bin/fm-classify-lib.sh`](../../bin/fm-classify-lib.sh)) reads `state/<id>.turn-ended`, so it can only defer an escalation on a harness whose turn-end hook fires at every turn boundary rather than only when a whole turn ends.
++That granularity was measured live on 2026-09-01 against Pi 0.84.2 workers launched by `fm-spawn`, by sampling one task's busy record and turn marker twice inside a single uninterrupted turn.
++
++```sh
++s=~/Dev/firstmate/state; id=fm-wedge-absorb-covers-nonpipeline-w9
++date +%s; cat "$s/$id.busy-state"; stat -c '%n mtime=%Y' "$s/$id.turn-ended"
++```
++
++First sample, then the second 4039 seconds later:
++
++```text
++now=1788242724
++v1 gen=g1788242298.3862243.30878 seq=2 state=busy source=pi-ext event=agent-start ts=1788242302
++/home/ubuntu/Dev/firstmate/state/fm-wedge-absorb-covers-nonpipeline-w9.turn-ended mtime=1788242678
++
++now=1788246659
++v1 gen=g1788242298.3862243.30878 seq=2 state=busy source=pi-ext event=agent-start ts=1788242302
++/home/ubuntu/Dev/firstmate/state/fm-wedge-absorb-covers-nonpipeline-w9.turn-ended mtime=1788246629
++```
++
++The busy record is byte-identical across both samples, so one turn stayed open for 72 minutes, while the turn marker advanced to 30 seconds before the second sample: the probe's evidence is present mid-turn, which is when a wedge escalation would otherwise fire.
++Four other live Pi lanes in the same fleet read the same way at that moment, each with a busy record minutes to hours old and a turn marker seconds old.
++
++
++Deterministic entry points:
++
++```sh
++bin/fm-test-run.sh tests/fm-watch-triage.test.sh
++```
++
+ ## Wedge-alarm channels
+ 
+ The two real notification channels were bounded manually on 2026-07-10 on macOS 26.5.2 with Herdr 0.7.3.
+diff --git a/tests/fm-inactive-reconcile.test.sh b/tests/fm-inactive-reconcile.test.sh
+index c462119..ecfe18d 100755
+--- a/tests/fm-inactive-reconcile.test.sh
++++ b/tests/fm-inactive-reconcile.test.sh
+@@ -379,8 +379,11 @@ SH
+   elapsed=$(( $(date +%s) - started ))
+   [ "$elapsed" -le 3 ] || fail "stalled state read exceeded aggregate scan budget (${elapsed}s)"
+ 
++  # Bound already proved above; 10s here so a loaded box fails on broken
++  # resumption (a broken cursor re-stalls on `a` and never reaches `b`), not on
++  # startup cost.
+   write_child "$MAIN" b 'done: green'
+-  FM_INACTIVE_RECONCILE_BUDGET_SECS=1 run_reconcile "$MAIN" --startup
++  FM_INACTIVE_RECONCILE_BUDGET_SECS=10 run_reconcile "$MAIN" --startup
+   grep -Fq 'child=b state=done' "$MAIN/state/.wake-queue" \
+     || fail "next bounded scan did not resume with the following child"
+   pass "stalled state reads are bounded without starving later children"
+diff --git a/tests/fm-watch-triage.test.sh b/tests/fm-watch-triage.test.sh
+index e220db4..5b502af 100755
+--- a/tests/fm-watch-triage.test.sh
++++ b/tests/fm-watch-triage.test.sh
+@@ -3124,6 +3124,124 @@ test_active_recent_step_absorbs_the_wedge() {
+ 	pass "an active step with recent activity absorbs the wedge, is recorded with its reason, and escalates again once the step goes silent"
+ }
+ 
++# --- non-pipeline lane: the turn-boundary progress signal ---------------------
++# The policy these cases pin is owned by crew_turn_progress_evidence in
++# bin/fm-classify-lib.sh. A direct-PR lane runs no pipeline at all, so the
++# step-progress probe above can never apply to it, and a long reading-and-reasoning
++# turn writes nothing its worktree probe can find - the exact shape that raised
++# `possible wedge, escalation 1` on 2026-08-31 against a worker whose cost rose
++# 12.117 -> 14.217 and context 23.4% -> 24.1% over the 50 seconds the alarm stood.
++
++test_crew_turn_progress_evidence_classifier() {
++	local dir state evidence back
++	dir=$(make_case classify-turn-progress)
++	state="$dir/state"
++	back=$(($(date +%s) - 500))
++	: >"$state/anchor"
++	set_mtime "$back" "$state/anchor"
++
++	: >"$state/quiet.turn-ended"
++	evidence=$(crew_turn_progress_evidence quiet "$state" "$state/anchor") ||
++		fail "a turn boundary recorded after the quiet window opened was not read as progress"
++	case "$evidence" in
++	*"completing model turns"*"turn boundary"*) ;;
++	*) fail "the evidence phrase did not name the turn boundary: $evidence" ;;
++	esac
++
++	# The comparison IS the check: a lane whose last turn ended before this quiet
++	# stretch opened has recorded nothing during it.
++	set_mtime "$((back - 60))" "$state/quiet.turn-ended"
++	! crew_turn_progress_evidence quiet "$state" "$state/anchor" >/dev/null ||
++		fail "a turn boundary older than the quiet window was read as progress"
++
++	# Nothing to evaluate is never evidence, so every one of these keeps the
++	# caller's escalation schedule exactly as it was.
++	! crew_turn_progress_evidence nomarker "$state" "$state/anchor" >/dev/null ||
++		fail "a task with no turn record at all was read as progress"
++	: >"$state/fresh.turn-ended"
++	! crew_turn_progress_evidence fresh "$state" "$state/absent-anchor" >/dev/null ||
++		fail "a missing anchor was read as progress"
++	! crew_turn_progress_evidence "" "$state" "$state/anchor" >/dev/null ||
++		fail "an empty id was read as progress"
++	pass "crew_turn_progress_evidence: a turn boundary inside the quiet window is progress; an older one, a missing record, and a missing anchor are not"
++}
++
++# threshold_case plus what a direct-PR lane has and the pipeline fixture does not:
++# a recorded worktree whose every file predates the quiet window, so the write
++# probe genuinely runs and finds nothing. The idle-window timer is aged on disk as
++# well as in its contents, because the evidence probes compare against its mtime
++# while the escalation clock reads its contents. Echoes the case directory.
++nonpipeline_case() { # <name> <age>
++	local name=$1 age=$2 dir wt
++	dir=$(threshold_case "$name" "$age")
++	wt="$dir/wt"
++	mkdir -p "$wt"
++	: >"$wt/old"
++	set_mtime "$(($(date +%s) - 900))" "$wt/old"
++	printf 'worktree=%s\n' "$wt" >>"$dir/state/quiet.meta"
++	set_mtime "$(($(date +%s) - age))" "$dir/state/.stale-since-test_fm-quiet"
++	printf '%s\n' "$dir"
++}
++
++# A lane with no pipeline run whose own turn-boundary record advanced during the
++# quiet window is measurably progressing, so it is deferred rather than escalated -
++# and the SAME lane, once those turns stop landing, escalates on the unchanged
++# schedule. Both halves run on one fixture because only the turn evidence differs.
++test_turn_progress_absorbs_the_nonpipeline_wedge() {
++	local dir key pane_state
++	dir=$(nonpipeline_case wedge-turn-progress 500)
++	key=test_fm-quiet
++	# No run to attribute: this lane's authoritative state comes off its pane, so it
++	# carries no activity field for the step-progress probe to read.
++	pane_state='FM_FAKE_CREW_STATE=state: working · source: pane · harness busy (pi-ext)'
++	touch "$dir/state/quiet.turn-ended"
++	prime_turnend_seen "$dir/state/quiet.turn-ended"
++	if threshold_run "$dir" "$pane_state" FM_PAUSE_RESURFACE_SECS=999; then
++		fail "a lane that completed a model turn inside its quiet window still raised possible wedge: $(cat "$dir/watch.out")"
++	fi
++	[ ! -s "$dir/watch.out" ] || fail "an absorbed lane printed a wake reason: $(cat "$dir/watch.out")"
++	[ ! -s "$dir/state/.wake-queue" ] || fail "an absorbed lane enqueued a wake"
++	[ ! -e "$dir/state/.wedge-escalations-$key" ] || fail "an absorbed lane advanced the escalation counter"
++	[ -e "$dir/state/.defer-since-$key" ] || fail "the deferral chain was not recorded"
++	[ "$(cat "$dir/state/.stale-since-$key" 2>/dev/null || echo 0)" -gt "$(($(date +%s) - 60))" ] ||
++		fail "the deferral did not restart the idle timer, so the next window cannot re-probe"
++	grep -F "completing model turns" "$dir/state/.watch-triage.log" >/dev/null ||
++		fail "the absorb was not recorded in the watcher debug log with its reason: $(cat "$dir/state/.watch-triage.log" 2>/dev/null)"
++
++	# Same lane, same quiet pane, but its last turn boundary now predates the quiet
++	# window: the worker really has stopped, and the alarm must still fire.
++	threshold_backdate "$dir" 500
++	set_mtime "$(($(date +%s) - 500))" "$dir/state/.stale-since-$key"
++	set_mtime "$(($(date +%s) - 900))" "$dir/state/quiet.turn-ended"
++	prime_turnend_seen "$dir/state/quiet.turn-ended"
++	threshold_run "$dir" "$pane_state" ||
++		fail "a lane whose last turn ended before its quiet window did not wedge-escalate: $(cat "$dir/watch.out")"
++	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
++		fail "the stopped-lane escalation did not flag a possible wedge"
++	[ "$(cat "$dir/state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] ||
++		fail "the stopped-lane escalation was not counted"
++	pass "a non-pipeline lane completing model turns is deferred, while the same lane with no turn since the window opened still wedge-escalates"
++}
++
++# The third outcome, and the one that must never be traded away: a lane whose
++# progress cannot be measured AT ALL - no pipeline run, no worktree write, and no
++# turn record to compare - escalates exactly as it did before this probe existed.
++test_unmeasurable_nonpipeline_lane_still_escalates() {
++	local dir key
++	dir=$(nonpipeline_case wedge-turn-unmeasurable 500)
++	key=test_fm-quiet
++	[ ! -e "$dir/state/quiet.turn-ended" ] || fail "the unmeasurable fixture seeded a turn record"
++	threshold_run "$dir" \
++		"FM_FAKE_CREW_STATE=state: working · source: pane · harness busy (pi-ext)" ||
++		fail "a lane with nothing to measure was absorbed instead of escalating: $(cat "$dir/watch.out")"
++	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
++		fail "the unmeasurable-lane escalation did not flag a possible wedge"
++	[ "$(cat "$dir/state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] ||
++		fail "the unmeasurable-lane escalation was not counted"
++	[ ! -e "$dir/state/.defer-since-$key" ] || fail "an unmeasurable lane recorded a deferral chain"
++	pass "a lane whose progress cannot be measured at all still wedge-escalates"
++}
++
+ test_triage_log_size_cap_accepts_spaced_wc_counts() {
+ 	local dir state fakebin out status_file pid lines i
+ 	dir=$(make_case triage-log-spaced-wc)
+@@ -3811,6 +3929,9 @@ test_timer_repair_drops_a_finished_write_deferral_chain
+ test_terminal_first_sight_drops_a_finished_write_deferral_chain
+ test_crew_step_progress_evidence_classifier
+ test_active_recent_step_absorbs_the_wedge
++test_crew_turn_progress_evidence_classifier
++test_turn_progress_absorbs_the_nonpipeline_wedge
++test_unmeasurable_nonpipeline_lane_still_escalates
+ test_triage_log_size_cap_accepts_spaced_wc_counts
+ test_procevent_captured_result_surfaces_proactively
+ test_procevent_unacknowledged_result_redrains_until_handled

@@ -1,0 +1,41 @@
+A/B regression proof: turn-boundary progress probe (crew_turn_progress_evidence)
+=================================================================================
+Branch: fm/fm-wedge-absorb-covers-nonpipeline-w9
+Base:   547d2b3db5ac80ed55c8664e171755442e7e5c47
+Target: c0398aa98e12c0628e1b2af36f0b31432a705a86
+
+Method: `git archive` of each commit into /tmp, the new tests from the target
+overlaid onto the base tree, one test invocation per run (real fm-watch.sh
+subprocess driven by the suite's threshold_run fixture).
+
+--- BASE (547d2b3): new integration test FAILS - the wedge fires despite a
+--- turn boundary recorded inside the quiet window ------------------------------
+=== BASE (547d2b3) test_turn_progress_absorbs_the_nonpipeline_wedge ===
+not ok - a lane that completed a model turn inside its quiet window still raised possible wedge: stale: test:fm-quiet (idle 502s, possible wedge, escalation 1)
+exit=1
+
+--- BASE (547d2b3): the never-trade-away invariant already held, and the new
+--- test guards it rather than tautologically testing new code ------------------
+=== BASE (547d2b3) test_unmeasurable_nonpipeline_lane_still_escalates ===
+ok - a lane whose progress cannot be measured at all still wedge-escalates
+exit=0
+
+--- TARGET (c0398aa): all three new tests pass ----------------------------------
+=== TARGET (c0398aa) test_turn_progress_absorbs_the_nonpipeline_wedge ===
+ok - a non-pipeline lane completing model turns is deferred, while the same lane with no turn since the window opened still wedge-escalates
+exit=0
+=== TARGET (c0398aa) test_unmeasurable_nonpipeline_lane_still_escalates ===
+ok - a lane whose progress cannot be measured at all still wedge-escalates
+exit=0
+=== TARGET (c0398aa) test_crew_turn_progress_evidence_classifier ===
+ok - crew_turn_progress_evidence: a turn boundary inside the quiet window is progress; an older one, a missing record, and a missing anchor are not
+exit=0
+
+--- TARGET (c0398aa): operator-visible surface. Manual run of the non-pipeline
+--- fixture (busy pi-ext pane, no pipeline run, fresh turn marker): the watcher
+--- absorbs the poll and records the deferral in its debug log ------------------
+-- watcher absorbed the poll: no actionable wake raised
+-- state/.watch-triage.log tail (watcher debug log):
+[2026-09-02T03:07:13+0000] absorbed non-terminal stale (completing model turns, last turn boundary inside the quiet window, idle 502s): test:fm-quiet
+-- wake queue entries: 0
+-- wedge escalation counter: absent (never escalated)
