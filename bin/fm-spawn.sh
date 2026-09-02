@@ -954,8 +954,12 @@ spawn_herdr_presentation_order_lock_acquire() {
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
   lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") || return 1
   HERDR_PRESENTATION_ORDER_LOCK="$lock_path"
+  # The holder keeps this lock for a whole projection recovery, which also
+  # republishes the task's durable records, so the wait is sized for that work
+  # rather than for the lock handoff alone: a five-second ceiling turned a
+  # normal concurrent resume into a refusal.
   attempt=0
-  while [ "$attempt" -lt 50 ]; do
+  while [ "$attempt" -lt 300 ]; do
     if fm_lock_try_acquire "$HERDR_PRESENTATION_ORDER_LOCK"; then
       HERDR_PRESENTATION_ORDER_LOCK_HELD=1
       return 0
