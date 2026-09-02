@@ -5,8 +5,9 @@ Design, cost model and rationale: docs/desktop-wall.md.
 
 ENDPOINTS (all on the single listener)
   /wall/                    the wall page
-  /wall/api/state           registry + liveness + snapshot age + last status line
-  /wall/api/view    POST    {"visible":[name,...],"interval":n} viewer heartbeat
+  /wall/api/view    POST    {"visible":[name,...],"interval":n} viewer heartbeat,
+                            answered with the wall state: liveness, snapshot age,
+                            last status line, and the interval actually granted
   /wall/snap/<name>.webp    latest snapshot
   /vnc.html?path=websockify?token=<name>
                             live noVNC for one desktop, token-routed
@@ -157,7 +158,7 @@ def wall_state(opts):
                 "error": meta.get("error", ""),
             }
         )
-    return {"server_time": now, "tiles": tiles}
+    return {"tiles": tiles}
 
 
 class Snapshots:
@@ -259,8 +260,6 @@ class WallHandler(ProxyRequestHandler):
         route = self.path.split("?", 1)[0]
         if route in ("/wall", "/wall/", "/wall/index.html"):
             self._send_file(WALL_PAGE, "text/html; charset=utf-8")
-        elif route == "/wall/api/state":
-            self._send(json.dumps(wall_state(self.opts)).encode(), "application/json")
         elif route.startswith("/wall/snap/"):
             name = route[len("/wall/snap/") :].removesuffix(".webp")
             if name in self._known():
@@ -291,7 +290,9 @@ class WallHandler(ProxyRequestHandler):
         for name in visible:
             if name in known:
                 viewer_file(self.opts, name).write_text(str(interval))
-        self._send(json.dumps({"interval": interval}).encode(), "application/json")
+        state = wall_state(self.opts)
+        state["interval"] = interval
+        self._send(json.dumps(state).encode(), "application/json")
 
 
 def parse_args(argv):

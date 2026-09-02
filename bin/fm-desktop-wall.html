@@ -61,7 +61,7 @@
 <body>
 <header>
   <h1>desktop wall</h1>
-  <input id="q" type="search" placeholder="search name, owner, project" size="22">
+  <input id="q" type="search" placeholder="search name, owner, group" size="22">
   <select id="filter">
     <option value="all">all</option>
     <option value="up">running</option>
@@ -168,11 +168,7 @@ function paintShot(node, t) {
       (t.up ? "waiting for first snapshot…" : "display stopped") + "</div>";
     return;
   }
-  const stamp = Math.round(t.server_stamp - t.captured_ago);
-  let img = shot.querySelector("img");
-  if (!img) { shot.innerHTML = ""; img = document.createElement("img"); shot.appendChild(img); }
-  const src = "/wall/snap/" + t.name + ".webp?t=" + stamp;
-  if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+  shot.innerHTML = '<img src="/wall/snap/' + t.name + '.webp">';
 }
 
 function render() {
@@ -187,6 +183,7 @@ function render() {
     groups.get(t.group).push(t);
   }
   const root = el("groups");
+  seen.disconnect();  // the nodes below replace the ones being observed
   root.textContent = "";
   for (const [group, tiles] of [...groups.entries()].sort()) {
     const h = document.createElement("h2");
@@ -211,12 +208,13 @@ function render() {
 
 async function tick() {
   try {
+    // One round trip per cycle: the heartbeat says what is on screen and the
+    // answer is the wall state for exactly those desktops.
     const view = await fetch("/wall/api/view", {
       method: "POST",
       body: JSON.stringify({ visible: [...state.visible], interval: interval() }),
     }).then(r => r.json());
-    const data = await fetch("/wall/api/state", { cache: "no-store" }).then(r => r.json());
-    state.tiles = data.tiles.map(t => ({ ...t, server_stamp: data.server_time }));
+    state.tiles = view.tiles;
     const capturing = state.tiles.filter(t => state.visible.has(t.name) && t.up).length;
     el("summary").textContent = state.tiles.length + " desktops · " + capturing +
       " capturing · every " + view.interval + "s";
