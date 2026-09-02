@@ -672,7 +672,7 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [interval]
 # its own rendered pane cannot show (see this file's header for the evidence
 # classes and the call sites for their probes). Deliberately a DEFERRAL, not a
 # cancellation: the idle timer restarts, so the next window probes again, and
-# the window's deferral chain keeps ageing across both evidence classes, so it
+# the window's deferral chain keeps ageing across all evidence classes, so it
 # still re-surfaces once every PAUSE_RESURFACE_SECS through the shared
 # resurface_absorbed and evidence that churns without real progress cannot stay
 # invisible. The escalation counter is left alone: it is neither
