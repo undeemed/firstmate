@@ -23,10 +23,10 @@ FM_DOD_LEAN_GATE='run `ponytail-review <base>` against the branch base you start
 Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.'
 
 fm_dod_block() { # <mode> <task-id>
-	local mode=$1 id=$2
-	case "$mode" in
-	direct-PR)
-		cat <<EOF
+  local mode=$1 id=$2
+  case "$mode" in
+  direct-PR)
+    cat <<EOF
 # Definition of done
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
@@ -36,9 +36,9 @@ Report that verdict in the PR body, and name any finding you deliberately did no
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
-		;;
-	local-only)
-		cat <<EOF
+    ;;
+  local-only)
+    cat <<EOF
 # Definition of done
 Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
@@ -49,9 +49,9 @@ Record that verdict in your handoff, and name any finding you deliberately did n
 When it is implemented and committed, append \`done: ready in branch fm/$id\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
-		;;
-	no-mistakes)
-		cat <<EOF
+    ;;
+  no-mistakes)
+    cat <<EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
@@ -74,10 +74,10 @@ Two firstmate-specific rules layer on top of that guidance:
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF
-		;;
-	*)
-		echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2
-		return 1
-		;;
-	esac
+    ;;
+  *)
+    echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2
+    return 1
+    ;;
+  esac
 }

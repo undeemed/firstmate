@@ -56,11 +56,8 @@
 #      working, because live evidence outranks a run that cannot even be bound;
 #      otherwise the reader reports `unknown` and names the ambiguity, since a
 #      truthful unknown beats a false `failed` or a false `done`.
-#      CUSTODY EXEMPTION: while the pipeline OWNS this branch
-#      (fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh), the
-#      daemon's own branch attribution is authoritative for that ACTIVE run and
-#      head equality is not required, because the lane head is routinely not a
-#      git object in this checkout yet. It never applies to a terminal run.
+#      CUSTODY EXEMPTION: an ACTIVE pipeline-owned run binds without head
+#      equality, under fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh.
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
 #      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
@@ -496,9 +493,6 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       # one: the only candidate. It is attributed, held ambiguous, or dropped -
       # never replaced by an older run from the list.
       if fm_nm_run_is_pipeline_owned_active "$RUN_OUT"; then
-        # Pipeline custody: while the pipeline owns this branch, the daemon's
-        # own branch attribution is authoritative for this ACTIVE run and the
-        # lane head need not be a git object in this checkout yet.
         HAVE_RUN=1
       else
         case "$(nm_run_binding)" in
