@@ -4,32 +4,11 @@
 # Usage: . bin/fm-lavish-lib.sh   then call fm_lavish_prepare_server before any
 # `lavish-axi` invocation that may start a server.
 #
-# THE FAULT THIS OWNS. Lavish rejects (403 "forbidden host") any request whose
-# `Host` is not in the list it was started with, and that list comes from
-# `LAVISH_AXI_ALLOWED_HOSTS` in the environment of whichever process spawned the
-# server. Verified against lavish-axi 0.1.52: there is no config file or flag for
-# it, and the server is spawned carrying the calling CLI's own environment. A
-# long-lived agent that captured its environment before the host list changed
-# therefore keeps respawning a server with the stale list, hours or days later,
-# and the hostname the operator must use keeps answering 403.
-#
-# THE FIX. Derive the list from the machine itself at call time instead of
-# trusting what a parent captured: this home's tailnet identity is read fresh
-# from `tailscale` on every call and merged with the inherited value, so an
-# inherited list can only ever be extended, never lost. A running server that
-# still rejects that identity is asked to shut down, and the caller's own
-# `lavish-axi` invocation then starts the corrected one.
-#
-# WHAT IT DELIBERATELY DOES NOT DO. It never widens exposure: the bind address
-# and the link host stay whatever the operator configured. When it does restart a
-# server that was reachable beyond loopback, it first pins `LAVISH_AXI_HOST` to
-# that same listening address, so repairing the allowlist can never narrow the
-# bind to loopback and black out another home's live boards. A server that
-# already accepts the identity is left running, and a non-Lavish listener on the
-# port is never touched.
-#
-# With no tailscale, or with no server running, the merge still happens and the
-# reconcile is a no-op: the next start already inherits the corrected list.
+# Lavish reads its Host allowlist only from `LAVISH_AXI_ALLOWED_HOSTS` in the
+# environment of the process that spawned the server, so a long-lived agent
+# keeps respawning a server that answers 403 for a hostname that changed after
+# it started. docs/configuration.md "Lavish server host allowlist" owns the fix,
+# its exposure boundary, and what it deliberately leaves alone.
 
 # This machine's own tailnet identity, MagicDNS name first, read fresh per call.
 fm_lavish_tailnet_hosts() {
@@ -53,18 +32,9 @@ fm_lavish_export_allowed_hosts() {
 # The address a listener on this port is bound to, empty when nothing listens.
 # `lsof -Fn` prints `n*:4387` for a wildcard bind and brackets IPv6 literals.
 fm_lavish_listen_address() {
-  local port=$1 line addr
   command -v lsof >/dev/null 2>&1 || return 0
-  while IFS= read -r line; do
-    case "$line" in n*) addr=${line#n} ;; *) continue ;; esac
-    addr=${addr%:*}
-    case "$addr" in
-      "") continue ;;
-      "*") printf '0.0.0.0\n' ;;
-      *) printf '%s\n' "$addr" ;;
-    esac
-    return 0
-  done < <(lsof -nP -iTCP:"$port" -sTCP:LISTEN -Fn 2>/dev/null)
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN -Fn 2>/dev/null \
+    | sed -n 's/^n\(.*\):[0-9]*$/\1/p' | sed 's/^\*$/0.0.0.0/' | head -1
 }
 
 # Health as the server answers it under a given Host, printed verbatim.
@@ -101,12 +71,9 @@ fm_lavish_prepare_server() {
   case "$(fm_lavish_health "$client" "$port" "$required")" in
     *'"app":"lavish-axi"'*) return 0 ;;
   esac
-  # Repairing the allowlist must never narrow the bind: a server reachable
-  # beyond loopback comes back on the same address.
-  case "$listen" in
-    127.*|"[::1]") ;;
-    *) [ -n "${LAVISH_AXI_HOST-}" ] || export LAVISH_AXI_HOST="$listen" ;;
-  esac
+  # Repairing the allowlist must never narrow the bind: the replacement comes
+  # back on the address the running server was reachable on.
+  [ -n "${LAVISH_AXI_HOST-}" ] || export LAVISH_AXI_HOST="$listen"
   printf 'lavish: restarting the server on port %s so it answers %s\n' "$port" "$required" >&2
   fm_lavish_shutdown_server "$client" "$port"
 }
