@@ -37,6 +37,9 @@ phone / laptop on the tailnet
   snapshot loop (same process, bounded worker pool)
 ```
 
+The per-desktop `websockify` listeners this replaces (tailnet ports 6111-6116) are still running beside the new one, untouched.
+They are retired only after the captain confirms the single listener from his own devices; until that confirmation, do not stop them.
+
 ## Composition view
 
 **Registry - `bin/fm-desktop.sh`.**
