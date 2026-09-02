@@ -59,6 +59,8 @@ test_register_records_display_and_ownership() {
 
 	desktop "$home" register seer --display 20 >/dev/null 2>&1 &&
 		fail "a duplicate name must be refused"
+	desktop "$home" register other --display 14 >/dev/null 2>&1 &&
+		fail "a second name on the same display must be refused"
 	pass "register records the display and its ownership"
 }
 
@@ -99,6 +101,13 @@ SH
 		fail "expected :15 (11,12 running; 13 legacy; 14 registered), got $(cat "$home/asked")"
 	jq -e '[.desktops[].name] == ["taken"]' "$home/state/desktops.json" >/dev/null ||
 		fail "a failed create must not leave a record behind"
+
+	# A create refused for a duplicate name must die before starting an X session.
+	PATH="$fakebin:$PATH" FM_DESKTOP_FIRST=11 FM_DESKTOP_LAST=16 \
+		desktop "$home" create taken >/dev/null 2>&1 &&
+		fail "create with a registered name must be refused"
+	[ "$(cat "$home/asked")" = ":15" ] ||
+		fail "a refused create must not start a display"
 	pass "allocation avoids live and legacy-registered displays"
 }
 
@@ -150,6 +159,11 @@ assert wall.viewer_interval(opts, "seer") is None
 # A viewer asking for 100ms gets the server floor, not what it asked for.
 wall.viewer_file(opts, "seer").write_text("0.1")
 assert wall.viewer_interval(opts, "seer") == wall.MIN_INTERVAL_SECONDS == 2.0
+
+# A torn or hand-mangled viewer file reads as no viewer, never as an exception.
+wall.viewer_file(opts, "seer").write_text("not-a-number")
+assert wall.viewer_interval(opts, "seer") is None
+wall.viewer_file(opts, "seer").write_text("0.1")
 
 # A viewer that stopped reporting expires, and the desktop goes free again.
 old = time.time() - 60
