@@ -12,9 +12,8 @@
 #
 # REGISTRY
 #   $FM_HOME/state/desktops.json, written atomically under a lock:
-#     {"version":1,"desktops":[{"name":"seer","display":14,
-#       "group":"secondmates","owner":"seer-mate-e3","project":"seer",
-#       "status_file":"..."}]}
+#     {"desktops":[{"name":"seer","display":14,
+#       "group":"secondmates","owner":"seer-mate-e3","status_file":"..."}]}
 #   "name" is also the websockify token and the snapshot filename, so it is
 #   restricted to [a-z0-9][a-z0-9-]*.
 #
@@ -69,7 +68,7 @@ command -v jq >/dev/null 2>&1 || die "jq is required"
 
 ensure_registry() {
 	mkdir -p "$STATE"
-	[ -f "$REGISTRY" ] || printf '{"version":1,"desktops":[]}\n' >"$REGISTRY"
+	[ -f "$REGISTRY" ] || printf '{"desktops":[]}\n' >"$REGISTRY"
 }
 
 # Serialize every read-modify-write so two callers cannot allocate one display.
@@ -234,7 +233,7 @@ cmd_retire() {
 cmd_list() {
 	ensure_registry
 	printf '%-14s %-8s %-7s %-16s %-18s %s\n' NAME DISPLAY RFB GROUP OWNER STATE
-	local name n rfb group owner
+	local name n group owner
 	while IFS=$'\t' read -r name n group owner; do
 		[ -n "$name" ] || continue
 		local state="down"

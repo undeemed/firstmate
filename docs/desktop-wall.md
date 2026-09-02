@@ -64,8 +64,7 @@ Tiles embedded in the wall are view-only; the full-page link is not.
 `state/desktops.json`:
 
 ```json
-{"version": 1,
- "desktops": [{"name": "seer", "display": 14,
+{"desktops": [{"name": "seer", "display": 14,
                "group": "secondmates", "owner": "seer-mate-e3",
                "status_file": "/home/ubuntu/Dev/firstmate/state/seer-mate-e3.status"}]}
 ```
@@ -93,7 +92,7 @@ Measured on this 8-core VPS on 2026-09-02, 1600x900 desktops, 480 px webp tiles.
 | Snapshot size | 6.9 KB average per tile, about 62 KB per full refresh of nine |
 | Wall page load event | 104 ms |
 | All nine tiles painted | 180 ms after navigation start |
-| `/wall/api/state` | 50 ms |
+| `/wall/api/view` round trip | 50 ms |
 | Live click-through, protocol level | 0.09 s to the RFB banner through the single listener |
 | Live click-through, in the browser | 1.41 s to a painted 1600x900 framebuffer |
 | Idle desktop footprint | 180 MiB PSS (Xtigervnc plus a 22-process XFCE session) |
