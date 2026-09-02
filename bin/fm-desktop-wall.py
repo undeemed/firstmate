@@ -30,6 +30,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -114,12 +115,12 @@ def viewer_interval(opts, name, now=None):
     path = viewer_file(opts, name)
     try:
         stat = path.stat()
-        raw = path.read_text().strip()
-    except OSError:
+        requested = float(path.read_text().strip())
+    except (OSError, ValueError):
         return None
     if (now or time.time()) - stat.st_mtime > VIEWER_TTL_SECONDS:
         return None
-    return max(MIN_INTERVAL_SECONDS, float(raw))
+    return max(MIN_INTERVAL_SECONDS, requested)
 
 
 def last_status_line(path):
@@ -173,40 +174,42 @@ class Snapshots:
         self.lock = threading.Lock()
 
     def capture(self, name, display):
-        tmp = self.dir / ("%s.tmp.webp" % name)
-        # x11grab reads the root window and auto-detects geometry, so a resized
-        # desktop needs no registry change and no second process per capture.
-        cmd = [
-            "ffmpeg", "-loglevel", "error", "-nostdin",
-            "-f", "x11grab", "-draw_mouse", "0", "-i", ":%d" % display,
-            "-frames:v", "1", "-vf", "scale=%d:-1" % SNAPSHOT_WIDTH,
-            "-q:v", str(SNAPSHOT_QUALITY), "-y", str(tmp),
-        ]  # fmt: skip
-        meta = snapshot_meta(self.opts, name)
         try:
-            subprocess.run(
-                cmd, capture_output=True, timeout=CAPTURE_TIMEOUT, check=True
-            )
-            body = tmp.read_bytes()
-            digest = hashlib.sha256(body).hexdigest()
-            os.replace(tmp, self.dir / ("%s.webp" % name))
-            now = time.time()
-            meta = {
-                "captured": now,
-                "changed": now
-                if digest != meta.get("sha")
-                else meta.get("changed", now),
-                "sha": digest,
-                "error": "",
-            }
-        except (subprocess.SubprocessError, OSError) as exc:
-            meta = dict(meta)
-            meta["captured"] = time.time()
-            meta["error"] = str(exc)[:200]
-        tmp.unlink(missing_ok=True)
-        (self.dir / ("%s.json" % name)).write_text(json.dumps(meta))
-        with self.lock:
-            self.in_flight.discard(name)
+            tmp = self.dir / ("%s.tmp.webp" % name)
+            # x11grab reads the root window and auto-detects geometry, so a resized
+            # desktop needs no registry change and no second process per capture.
+            cmd = [
+                "ffmpeg", "-loglevel", "error", "-nostdin",
+                "-f", "x11grab", "-draw_mouse", "0", "-i", ":%d" % display,
+                "-frames:v", "1", "-vf", "scale=%d:-1" % SNAPSHOT_WIDTH,
+                "-q:v", str(SNAPSHOT_QUALITY), "-y", str(tmp),
+            ]  # fmt: skip
+            meta = snapshot_meta(self.opts, name)
+            try:
+                subprocess.run(
+                    cmd, capture_output=True, timeout=CAPTURE_TIMEOUT, check=True
+                )
+                body = tmp.read_bytes()
+                digest = hashlib.sha256(body).hexdigest()
+                os.replace(tmp, self.dir / ("%s.webp" % name))
+                now = time.time()
+                meta = {
+                    "captured": now,
+                    "changed": now
+                    if digest != meta.get("sha")
+                    else meta.get("changed", now),
+                    "sha": digest,
+                    "error": "",
+                }
+            except (subprocess.SubprocessError, OSError) as exc:
+                meta = dict(meta)
+                meta["captured"] = time.time()
+                meta["error"] = str(exc)[:200]
+            tmp.unlink(missing_ok=True)
+            (self.dir / ("%s.json" % name)).write_text(json.dumps(meta))
+        finally:
+            with self.lock:
+                self.in_flight.discard(name)
 
     def due(self, desktop, now):
         interval = viewer_interval(self.opts, desktop["name"], now)
@@ -219,14 +222,17 @@ class Snapshots:
 
     def run_forever(self):
         while True:
-            now = time.time()
-            for desktop in load_registry(self.opts.registry):
-                name = desktop["name"]
-                with self.lock:
-                    if name in self.in_flight or not self.due(desktop, now):
-                        continue
-                    self.in_flight.add(name)
-                self.pool.submit(self.capture, name, desktop["display"])
+            try:
+                now = time.time()
+                for desktop in load_registry(self.opts.registry):
+                    name = desktop["name"]
+                    with self.lock:
+                        if name in self.in_flight or not self.due(desktop, now):
+                            continue
+                        self.in_flight.add(name)
+                    self.pool.submit(self.capture, name, desktop["display"])
+            except Exception:
+                traceback.print_exc()
             time.sleep(TICK_SECONDS)
 
 
@@ -289,7 +295,10 @@ class WallHandler(ProxyRequestHandler):
         known = self._known()
         for name in visible:
             if name in known:
-                viewer_file(self.opts, name).write_text(str(interval))
+                path = viewer_file(self.opts, name)
+                tmp = path.with_name(".%s.%d.tmp" % (name, os.getpid()))
+                tmp.write_text(str(interval))
+                os.replace(tmp, path)
         state = wall_state(self.opts)
         state["interval"] = interval
         self._send(json.dumps(state).encode(), "application/json")

@@ -187,10 +187,17 @@ parse_options() {
 	done
 }
 
-record() { # uses the parse_options globals
-	local existing
+ensure_unclaimed() { # uses the parse_options globals; the caller holds the lock
+	local existing holder
 	existing=$(jq -r --arg n "$NAME" '[.desktops[] | select(.name==$n)] | length' "$REGISTRY")
 	[ "$existing" = "0" ] || die "desktop '$NAME' is already registered (retire it first)"
+	holder=$(jq -r --argjson d "$DISPLAY_NUM" \
+		'first(.desktops[] | select(.display==$d) | .name) // ""' "$REGISTRY")
+	[ -z "$holder" ] || die "display :$DISPLAY_NUM is already registered to '$holder'"
+}
+
+record() { # uses the parse_options globals
+	ensure_unclaimed
 	jq \
 		--arg name "$NAME" --argjson display "$DISPLAY_NUM" \
 		--arg group "$GROUP" --arg owner "$OWNER" --arg status "$STATUS_FILE" \
@@ -213,6 +220,7 @@ cmd_create() {
 	with_lock
 	[ -n "$DISPLAY_NUM" ] || DISPLAY_NUM="$(allocate_display)"
 	[[ "$DISPLAY_NUM" =~ ^[0-9]+$ ]] || die "--display must be a number"
+	ensure_unclaimed
 	start_display "$DISPLAY_NUM"
 	mirror_legacy "$OWNER" "$DISPLAY_NUM"
 	record

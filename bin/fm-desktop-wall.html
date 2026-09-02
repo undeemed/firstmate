@@ -185,6 +185,7 @@ function render() {
   }
   const root = el("groups");
   seen.disconnect();  // the nodes below replace the ones being observed
+  state.visible.clear();
   root.textContent = "";
   for (const [group, tiles] of [...groups.entries()].sort()) {
     const h = document.createElement("h2");
