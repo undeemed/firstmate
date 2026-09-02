@@ -15,8 +15,7 @@ ENDPOINTS (all on the single listener)
 USAGE
   fm-desktop-wall.py [--registry <path>] [--snapshot-dir <path>] [--port 6090]
                      [--listen <ip>] [--cert <p> --key <p>] [--web-root <dir>]
-                     [--interval 5] [--min-interval 2] [--viewer-ttl 15]
-                     [--workers 4]
+                     [--min-interval 2]
 
   The registry is the only source of desktops: no display number or port is
   written down here. bin/fm-desktop.sh owns that file and its schema.
@@ -47,6 +46,10 @@ X_SOCKET_DIR = Path(os.environ.get("FM_DESKTOP_X_SOCKET_DIR", "/tmp/.X11-unix"))
 STATUS_TAIL_BYTES = 4096
 CAPTURE_TIMEOUT = 20.0
 TICK_SECONDS = 1.0
+# A viewer that stopped reporting this long ago is gone, and its desktop goes
+# back to costing nothing.
+VIEWER_TTL_SECONDS = 15.0
+CAPTURE_WORKERS = 4
 SNAPSHOT_WIDTH = 480
 SNAPSHOT_QUALITY = 70
 
@@ -112,12 +115,9 @@ def viewer_interval(opts, name, now=None):
         raw = path.read_text().strip()
     except OSError:
         return None
-    if (now or time.time()) - stat.st_mtime > opts.viewer_ttl:
+    if (now or time.time()) - stat.st_mtime > VIEWER_TTL_SECONDS:
         return None
-    try:
-        return max(opts.min_interval, float(raw))
-    except ValueError:
-        return opts.interval
+    return max(opts.min_interval, float(raw))
 
 
 def last_status_line(path):
@@ -142,7 +142,6 @@ def wall_state(opts):
         tiles.append(
             {
                 "name": desktop["name"],
-                "label": desktop.get("label") or desktop["name"],
                 "display": desktop["display"],
                 "group": desktop.get("group") or "ungrouped",
                 "owner": desktop.get("owner", ""),
@@ -168,7 +167,7 @@ class Snapshots:
         self.opts = opts
         self.dir = Path(opts.snapshot_dir)
         (self.dir / "viewers").mkdir(parents=True, exist_ok=True)
-        self.pool = ThreadPoolExecutor(max_workers=opts.workers)
+        self.pool = ThreadPoolExecutor(max_workers=CAPTURE_WORKERS)
         self.in_flight = set()
         self.lock = threading.Lock()
 
@@ -280,9 +279,9 @@ class WallHandler(ProxyRequestHandler):
         try:
             length = min(int(self.headers.get("Content-Length", "0")), 65536)
             payload = json.loads(self.rfile.read(length) or b"{}")
-            requested = float(payload.get("interval", self.opts.interval))
+            requested = float(payload["interval"])
             visible = list(payload.get("visible", []))[:512]
-        except (ValueError, TypeError):
+        except (KeyError, TypeError, ValueError):
             self.send_error(400)
             return
         # The floor lives here, not in the page: a client cannot ask this box for
@@ -310,10 +309,7 @@ def parse_args(argv):
     p.add_argument("--cert", default="")
     p.add_argument("--key", default="")
     p.add_argument("--web-root", default="/usr/share/novnc")
-    p.add_argument("--interval", type=float, default=5.0, help="default interval")
     p.add_argument("--min-interval", type=float, default=2.0, help="server-side floor")
-    p.add_argument("--viewer-ttl", type=float, default=15.0)
-    p.add_argument("--workers", type=int, default=4)
     return p.parse_args(argv)
 
 

@@ -48,7 +48,7 @@ test_register_records_display_rfb_and_metadata() {
 	local home
 	home=$(new_home register)
 	desktop "$home" register seer --display 14 --group secondmates \
-		--owner seer-mate-e3 --project seer --label "seer" >/dev/null ||
+		--owner seer-mate-e3 --project seer >/dev/null ||
 		fail "register failed"
 
 	local got
@@ -143,8 +143,7 @@ assert tokens.lookup("nope") is None
 
 opts = wall.parse_args(["--registry", str(home / "state" / "desktops.json"),
                         "--snapshot-dir", str(home / "state" / "wall"),
-                        "--interval", "5", "--min-interval", "2",
-                        "--viewer-ttl", "15"])
+                        "--min-interval", "2"])
 (pathlib.Path(opts.snapshot_dir) / "viewers").mkdir(parents=True, exist_ok=True)
 
 # No viewer at all: the desktop must never be captured.
