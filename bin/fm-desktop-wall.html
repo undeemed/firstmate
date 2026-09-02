@@ -99,13 +99,7 @@ const state = { tiles: [], visible: new Set(), live: false, page: 0, timer: null
 
 el("q").value = params.get("q") || "";
 if (params.get("filter")) el("filter").value = params.get("filter");
-if (params.get("interval")) {
-  const v = params.get("interval");
-  if (![...el("interval").options].some(o => o.value === v)) {
-    el("interval").add(new Option(v + "s", v));
-  }
-  el("interval").value = v;
-}
+if (params.get("interval")) el("interval").value = params.get("interval");
 if (params.get("pagesize")) el("pagesize").value = params.get("pagesize");
 
 function interval() { return Number(el("interval").value) || 5; }
@@ -162,7 +156,7 @@ function tileNode(t) {
     '<div class="bar"><span class="dot ' + cls + '"></span>' +
     '<span class="name"></span><span class="meta">:' + t.display + "</span>" +
     '<span class="tools"><button class="golive" title="live view in this tile">live</button>' +
-    '<a href="' + liveUrl(t.name, false) + '" target="_blank" rel="noopener">open</a></span></div>' +
+    "</span></div>" +
     '<div class="status"></div>';
   node.querySelector(".name").textContent = t.label;
   node.querySelector(".status").textContent = t.status || when;

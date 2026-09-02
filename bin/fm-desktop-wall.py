@@ -42,7 +42,6 @@ USAGE
 import argparse
 import hashlib
 import json
-import mimetypes
 import os
 import re
 import subprocess
@@ -62,6 +61,8 @@ HERE = Path(__file__).resolve().parent
 WALL_PAGE = HERE / "fm-desktop-wall.html"
 X_SOCKET_DIR = Path(os.environ.get("FM_DESKTOP_X_SOCKET_DIR", "/tmp/.X11-unix"))
 STATUS_TAIL_BYTES = 4096
+CAPTURE_TIMEOUT = 20.0
+TICK_SECONDS = 1.0
 
 
 def load_registry(path):
@@ -159,17 +160,10 @@ def wall_state(opts):
                 "changed_ago": round(now - meta["changed"], 1)
                 if meta.get("changed")
                 else None,
-                "capture_ms": meta.get("capture_ms"),
                 "error": meta.get("error", ""),
             }
         )
-    return {
-        "server_time": now,
-        "interval": opts.interval,
-        "min_interval": opts.min_interval,
-        "viewer_ttl": opts.viewer_ttl,
-        "tiles": tiles,
-    }
+    return {"server_time": now, "tiles": tiles}
 
 
 class Snapshots:
@@ -184,7 +178,6 @@ class Snapshots:
         self.lock = threading.Lock()
 
     def capture(self, name, display):
-        started = time.time()
         tmp = self.dir / ("%s.tmp.webp" % name)
         # x11grab reads the root window and auto-detects geometry, so a resized
         # desktop needs no registry change and no second process per capture.
@@ -197,7 +190,7 @@ class Snapshots:
         meta = snapshot_meta(self.opts, name)
         try:
             subprocess.run(
-                cmd, capture_output=True, timeout=self.opts.capture_timeout, check=True
+                cmd, capture_output=True, timeout=CAPTURE_TIMEOUT, check=True
             )
             body = tmp.read_bytes()
             digest = hashlib.sha256(body).hexdigest()
@@ -209,8 +202,6 @@ class Snapshots:
                 if digest != meta.get("sha")
                 else meta.get("changed", now),
                 "sha": digest,
-                "bytes": len(body),
-                "capture_ms": round((now - started) * 1000),
                 "error": "",
             }
         except (subprocess.SubprocessError, OSError) as exc:
@@ -241,7 +232,7 @@ class Snapshots:
                         continue
                     self.in_flight.add(name)
                 self.pool.submit(self.capture, name, desktop["display"])
-            time.sleep(self.opts.tick)
+            time.sleep(TICK_SECONDS)
 
 
 class WallHandler(ProxyRequestHandler):
@@ -262,14 +253,13 @@ class WallHandler(ProxyRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_file(self, path, content_type=None):
+    def _send_file(self, path, content_type):
         try:
             body = Path(path).read_bytes()
         except OSError:
             self.send_error(404)
             return
-        guessed = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-        self._send(body, content_type or guessed)
+        self._send(body, content_type)
 
     def do_GET(self):
         route = self.path.split("?", 1)[0]
@@ -315,21 +305,14 @@ class WallHandler(ProxyRequestHandler):
         )
 
 
-def refresh_tokens(opts, seen):
-    """Rewrite the token map when the registry changed; return the new stamp."""
-    try:
-        stamp = os.stat(opts.registry).st_mtime
-    except OSError:
-        stamp = None
-    if stamp != seen:
-        Path(opts.token_file).write_text(token_map(load_registry(opts.registry)))
-    return stamp
+def write_tokens(opts):
+    Path(opts.token_file).write_text(token_map(load_registry(opts.registry)))
 
 
-def token_refresh_forever(opts, seen):
+def token_refresh_forever(opts):
     while True:
         time.sleep(2)
-        seen = refresh_tokens(opts, seen)
+        write_tokens(opts)
 
 
 def parse_args(argv):
@@ -337,7 +320,6 @@ def parse_args(argv):
     p = argparse.ArgumentParser(description="single-listener VNC desktop wall")
     p.add_argument("--registry", default=str(fm_home / "state" / "desktops.json"))
     p.add_argument("--snapshot-dir", default=str(fm_home / "state" / "desktop-wall"))
-    p.add_argument("--token-file", default="")
     p.add_argument("--listen", default="127.0.0.1")
     p.add_argument("--port", type=int, default=6090)
     p.add_argument("--cert", default="")
@@ -349,11 +331,8 @@ def parse_args(argv):
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--width", type=int, default=480)
     p.add_argument("--quality", type=int, default=70)
-    p.add_argument("--capture-timeout", type=float, default=20.0)
-    p.add_argument("--tick", type=float, default=1.0)
     opts = p.parse_args(argv)
-    if not opts.token_file:
-        opts.token_file = str(Path(opts.snapshot_dir) / "tokens")
+    opts.token_file = str(Path(opts.snapshot_dir) / "tokens")
     return opts
 
 
@@ -370,10 +349,8 @@ def main(argv=None):
     # TokenFile re-reads on every lookup, so a desktop created after startup is
     # routable without a restart; the map only has to exist before the first
     # connection arrives.
-    stamp = refresh_tokens(opts, None)
-    threading.Thread(
-        target=token_refresh_forever, args=(opts, stamp), daemon=True
-    ).start()
+    write_tokens(opts)
+    threading.Thread(target=token_refresh_forever, args=(opts,), daemon=True).start()
     threading.Thread(target=snaps.run_forever, daemon=True).start()
 
     server = WebSocketProxy(
