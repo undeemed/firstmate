@@ -5,6 +5,9 @@
 # ambient configuration disabled, and one exact ShellCheck version. CI and
 # no-mistakes both invoke this script with no arguments, so the rule set,
 # version, bounded execution, and diagnostics ordering cannot drift.
+# The explicit --fast mode is local-only and disables ShellCheck's extended
+# dataflow analysis while preserving ordinary shell lint checks. CI and
+# no-mistakes keep the full-analysis no-argument default.
 # Tests stop source analysis at imported production modules because every
 # production shell is already a canonical, source-aware root of this same run.
 # The default (no explicit-path) path also runs bin/fm-lint-workflows.sh so a
@@ -30,7 +33,9 @@
 # runs the same shards serially with byte-identical diagnostics and exit selection.
 #
 # Every ShellCheck process runs under an address-space ceiling
-# (FM_LINT_MEMORY_LIMIT_KIB, default 6291456 KiB = 6 GiB). ShellCheck's memory
+# (FM_LINT_MEMORY_LIMIT_KIB, default 10485760 KiB = 10 GiB; raised from 6 GiB
+# when the upstream merge added the backlog-transition and supervision-lease
+# modules to bin/fm-teardown.sh's source graph, which needs about 7 GiB). ShellCheck's memory
 # cost is roughly proportional to the total lines it analyses, and
 # --external-sources inlines a module once per source directive, so a root that
 # imports the same module more than once pays for that module's whole graph
@@ -49,6 +54,7 @@
 #
 # Usage:
 #   fm-lint.sh                         lint the context-selected file set (see above)
+#   fm-lint.sh --fast [path]...       local lint with extended analysis disabled
 #   fm-lint.sh <path>...               lint explicit roots with the same config
 #   fm-lint.sh --jobs <1|2> [path]...  override bounded worker count
 #   fm-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
@@ -58,7 +64,7 @@
 set -u
 
 REQUIRED_SHELLCHECK=0.11.0
-DEFAULT_MEMORY_LIMIT_KIB=6291456
+DEFAULT_MEMORY_LIMIT_KIB=10485760
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SELF_DIR/fm-lint.sh"
 ROOT="$(cd "$SELF_DIR/.." && pwd)"
@@ -92,7 +98,12 @@ fm_lint_shellcheck() {  # <output-file> <root>...
         ulimit -v "$FM_LINT_MEMORY_LIMIT_KIB" 2>/dev/null || :
       fi
     fi
-    exec "$FM_LINT_SHELLCHECK" --norc --external-sources -- "$@"
+    if [ "${FM_LINT_INTERNAL_FAST:-0}" -eq 1 ]; then
+      set -- --extended-analysis=false --norc --external-sources -- "$@"
+    else
+      set -- --norc --external-sources -- "$@"
+    fi
+    exec "$FM_LINT_SHELLCHECK" "$@"
   ) > "$output" 2>&1 &
   FM_LINT_WORKER_SHELLCHECK_PID=$!
   wait "$FM_LINT_WORKER_SHELLCHECK_PID" || rc=$?
@@ -199,7 +210,11 @@ if [ "${1:-}" = "--required-version" ]; then
 fi
 
 fm_lint_usage() {
-  sed -n '2,57{s/^# \{0,1\}//;p;}' "$SELF"
+  awk '
+    NR == 1 { next }
+    /^#/ { sub(/^# ?/, ""); print; next }
+    { exit }
+  ' "$SELF"
 }
 
 # Default no-args lint also validates GitHub workflows. Explicit paths stay a
@@ -211,6 +226,8 @@ fm_lint_run_workflows() {
 
 JOBS=${FM_LINT_JOBS:-2}
 TELEMETRY=${FM_LINT_TELEMETRY:-}
+FAST=0
+ANALYSIS_MODE=full
 LIST_FILES=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -230,6 +247,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     --telemetry=*)
       TELEMETRY=${1#*=}
+      shift
+      ;;
+    --fast)
+      FAST=1
+      ANALYSIS_MODE=fast
       shift
       ;;
     --list-files)
@@ -262,6 +284,10 @@ case "$FM_LINT_MEMORY_LIMIT_KIB" in
     exit 2
     ;;
 esac
+if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; }; then
+  printf 'fm-lint.sh: --fast is local-only; CI uses full ShellCheck analysis.\n' >&2
+  exit 2
+fi
 
 # fm_lint_changed_base_ref prints the ref to diff the working branch against:
 # the local origin/main tracking ref when present, else local main. Returns
@@ -355,6 +381,11 @@ if [ "$resolved" != "$REQUIRED_SHELLCHECK" ]; then
   printf 'fm-lint.sh: ShellCheck %s required for CI parity, found %s. Install %s with bin/fm-install-shellcheck.sh <destination-directory>.\n' \
     "$REQUIRED_SHELLCHECK" "$resolved" "$REQUIRED_SHELLCHECK" >&2
   exit 1
+fi
+if [ "$FAST" -eq 1 ]; then
+  printf 'fm-lint.sh: fast local mode; ShellCheck extended analysis disabled\n' >&2
+else
+  printf 'fm-lint.sh: full ShellCheck extended analysis enabled\n' >&2
 fi
 
 if [ "$CHANGED_MODE" -eq 1 ] && [ "$ROOT_COUNT" -eq 0 ]; then
@@ -488,20 +519,20 @@ fm_lint_run_worker() {  # <worker-index>
     if [ "$(uname)" = Darwin ]; then
       exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
         /usr/bin/time -lp -o "$timing" \
-        env FM_LINT_INTERNAL=1 FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+        env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
         FM_LINT_MEMORY_LIMIT_KIB="$FM_LINT_MEMORY_LIMIT_KIB" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     else
       exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
         /usr/bin/time -f 'wall_seconds=%e\nuser_seconds=%U\nsystem_seconds=%S\nmax_rss_kib=%M' -o "$timing" \
-        env FM_LINT_INTERNAL=1 FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+        env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
         FM_LINT_MEMORY_LIMIT_KIB="$FM_LINT_MEMORY_LIMIT_KIB" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     fi
   else
     [ -z "$TELEMETRY" ] || printf 'timing_unavailable=1\n' > "$timing"
     exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
-      env FM_LINT_INTERNAL=1 FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+      env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
       FM_LINT_MEMORY_LIMIT_KIB="$FM_LINT_MEMORY_LIMIT_KIB" \
       "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
   fi
@@ -636,6 +667,7 @@ EOF
     printf 'git_head\t%s\n' "$git_head"
     printf 'content_cksum\t%s\n' "$content_cksum"
     printf 'shellcheck_version\t%s\n' "$resolved"
+    printf 'analysis_mode\t%s\n' "$ANALYSIS_MODE"
     printf 'jobs\t%s\n' "$JOBS"
     printf 'root_count\t%s\n' "$ROOT_COUNT"
     printf 'direct_lines\t%s\n' "$direct_lines"
