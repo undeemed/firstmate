@@ -168,7 +168,8 @@ function paintShot(node, t) {
       (t.up ? "waiting for first snapshot…" : "display stopped") + "</div>";
     return;
   }
-  shot.innerHTML = '<img src="/wall/snap/' + t.name + '.webp">';
+  // lazy: a tile scrolled out of view must not refetch a no-store snapshot.
+  shot.innerHTML = '<img loading="lazy" src="/wall/snap/' + t.name + '.webp">';
 }
 
 function render() {
