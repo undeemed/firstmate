@@ -40,7 +40,7 @@ phone / laptop on the tailnet
 ## Composition view
 
 **Registry - `bin/fm-desktop.sh`.**
-Writes `state/desktops.json`, the single source of truth: name, display, RFB port, group, owner, project, status file, label.
+Writes `state/desktops.json`, the single source of truth: name, display, RFB port, group, owner, project and status file.
 `create` allocates a free display, starts it, and records it; `register` records a display that already exists; `list` shows liveness; `retire` drops a record.
 No display number or port is hardcoded anywhere else: the wall enumerates this file, and the listener's token plugin resolves a token to `127.0.0.1:<rfb_port>` by reading it per connection.
 The name is the websockify token and the snapshot filename, so it is restricted to `[a-z0-9][a-z0-9-]*`.
@@ -66,8 +66,7 @@ Tiles embedded in the wall are view-only; the full-page link is not.
 {"version": 1,
  "desktops": [{"name": "seer", "display": 14, "rfb_port": 5914,
                "group": "secondmates", "owner": "seer-mate-e3", "project": "seer",
-               "status_file": "/home/ubuntu/Dev/firstmate/state/seer-mate-e3.status",
-               "label": "seer"}]}
+               "status_file": "/home/ubuntu/Dev/firstmate/state/seer-mate-e3.status"}]}
 ```
 
 `state/desktop-wall/` holds the generated material: `<name>.webp` (latest snapshot), `<name>.json` (capture time, change time, content digest, error), and `viewers/<name>` (one file per watched desktop, mtime = last heartbeat, contents = the interval that viewer asked for).
@@ -138,7 +137,8 @@ bin/fm-desktop.sh retire <name>        # record only; never stops a display
 ```
 
 The listener runs as the user unit `fm-desktop-wall.service`.
-It takes `--registry`, `--snapshot-dir`, `--listen`, `--port`, `--cert`, `--key`, `--interval`, `--min-interval`, `--viewer-ttl` and `--workers`; run it with `--help` for current defaults.
+It takes `--registry`, `--snapshot-dir`, `--listen`, `--port`, `--cert`, `--key`, `--web-root` and `--min-interval`; run it with `--help` for current defaults.
+The refresh interval a viewer asks for is the page's own control, defaulting to 5 s and carried by `?interval=`; `--min-interval` is the floor the server applies to whatever it is asked for.
 
 Give the captain the MagicDNS form of the URL, never a loopback address and never the public IP:
 `https://firstmate-vps.tailc4c9b.ts.net:6090/wall/`.

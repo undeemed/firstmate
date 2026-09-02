@@ -65,7 +65,6 @@
   <select id="filter">
     <option value="all">all</option>
     <option value="up">running</option>
-    <option value="active">active</option>
     <option value="down">stopped</option>
   </select>
   <select id="interval" title="snapshot interval">
@@ -95,22 +94,19 @@ const params = new URLSearchParams(location.search);
 const el = (id) => document.getElementById(id);
 const state = { tiles: [], visible: new Set(), live: false, page: 0, timer: null };
 
-el("q").value = params.get("q") || "";
-if (params.get("filter")) el("filter").value = params.get("filter");
+// The interval is the one control a link can carry: ?interval=10.
 if (params.get("interval")) el("interval").value = params.get("interval");
-if (params.get("pagesize")) el("pagesize").value = params.get("pagesize");
 
 function interval() { return Number(el("interval").value) || 5; }
 function pageSize() { return Number(el("pagesize").value) || 12; }
 
 function matches(t) {
   const q = el("q").value.trim().toLowerCase();
-  if (q && ![t.name, t.label, t.owner, t.project, t.group, t.status]
+  if (q && ![t.name, t.owner, t.project, t.group, t.status]
             .join(" ").toLowerCase().includes(q)) return false;
   const f = el("filter").value;
   if (f === "up") return t.up;
   if (f === "down") return !t.up;
-  if (f === "active") return t.up && t.changed_ago !== null && t.changed_ago < 60;
   return true;
 }
 
@@ -146,7 +142,7 @@ function tileNode(t) {
     '<span class="name"></span><span class="meta">:' + t.display + "</span>" +
     '<button class="golive" title="live view in this tile">live</button></div>' +
     '<div class="status"></div>';
-  node.querySelector(".name").textContent = t.label;
+  node.querySelector(".name").textContent = t.name;
   node.querySelector(".status").textContent = t.status || when;
   node.querySelector(".status").title = t.error || t.status || "";
   node.querySelector(".golive").onclick = (ev) => {
