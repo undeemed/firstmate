@@ -14,7 +14,7 @@
 #   $FM_HOME/state/desktops.json, written atomically under a lock:
 #     {"version":1,"desktops":[{"name":"seer","display":14,"rfb_port":5914,
 #       "group":"secondmates","owner":"seer-mate-e3","project":"seer",
-#       "status_file":"...","label":"seer","created":"<iso8601>"}]}
+#       "status_file":"...","label":"seer"}]}
 #   "name" is also the websockify token and the snapshot filename, so it is
 #   restricted to [a-z0-9][a-z0-9-]*.
 #
@@ -29,7 +29,6 @@
 #     --group <g>        wall grouping, e.g. secondmates | main-firstmate
 #     --owner <id>       agent/home id that owns the desktop
 #     --project <p>      project the desktop is used for
-#     --home <path>      that owner's firstmate home
 #     --status-file <p>  file whose last line the wall shows on the tile
 #     --label <text>     display name on the tile (default: name)
 #     --display <N>      register only: the existing display number
@@ -163,7 +162,6 @@ parse_options() {
 	GROUP=""
 	OWNER=""
 	PROJECT=""
-	HOME_PATH=""
 	STATUS_FILE=""
 	LABEL=""
 	[ $# -ge 1 ] || die "a desktop name is required"
@@ -189,10 +187,6 @@ parse_options() {
 			PROJECT="${2:-}"
 			shift 2
 			;;
-		--home)
-			HOME_PATH="${2:-}"
-			shift 2
-			;;
 		--status-file)
 			STATUS_FILE="${2:-}"
 			shift 2
@@ -215,11 +209,10 @@ record() { # uses the parse_options globals
 		--arg name "$NAME" --argjson display "$DISPLAY_NUM" \
 		--argjson rfb "$((5900 + DISPLAY_NUM))" \
 		--arg group "$GROUP" --arg owner "$OWNER" --arg project "$PROJECT" \
-		--arg home "$HOME_PATH" --arg status "$STATUS_FILE" --arg label "$LABEL" \
-		--arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		--arg status "$STATUS_FILE" --arg label "$LABEL" \
 		'.desktops += [{name:$name, display:$display, rfb_port:$rfb, group:$group,
-                    owner:$owner, project:$project, home:$home,
-                    status_file:$status, label:$label, created:$created}]' \
+                    owner:$owner, project:$project,
+                    status_file:$status, label:$label}]' \
 		"$REGISTRY" | write_registry
 	printf 'registered %s on :%s (rfb %s)\n' "$NAME" "$DISPLAY_NUM" "$((5900 + DISPLAY_NUM))"
 }
