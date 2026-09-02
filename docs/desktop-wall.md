@@ -41,7 +41,7 @@ phone / laptop on the tailnet
 
 **Registry - `bin/fm-desktop.sh`.**
 Writes `state/desktops.json`, the single source of truth: name, display, RFB port, group, owner, project, home, status file, label.
-`create` allocates a free display, starts it, and records it; `register` records a display that already exists; `list` shows liveness; `retire` drops a record; `tokens` renders the websockify token map.
+`create` allocates a free display, starts it, and records it; `register` records a display that already exists; `list` shows liveness; `retire` drops a record.
 No display number or port is hardcoded anywhere else: the wall enumerates this file and the token map is generated from it.
 The name is the websockify token and the snapshot filename, so it is restricted to `[a-z0-9][a-z0-9-]*`.
 
@@ -71,7 +71,7 @@ Tiles embedded in the wall are view-only; the full-page link is not.
                "label": "seer", "created": "2026-09-02T01:00:00Z"}]}
 ```
 
-`state/desktop-wall/` holds the generated material: `<name>.webp` (latest snapshot), `<name>.json` (capture time, change time, size, capture milliseconds, error), `tokens` (the websockify map), and `viewers/<name>` (one file per watched desktop, mtime = last heartbeat, contents = the interval that viewer asked for).
+`state/desktop-wall/` holds the generated material: `<name>.webp` (latest snapshot), `<name>.json` (capture time, change time, content digest, error), `tokens` (the websockify map), and `viewers/<name>` (one file per watched desktop, mtime = last heartbeat, contents = the interval that viewer asked for).
 
 ## Interaction view: why viewer heartbeats are files
 

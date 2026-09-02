@@ -120,22 +120,6 @@ test_retire_drops_the_record_without_touching_the_display() {
 	pass "retire removes the record and never stops a display"
 }
 
-test_tokens_are_generated_from_the_registry() {
-	local home
-	home=$(new_home tokens)
-	desktop "$home" register dorm --display 11 >/dev/null
-	desktop "$home" register seer --display 14 >/dev/null
-	local body
-	body=$(desktop "$home" tokens)
-	[ "$body" = "dorm: 127.0.0.1:5911
-seer: 127.0.0.1:5914" ] || fail "token map wrong: $body"
-
-	desktop "$home" tokens --out "$home/state/tokens" >/dev/null
-	grep -qx "seer: 127.0.0.1:5914" "$home/state/tokens" ||
-		fail "--out must write the same map"
-	pass "the websockify token map comes from the registry, not a hardcoded table"
-}
-
 test_wall_reads_the_registry_and_gates_on_viewers() {
 	local home
 	home=$(new_home wall)
@@ -184,5 +168,4 @@ test_register_records_display_rfb_and_metadata
 test_name_must_be_token_safe
 test_allocation_skips_live_and_legacy_displays
 test_retire_drops_the_record_without_touching_the_display
-test_tokens_are_generated_from_the_registry
 test_wall_reads_the_registry_and_gates_on_viewers

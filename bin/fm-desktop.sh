@@ -22,9 +22,8 @@
 #   fm-desktop.sh create   <name> [options]        allocate a display, start it, record it
 #   fm-desktop.sh register <name> --display <N> [options]
 #                                                  record a display that already exists
-#   fm-desktop.sh list [--json]                    every desktop, with live/dead state
+#   fm-desktop.sh list                             every desktop, with live/dead state
 #   fm-desktop.sh retire   <name>                  drop the record (never kills anything)
-#   fm-desktop.sh tokens [--out <file>]            websockify TokenFile map from the registry
 #
 #   Options for create/register:
 #     --group <g>        wall grouping, e.g. secondmates | main-firstmate
@@ -257,10 +256,6 @@ cmd_retire() {
 
 cmd_list() {
 	ensure_registry
-	if [ "${1:-}" = "--json" ]; then
-		jq '.' "$REGISTRY"
-		return 0
-	fi
 	printf '%-14s %-8s %-7s %-16s %-18s %s\n' NAME DISPLAY RFB GROUP OWNER STATE
 	local name n rfb group owner
 	while IFS=$'\t' read -r name n rfb group owner; do
@@ -276,26 +271,6 @@ cmd_list() {
                   | @tsv' "$REGISTRY")
 }
 
-cmd_tokens() {
-	local out=""
-	[ "${1:-}" = "--out" ] && {
-		out="${2:-}"
-		[ -n "$out" ] || die "--out needs a path"
-	}
-	ensure_registry
-	local body
-	body=$(jq -r '.desktops | sort_by(.name)[] |
-                "\(.name): 127.0.0.1:\(.rfb_port)"' "$REGISTRY")
-	if [ -n "$out" ]; then
-		mkdir -p "$(dirname "$out")"
-		printf '%s\n' "$body" >"$out.tmp.$$"
-		mv "$out.tmp.$$" "$out"
-		printf 'wrote %s token(s) to %s\n' "$(printf '%s\n' "$body" | grep -c .)" "$out"
-	else
-		printf '%s\n' "$body"
-	fi
-}
-
 [ $# -ge 1 ] || {
 	usage
 	exit 1
@@ -305,9 +280,8 @@ shift
 case "$action" in
 create) cmd_create "$@" ;;
 register) cmd_register "$@" ;;
-list) cmd_list "$@" ;;
+list) cmd_list ;;
 retire) cmd_retire "$@" ;;
-tokens) cmd_tokens "$@" ;;
 -h | --help | help) usage ;;
 *)
 	usage
