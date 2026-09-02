@@ -2569,11 +2569,6 @@ teardown_herdr_require_prerequisites() { # <task-id>
       return 1
     fi
   done
-  if ! declare -F fm_lock_try_acquire >/dev/null 2>&1 ||
-    ! declare -F fm_lock_release >/dev/null 2>&1; then
-    echo "error: herdr teardown lock machinery is unavailable for $task_id; nothing was changed - restore the lock support and rerun teardown" >&2
-    return 1
-  fi
 }
 
 teardown_herdr_preflight_target() { # <target> <task-id>
