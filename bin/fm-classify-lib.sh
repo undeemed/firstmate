@@ -25,8 +25,9 @@
 # stays bounded by new appends instead of re-reading each task's whole lifetime
 # log every time. crew_worktree_written_since reads the task's meta file and walks
 # a bounded slice of its worktree instead of a status file, so callers run it only
-# at the moment they would otherwise escalate, and crew_step_progress_evidence
-# makes one bounded `no-mistakes axi status` read at that same moment. commit_key_syntax_markers also
+# at the moment they would otherwise escalate, crew_step_progress_evidence
+# makes one bounded `no-mistakes axi status` read at that same moment, and
+# crew_turn_progress_evidence stats that task's turn-boundary marker there too. commit_key_syntax_markers also
 # writes: after the drain has printed the stated-key syntax warnings it persists
 # each task's warned-through byte marker (state/.<task>.key-syntax-cursor), and a
 # marker that cannot be written simply re-warns next drain (see "Fleet-wide
@@ -1544,6 +1545,37 @@ crew_step_progress_evidence() {  # <id>
   case "$age" in ''|*[!0-9]*) return 1 ;; esac
   [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || return 1
   printf 'active pipeline step %s, last activity %ss ago' "$step" "$age"
+}
+
+# Print the evidence phrase for a model turn <id> completed during the quiet
+# window that <anchor-file> opens, and return 0; print nothing and return 1
+# otherwise. This is the wedge detector's fifth liveness input, and the only one
+# that can see the shape measured on 2026-08-31 (see docs/verification/supervision.md):
+# a direct-PR lane has NO pipeline run at all, so crew_step_progress_evidence can
+# never apply to it, and a lane spending a long turn reading and reasoning writes
+# nothing for crew_worktree_written_since to find, yet raises `possible wedge`
+# while completing model turns behind a static pane.
+#
+# state/<id>.turn-ended is where firstmate ALREADY records that same event. The
+# per-harness turn-end hook fm-spawn installs touches it at every turn boundary -
+# one model response plus its tool calls - so a marker newer than the anchor is
+# positive proof the agent produced something during the quiet window. It is
+# chosen over the rendered token and cost counters that first suggested this fix
+# because it is firstmate's own record of the very event those counters report:
+# no vendor footer to parse, no second sample to take, and the same single
+# `-newer <anchor>` shape crew_worktree_written_since already uses.
+#
+# 1 for every other outcome, including a marker that has not moved, a task with
+# no marker at all, and a missing or unreadable anchor. A harness whose hook
+# fires only when a whole turn ends therefore records nothing mid-turn and simply
+# keeps the caller's existing escalation schedule, which is also what a genuinely
+# stopped crew gets: this probe can only ever defer an escalation on positive
+# evidence, never suppress one for want of it.
+crew_turn_progress_evidence() {  # <id> <state> <anchor-file>
+  local id=${1:-} state=${2:-} anchor=${3:-}
+  [ -f "$anchor" ] || return 1
+  [ "$state/$id.turn-ended" -nt "$anchor" ] || return 1
+  printf 'completing model turns, last turn boundary inside the quiet window'
 }
 
 # 0 (benign/absorb) if EVERY task referenced by a no-verb "signal:" wake is provably
