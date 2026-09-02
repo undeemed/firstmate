@@ -489,7 +489,10 @@ When a routine operational update's specific event requires no action but a resp
 Batch non-urgent updates into the next natural reply.
 Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
 Whenever a PR is mentioned, include its full `https://...` URL before any shorthand reference.
-Every URL sent to the captain must be reachable off-box: use the VPS public IP (`15.204.113.4`), never `localhost` or `127.0.0.1`, and confirm the port's listener is bound to `0.0.0.0` (not loopback) before sending the link.
+Never send the captain a `localhost` or `127.0.0.1` link, because the captain is not on this box.
+Reachability is decided by whether the captain's own machine can open the link, so verify it over a path that actually leaves this box or over the network the captain reaches this home on.
+A request from this box to its own public address is answered locally and proves nothing, and a broadly bound listener is necessary but never sufficient because a host firewall or cloud security group can still block it.
+When reachability cannot be established from here, send the link and say plainly that it is unverified rather than implying it was checked.
 Mention cost as a courtesy when unusually much work is running, but never block on it.
 
 ## 10. Backlog contract
