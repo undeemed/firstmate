@@ -1,0 +1,19 @@
+== 15 registered desktops, page size 6, page 1/3 on screen ==
+$ ls state/desktop-wall/viewers/   # heartbeat only for tiles on screen
+desk-01 desk-02 desk-03 desk-04 desk-05 desk-06 desk-07 desk-08 desk-09 desk-10 desk-11 desk-12 
+count: 12 of 15 registered
+
+== 21s later (page shows 6 tiles; VIEWER_TTL_SECONDS=15) ==
+$ viewer file ages (server treats age>15s as "nobody watching"):
+desk-01  age  7s  WATCHED
+desk-02  age  7s  WATCHED
+desk-03  age  7s  WATCHED
+desk-04  age  7s  WATCHED
+desk-05  age  7s  WATCHED
+desk-06  age  7s  WATCHED
+desk-07  age 56s  expired
+desk-08  age 56s  expired
+desk-09  age 56s  expired
+desk-10  age 56s  expired
+desk-11  age 56s  expired
+desk-12  age 56s  expired

@@ -1,0 +1,27 @@
+$ fm-desktop.sh create wall-e2e --group secondmates --owner test-phase
+display :70 up
+registered wall-e2e on :70 (rfb 5970)
+
+$ fm-desktop.sh register wall-dead --display 71 --group swarm --owner nobody
+registered wall-dead on :71 (rfb 5971)
+
+$ fm-desktop.sh list
+NAME           DISPLAY  RFB     GROUP            OWNER              STATE
+wall-e2e       :70      5970    secondmates      test-phase         up
+wall-dead      :71      5971    swarm            nobody             down
+
+$ fm-desktop.sh retire wall-e2e
+retired wall-e2e (record only)
+display :70 was NOT touched. Another home may be working on it.
+to stop it deliberately: tigervncserver -kill :70
+
+$ fm-desktop.sh retire wall-dead
+retired wall-dead (record only)
+display :71 was NOT touched. Another home may be working on it.
+to stop it deliberately: tigervncserver -kill :71
+
+$ registry after retire:
+{
+  "desktops": []
+}
+$ X70 socket still present after retire (never signals a process): /tmp/.X11-unix/X70
