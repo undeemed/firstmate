@@ -47,6 +47,9 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# shellcheck source=bin/fm-lavish-lib.sh
+. "$SCRIPT_DIR/fm-lavish-lib.sh"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 
 TEMPLATE="${FM_BEARINGS_BOARD_TEMPLATE:-$SCRIPT_DIR/../.agents/skills/bearings/assets/board-template.html}"
@@ -174,6 +177,7 @@ command_build() {
   printf 'board: %s\n' "$board"
 
   command -v lavish-axi >/dev/null 2>&1 || fail "lavish-axi is not installed"
+  fm_lavish_prepare_server
   lavish-axi "$board" || fail "cannot establish the board Lavish session"
   printf 'served: %s\n' "$board"
 

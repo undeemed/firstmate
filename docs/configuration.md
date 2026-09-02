@@ -608,6 +608,20 @@ The published `lavish-axi poll` clears feedback destructively before returning i
 Never describe this path as at-least-once, no-loss, or lossless.
 `docs/verification/process-event-sources.md` holds the measurements and `.agents/skills/process-event-sources/SKILL.md` owns the handling procedure.
 
+## Lavish server host allowlist
+
+Lavish answers `403 forbidden host` to any request whose `Host` is not in the list the server was started with, and it reads that list only from `LAVISH_AXI_ALLOWED_HOSTS` in the environment of the process that spawned it (lavish-axi 0.1.52 offers no config file or flag for it).
+Because the server is respawned on demand by whichever long-lived agent needs it next, an agent that captured its environment before the host list changed keeps bringing back a server that rejects the hostname the captain must use, days later.
+
+Every Firstmate entry point that may start that server therefore repairs the list first, through [`bin/fm-lavish-lib.sh`](../bin/fm-lavish-lib.sh), which owns the mechanism.
+It reads this machine's tailnet identity fresh from `tailscale` on each call, merges it into the inherited value so an inherited list is only ever extended, and asks a running server that still rejects that identity to shut down, so the caller's own `lavish-axi` invocation starts the corrected one.
+Boards survive that restart because Lavish keys session state per file on disk, and an interrupted poll is the transient response the adapter above already retries.
+
+The repair never widens exposure: bind address and link host stay whatever the home configured, and before restarting a server that was reachable beyond loopback it pins `LAVISH_AXI_HOST` to that same address so the replacement cannot come back loopback-only.
+A server that already answers the identity keeps serving untouched, and a listener on the port that is not Lavish is never shut down.
+Without `tailscale`, or with no server running, the merge still happens and the reconcile is a no-op.
+`FM_LAVISH_SHUTDOWN_TIMEOUT` (default 5) bounds the wait for the port to free.
+
 ## Spoken interface and captain inbox (config/voice-*, config/inbox-*)
 
 The spoken interface in [`docs/voice-relay.md`](voice-relay.md) and the model-backed subcommands of `bin/fm-inbox.sh` reach a paid API in a named account, so no region, model id or AWS profile is shipped as a tracked default.
