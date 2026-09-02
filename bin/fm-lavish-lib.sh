@@ -19,16 +19,6 @@ fm_lavish_tailnet_hosts() {
     | awk 'NF'
 }
 
-# Merge the inherited list with that identity, order preserved, no duplicates,
-# and export it so the server this process starts carries it.
-fm_lavish_export_allowed_hosts() {
-  local merged
-  merged=$({ tr ' ' '\n' <<<"${LAVISH_AXI_ALLOWED_HOSTS-}"; fm_lavish_tailnet_hosts; } \
-    | awk 'NF && !seen[$0]++' | paste -sd' ' -)
-  [ -n "$merged" ] || return 0
-  export LAVISH_AXI_ALLOWED_HOSTS="$merged"
-}
-
 # The address a listener on this port is bound to, empty when nothing listens.
 # `lsof -Fn` prints `n*:4387` for a wildcard bind and brackets IPv6 literals.
 fm_lavish_listen_address() {
@@ -37,9 +27,9 @@ fm_lavish_listen_address() {
     | sed -n 's/^n\(.*\):[0-9]*$/\1/p' | sed 's/^\*$/0.0.0.0/' | head -1
 }
 
-# Health as the server answers it under a given Host, printed verbatim.
-fm_lavish_health() {  # <client-address> <port> <host-header>
-  curl -sS -m 3 -H "Host: $3" "http://$1:$2/health" 2>/dev/null
+# Whether the server on this port answers as Lavish under a given Host.
+fm_lavish_is_lavish() {  # <client-address> <port> <host-header>
+  curl -sS -m 3 -H "Host: $3" "http://$1:$2/health" 2>/dev/null | grep -q '"app":"lavish-axi"'
 }
 
 fm_lavish_shutdown_server() {  # <client-address> <port>
@@ -56,21 +46,19 @@ fm_lavish_shutdown_server() {  # <client-address> <port>
 # Export the corrected list, and clear a running server out of the way only when
 # it genuinely rejects this machine's own hostname.
 fm_lavish_prepare_server() {
-  local port required listen client
-  fm_lavish_export_allowed_hosts
-  required=$(fm_lavish_tailnet_hosts | head -1)
+  local hosts merged required port listen client
+  hosts=$(fm_lavish_tailnet_hosts)
+  merged=$({ tr ' ' '\n' <<<"${LAVISH_AXI_ALLOWED_HOSTS-}"; printf '%s\n' "$hosts"; } \
+    | awk 'NF && !seen[$0]++' | paste -sd' ' -)
+  [ -n "$merged" ] && export LAVISH_AXI_ALLOWED_HOSTS="$merged"
+  required=$(printf '%s\n' "$hosts" | head -1)
   [ -n "$required" ] || return 0
   port=${LAVISH_AXI_PORT:-4387}
   listen=$(fm_lavish_listen_address "$port")
   [ -n "$listen" ] || return 0
   case "$listen" in 0.0.0.0) client=127.0.0.1 ;; *) client=$listen ;; esac
-  case "$(fm_lavish_health "$client" "$port" "$client")" in
-    *'"app":"lavish-axi"'*) ;;
-    *) return 0 ;;
-  esac
-  case "$(fm_lavish_health "$client" "$port" "$required")" in
-    *'"app":"lavish-axi"'*) return 0 ;;
-  esac
+  fm_lavish_is_lavish "$client" "$port" "$client" || return 0
+  fm_lavish_is_lavish "$client" "$port" "$required" && return 0
   # Repairing the allowlist must never narrow the bind: the replacement comes
   # back on the address the running server was reachable on.
   [ -n "${LAVISH_AXI_HOST-}" ] || export LAVISH_AXI_HOST="$listen"
