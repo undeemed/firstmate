@@ -40,17 +40,17 @@ phone / laptop on the tailnet
 ## Composition view
 
 **Registry - `bin/fm-desktop.sh`.**
-Writes `state/desktops.json`, the single source of truth: name, display, RFB port, group, owner, project, home, status file, label.
+Writes `state/desktops.json`, the single source of truth: name, display, RFB port, group, owner, project, status file, label.
 `create` allocates a free display, starts it, and records it; `register` records a display that already exists; `list` shows liveness; `retire` drops a record.
-No display number or port is hardcoded anywhere else: the wall enumerates this file and the token map is generated from it.
+No display number or port is hardcoded anywhere else: the wall enumerates this file, and the listener's token plugin resolves a token to `127.0.0.1:<rfb_port>` by reading it per connection.
 The name is the websockify token and the snapshot filename, so it is restricted to `[a-z0-9][a-z0-9-]*`.
 
 `retire` never signals a process, because another home may be working on that desktop.
 It prints the `tigervncserver -kill` command for a human to run deliberately.
 
 **Listener and snapshot loop - `bin/fm-desktop-wall.py`.**
-One process: a `websockify` proxy with `TokenFile` routing, serving noVNC's static files, the wall page, the snapshot images, and two small JSON routes.
-`TokenFile` re-reads on every lookup, so a desktop created after startup is routable with no restart.
+One process: a `websockify` proxy whose token plugin reads the registry, serving noVNC's static files, the wall page, the snapshot images, and two small JSON routes.
+The lookup happens per connection in the serving child, so a desktop created after startup is routable with no restart and no derived token file.
 The capture loop runs in a thread of the parent process and submits work to a bounded pool.
 
 **Wall page - `bin/fm-desktop-wall.html`.**
@@ -66,12 +66,11 @@ Tiles embedded in the wall are view-only; the full-page link is not.
 {"version": 1,
  "desktops": [{"name": "seer", "display": 14, "rfb_port": 5914,
                "group": "secondmates", "owner": "seer-mate-e3", "project": "seer",
-               "home": "/home/ubuntu/.treehouse/.../firstmate",
                "status_file": "/home/ubuntu/Dev/firstmate/state/seer-mate-e3.status",
-               "label": "seer", "created": "2026-09-02T01:00:00Z"}]}
+               "label": "seer"}]}
 ```
 
-`state/desktop-wall/` holds the generated material: `<name>.webp` (latest snapshot), `<name>.json` (capture time, change time, content digest, error), `tokens` (the websockify map), and `viewers/<name>` (one file per watched desktop, mtime = last heartbeat, contents = the interval that viewer asked for).
+`state/desktop-wall/` holds the generated material: `<name>.webp` (latest snapshot), `<name>.json` (capture time, change time, content digest, error), and `viewers/<name>` (one file per watched desktop, mtime = last heartbeat, contents = the interval that viewer asked for).
 
 ## Interaction view: why viewer heartbeats are files
 

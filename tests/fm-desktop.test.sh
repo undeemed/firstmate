@@ -136,7 +136,10 @@ spec.loader.exec_module(wall)
 
 desktops = wall.load_registry(home / "state" / "desktops.json")
 assert [d["name"] for d in desktops] == ["dorm", "seer"], desktops
-assert wall.token_map(desktops) == "dorm: 127.0.0.1:5911\nseer: 127.0.0.1:5914\n"
+tokens = wall.RegistryTokens(home / "state" / "desktops.json")
+assert tokens.lookup("seer") == ("127.0.0.1", 5914)
+assert tokens.lookup("dorm") == ("127.0.0.1", 5911)
+assert tokens.lookup("nope") is None
 
 opts = wall.parse_args(["--registry", str(home / "state" / "desktops.json"),
                         "--snapshot-dir", str(home / "state" / "wall"),
@@ -161,7 +164,7 @@ assert wall.display_up(14) is False
 (home / "x" / "X14").touch()
 assert wall.display_up(14) is True
 PY
-	pass "the wall enumerates the registry, floors the interval and captures only what a viewer watches"
+	pass "the wall enumerates the registry, routes tokens from it, floors the interval and captures only what a viewer watches"
 }
 
 test_register_records_display_rfb_and_metadata

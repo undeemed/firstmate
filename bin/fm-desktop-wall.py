@@ -1,24 +1,7 @@
 #!/usr/bin/env python3
 """fm-desktop-wall - one listener and one snapshot loop for every VNC desktop.
 
-WHAT IT REPLACES
-  One websockify process per desktop, each with its own tailnet port, its own
-  copy of the TLS config, and a port number somebody had to remember. This is a
-  single websockify listener that routes by token (token = desktop name, taken
-  from the registry) and serves the snapshot wall from the same port, so there
-  is one URL and one TLS listener however many desktops exist.
-
-HOW IT SCALES (the point of the design)
-  Cost is driven by TILES ON SCREEN, not by desktops registered. The page reports
-  which tiles are visible; a desktop with no viewer inside --viewer-ttl seconds is
-  never captured and costs nothing. Captures run in a bounded thread pool, so a
-  burst of viewers queues instead of forking the box. A registered desktop that
-  nobody is looking at costs one row in state/desktops.json.
-
-  websockify serves each connection from a separate child process, so a child
-  cannot write to the parent's memory. Viewer heartbeats therefore cross that
-  boundary as files under <snapshot-dir>/viewers/: the child touches one, the
-  capture loop in the parent reads its mtime. A restart loses no viewer state.
+Design, cost model and rationale: docs/desktop-wall.md.
 
 ENDPOINTS (all on the single listener)
   /wall/                    the wall page
@@ -33,7 +16,7 @@ USAGE
   fm-desktop-wall.py [--registry <path>] [--snapshot-dir <path>] [--port 6090]
                      [--listen <ip>] [--cert <p> --key <p>] [--web-root <dir>]
                      [--interval 5] [--min-interval 2] [--viewer-ttl 15]
-                     [--workers 4] [--width 480] [--quality 70]
+                     [--workers 4]
 
   The registry is the only source of desktops: no display number or port is
   written down here. bin/fm-desktop.sh owns that file and its schema.
@@ -52,9 +35,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 try:
+    from websockify.token_plugins import BasePlugin
     from websockify.websocketproxy import ProxyRequestHandler
 except ImportError:  # the registry and gating helpers stay importable without it
-    ProxyRequestHandler = object
+    BasePlugin = ProxyRequestHandler = object
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 HERE = Path(__file__).resolve().parent
@@ -63,6 +47,8 @@ X_SOCKET_DIR = Path(os.environ.get("FM_DESKTOP_X_SOCKET_DIR", "/tmp/.X11-unix"))
 STATUS_TAIL_BYTES = 4096
 CAPTURE_TIMEOUT = 20.0
 TICK_SECONDS = 1.0
+SNAPSHOT_WIDTH = 480
+SNAPSHOT_QUALITY = 70
 
 
 def load_registry(path):
@@ -81,12 +67,21 @@ def load_registry(path):
     return sorted(out, key=lambda d: d["display"])
 
 
-def token_map(desktops):
-    """websockify TokenFile body: one 'name: host:port' line per desktop."""
-    return "".join(
-        "%s: 127.0.0.1:%d\n" % (d["name"], d.get("rfb_port", 5900 + d["display"]))
-        for d in sorted(desktops, key=lambda d: d["name"])
-    )
+class RegistryTokens(BasePlugin):
+    """websockify token routing straight off the registry: token = desktop name.
+
+    Looked up per connection in the serving child, so a desktop created after
+    startup is routable with no restart and no derived token file.
+    """
+
+    def __init__(self, src):
+        self.source = src
+
+    def lookup(self, token):
+        for desktop in load_registry(self.source):
+            if desktop["name"] == token:
+                return ("127.0.0.1", desktop.get("rfb_port", 5900 + desktop["display"]))
+        return None
 
 
 def display_up(display):
@@ -184,8 +179,8 @@ class Snapshots:
         cmd = [
             "ffmpeg", "-loglevel", "error", "-nostdin",
             "-f", "x11grab", "-draw_mouse", "0", "-i", ":%d" % display,
-            "-frames:v", "1", "-vf", "scale=%d:-1" % self.opts.width,
-            "-q:v", str(self.opts.quality), "-y", str(tmp),
+            "-frames:v", "1", "-vf", "scale=%d:-1" % SNAPSHOT_WIDTH,
+            "-q:v", str(SNAPSHOT_QUALITY), "-y", str(tmp),
         ]  # fmt: skip
         meta = snapshot_meta(self.opts, name)
         try:
@@ -245,8 +240,8 @@ class WallHandler(ProxyRequestHandler):
     def _known(self):
         return {d["name"] for d in load_registry(self.opts.registry)}
 
-    def _send(self, body, content_type, code=200):
-        self.send_response(code)
+    def _send(self, body, content_type):
+        self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
@@ -305,16 +300,6 @@ class WallHandler(ProxyRequestHandler):
         )
 
 
-def write_tokens(opts):
-    Path(opts.token_file).write_text(token_map(load_registry(opts.registry)))
-
-
-def token_refresh_forever(opts):
-    while True:
-        time.sleep(2)
-        write_tokens(opts)
-
-
 def parse_args(argv):
     fm_home = Path(os.environ.get("FM_HOME", HERE.parent))
     p = argparse.ArgumentParser(description="single-listener VNC desktop wall")
@@ -329,28 +314,16 @@ def parse_args(argv):
     p.add_argument("--min-interval", type=float, default=2.0, help="server-side floor")
     p.add_argument("--viewer-ttl", type=float, default=15.0)
     p.add_argument("--workers", type=int, default=4)
-    p.add_argument("--width", type=int, default=480)
-    p.add_argument("--quality", type=int, default=70)
-    opts = p.parse_args(argv)
-    opts.token_file = str(Path(opts.snapshot_dir) / "tokens")
-    return opts
+    return p.parse_args(argv)
 
 
 def main(argv=None):
     if ProxyRequestHandler is object:
         sys.exit("fm-desktop-wall: python3 websockify is required to serve")
-    from websockify.token_plugins import TokenFile
     from websockify.websocketproxy import WebSocketProxy
 
     opts = parse_args(argv)
-    Path(opts.snapshot_dir).mkdir(parents=True, exist_ok=True)
     snaps = Snapshots(opts)
-
-    # TokenFile re-reads on every lookup, so a desktop created after startup is
-    # routable without a restart; the map only has to exist before the first
-    # connection arrives.
-    write_tokens(opts)
-    threading.Thread(target=token_refresh_forever, args=(opts,), daemon=True).start()
     threading.Thread(target=snaps.run_forever, daemon=True).start()
 
     server = WebSocketProxy(
@@ -362,7 +335,7 @@ def main(argv=None):
         ssl_only=bool(opts.cert),
         web=opts.web_root,
         file_only=True,
-        token_plugin=TokenFile(src=opts.token_file),
+        token_plugin=RegistryTokens(opts.registry),
     )
     server.wall_opts = opts
     server.start_server()
