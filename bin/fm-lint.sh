@@ -87,7 +87,6 @@ fm_lint_worker_stop() {
 # so once on the run's real stderr before any worker started.
 fm_lint_shellcheck() {  # <output-file> <root>...
   local output=$1 rc=0
-  local -a sc_flags
   shift
   (
     if [ "$FM_LINT_MEMORY_LIMIT_KIB" -gt 0 ]; then
@@ -100,9 +99,7 @@ fm_lint_shellcheck() {  # <output-file> <root>...
       fi
     fi
     sc_flags=(--norc --external-sources)
-    if [ "${FM_LINT_INTERNAL_FAST:-0}" -eq 1 ]; then
-      sc_flags+=(--extended-analysis=false)
-    fi
+    [ "${FM_LINT_INTERNAL_FAST:-0}" -eq 1 ] && sc_flags+=(--extended-analysis=false)
     exec "$FM_LINT_SHELLCHECK" "${sc_flags[@]}" -- "$@"
   ) > "$output" 2>&1 &
   FM_LINT_WORKER_SHELLCHECK_PID=$!
