@@ -44,23 +44,22 @@ desktop() { # <home> <args...>
 		"$DESKTOP" "$@"
 }
 
-test_register_records_display_rfb_and_metadata() {
+test_register_records_display_and_ownership() {
 	local home
 	home=$(new_home register)
 	desktop "$home" register seer --display 14 --group secondmates \
-		--owner seer-mate-e3 --project seer >/dev/null ||
+		--owner seer-mate-e3 >/dev/null ||
 		fail "register failed"
 
 	local got
-	got=$(jq -r '.desktops[0] | [.name, (.display|tostring), (.rfb_port|tostring),
-                                .group, .owner, .project] | join(" ")' \
-		"$home/state/desktops.json")
-	[ "$got" = "seer 14 5914 secondmates seer-mate-e3 seer" ] ||
+	got=$(jq -r '.desktops[0] | [.name, (.display|tostring), .group, .owner]
+                | join(" ")' "$home/state/desktops.json")
+	[ "$got" = "seer 14 secondmates seer-mate-e3" ] ||
 		fail "registry row wrong: $got"
 
 	desktop "$home" register seer --display 20 >/dev/null 2>&1 &&
 		fail "a duplicate name must be refused"
-	pass "register records display, derived rfb port and ownership"
+	pass "register records the display and its ownership"
 }
 
 test_name_must_be_token_safe() {
@@ -142,8 +141,7 @@ assert tokens.lookup("dorm") == ("127.0.0.1", 5911)
 assert tokens.lookup("nope") is None
 
 opts = wall.parse_args(["--registry", str(home / "state" / "desktops.json"),
-                        "--snapshot-dir", str(home / "state" / "wall"),
-                        "--min-interval", "2"])
+                        "--snapshot-dir", str(home / "state" / "wall")])
 (pathlib.Path(opts.snapshot_dir) / "viewers").mkdir(parents=True, exist_ok=True)
 
 # No viewer at all: the desktop must never be captured.
@@ -151,7 +149,7 @@ assert wall.viewer_interval(opts, "seer") is None
 
 # A viewer asking for 100ms gets the server floor, not what it asked for.
 wall.viewer_file(opts, "seer").write_text("0.1")
-assert wall.viewer_interval(opts, "seer") == 2.0
+assert wall.viewer_interval(opts, "seer") == wall.MIN_INTERVAL_SECONDS == 2.0
 
 # A viewer that stopped reporting expires, and the desktop goes free again.
 old = time.time() - 60
@@ -166,7 +164,7 @@ PY
 	pass "the wall enumerates the registry, routes tokens from it, floors the interval and captures only what a viewer watches"
 }
 
-test_register_records_display_rfb_and_metadata
+test_register_records_display_and_ownership
 test_name_must_be_token_safe
 test_allocation_skips_live_and_legacy_displays
 test_retire_drops_the_record_without_touching_the_display
