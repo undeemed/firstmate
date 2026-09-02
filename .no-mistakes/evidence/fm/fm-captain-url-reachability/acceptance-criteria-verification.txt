@@ -1,0 +1,51 @@
+# Acceptance-criteria verification: AGENTS.md section 9 captain-link rule
+# Change: 547d2b3..3171efe  (branch fm/fm-captain-url-reachability)
+
+## The shipped rule text (AGENTS.md lines 492-495, verbatim as it reaches every firstmate user):
+   492	Never send the captain a `localhost` or `127.0.0.1` link, because the captain is not on this box.
+   493	Reachability is decided by whether the captain's own machine can open the link, so verify it over a path that actually leaves this box or over the network the captain reaches this home on.
+   494	A request from this box to its own public address is answered locally and proves nothing, and a broadly bound listener is necessary but never sufficient because a host firewall or cloud security group can still block it.
+   495	When reachability cannot be established from here, send the link and say plainly that it is unverified rather than implying it was checked.
+
+## Each required content element -> the line that carries it
+  1. no-loopback rule ........................ line 492 (never send localhost / 127.0.0.1)
+  2. captain-machine test + where to verify .. line 493 (reachability decided by captain's own machine; verify over a path that leaves the box or the captain's network)
+  3. self-answering trap + necessary-not-sufficient binding .. line 494 (box answers its own public address; broad binding never sufficient: host firewall / cloud security group)
+  4. honest-unverified disclosure ............ line 495 (say plainly the link is unverified rather than implying it was checked)
+
+## Forbidden content absent from AGENTS.md (deployment specifics stay out of the shared template)
+$ grep -cE "15\.204|tailc4c9b|ufw|ens3" AGENTS.md
+0
+0 matches
+
+## Only IP-shaped string in the whole file (required by the rule itself, NOT a leftover address):
+492:127.0.0.1
+  -> 127.0.0.1 on line 492 is the loopback literal the rule forbids sending; the intent requires it to stay.
+
+## Size: rule replaced, no noticeable growth
+  base   547d2b3: 587 lines, 72835 bytes
+  target 3171efe: 590 lines, 73258 bytes  (+3 lines net, +423 bytes, ~0.6%)
+
+## One sentence per line (file convention): terminator count per new line
+  line 492: 1 sentence terminator(s)
+  line 493: 1 sentence terminator(s)
+  line 494: 1 sentence terminator(s)
+  line 495: 1 sentence terminator(s)
+
+## Diff scope: only the one rule replaced, section 9's other rules untouched
+diff --git a/AGENTS.md b/AGENTS.md
+index 684b127..12f4f62 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -489,7 +489,10 @@ When a routine operational update's specific event requires no action but a resp
+ Batch non-urgent updates into the next natural reply.
+ Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
+ Whenever a PR is mentioned, include its full `https://...` URL before any shorthand reference.
+-Every URL sent to the captain must be reachable off-box: use the VPS public IP (`15.204.113.4`), never `localhost` or `127.0.0.1`, and confirm the port's listener is bound to `0.0.0.0` (not loopback) before sending the link.
++Never send the captain a `localhost` or `127.0.0.1` link, because the captain is not on this box.
++Reachability is decided by whether the captain's own machine can open the link, so verify it over a path that actually leaves this box or over the network the captain reaches this home on.
++A request from this box to its own public address is answered locally and proves nothing, and a broadly bound listener is necessary but never sufficient because a host firewall or cloud security group can still block it.
++When reachability cannot be established from here, send the link and say plainly that it is unverified rather than implying it was checked.
+ Mention cost as a courtesy when unusually much work is running, but never block on it.
+ 
+ ## 10. Backlog contract

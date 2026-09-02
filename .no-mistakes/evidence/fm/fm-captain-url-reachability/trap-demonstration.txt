@@ -1,0 +1,44 @@
+# Empirical demonstration: the OLD rule's verification test cannot fail on this box
+# (reproduces the 2026-09-01 failure mechanism the NEW rule in AGENTS.md:494 names)
+# Date: 2026-09-02T00:40:21Z   Box: the operator's VPS
+
+## 1. The box's public address is bound on its own interface
+$ ip -4 addr show | grep -B2 "15.204.113.4"
+    altname enp0s3
+    altname enxfa163e37667f
+    inet 15.204.113.4/32 metric 100 scope global dynamic ens3
+
+## 2. The kernel routes the public address to itself: a request never leaves the box
+$ ip route get 15.204.113.4
+local 15.204.113.4 dev lo table local src 15.204.113.4 uid 1000 
+    cache <local> 
+
+## 3. Old rule's prescribed check: broadly bound listener + curl the public IP
+# ephemeral python3 http.server on 0.0.0.0:8391, serving an empty scratch dir
+$ ss -ltn | grep 8391
+LISTEN 0      5                          0.0.0.0:8391       0.0.0.0:*   
+
+$ curl -sS -o /dev/null -w "HTTP %{http_code} via %{remote_ip}:%{remote_port}\n" http://15.204.113.4:8391/
+HTTP 200 via 15.204.113.4:8391
+
+## 4. Yet the host firewall blocks that same port from the public internet
+$ sudo -n ufw status
+Status: active
+
+To                         Action      From
+--                         ------      ----
+Anywhere on tailscale0     ALLOW       Anywhere                  
+Anywhere on lo             ALLOW       Anywhere                  
+41641/udp                  ALLOW       Anywhere                  
+Anywhere (v6) on tailscale0 ALLOW       Anywhere (v6)             
+Anywhere (v6) on lo        ALLOW       Anywhere (v6)             
+41641/udp (v6)             ALLOW       Anywhere (v6)             
+
+
+## Conclusion
+The old rule's check (bind 0.0.0.0, curl the public IP from the box) returned HTTP 200
+even though the request was answered locally (step 2: route = local).
+So the check could never fail, exactly as the intent states, and the NEW rule's line 494
+('a request from this box to its own public address is answered locally and proves nothing;
+a broadly bound listener is necessary but never sufficient') is factually correct on this box.
+Off-box unreachability cannot be proven from on-box - which is the new rule's own point (line 493/495).
