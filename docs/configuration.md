@@ -620,7 +620,6 @@ Boards survive that restart because Lavish keys session state per file on disk, 
 The repair never widens exposure: bind address and link host stay whatever the home configured, and before restarting a server that was reachable beyond loopback it pins `LAVISH_AXI_HOST` to that same address so the replacement cannot come back loopback-only.
 A server that already answers the identity keeps serving untouched, and a listener on the port that is not Lavish is never shut down.
 Without `tailscale`, or with no server running, the merge still happens and the reconcile is a no-op.
-`FM_LAVISH_SHUTDOWN_TIMEOUT` (default 5) bounds the wait for the port to free.
 
 ## Spoken interface and captain inbox (config/voice-*, config/inbox-*)
 
