@@ -178,8 +178,53 @@ PY
 	pass "the wall enumerates the registry, routes tokens from it, floors the interval and captures only what a viewer watches"
 }
 
+test_wall_heartbeat_hardens_against_malformed_posts() {
+	local home
+	home=$(new_home post)
+	desktop "$home" register seer --display 14 >/dev/null
+
+	FM_DESKTOP_X_SOCKET_DIR="$home/x" python3 - "$WALL" "$home" <<'PY' || fail "wall POST hardening"
+import importlib.util, io, json, pathlib, sys, types
+
+path, home = sys.argv[1], pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("wall", path)
+wall = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(wall)
+
+opts = wall.parse_args(["--registry", str(home / "state" / "desktops.json"),
+                        "--snapshot-dir", str(home / "state" / "wall")])
+(pathlib.Path(opts.snapshot_dir) / "viewers").mkdir(parents=True, exist_ok=True)
+
+class Probe(wall.WallHandler):
+    def __init__(self, headers, body):
+        self.server = types.SimpleNamespace(wall_opts=opts)
+        self.path = "/wall/api/view"
+        self.headers = headers
+        self.rfile = io.BytesIO(body)
+        self.status = None
+    def send_error(self, code, *args): self.status = code
+    def _send(self, body, content_type): self.status = 200
+
+# A negative Content-Length must not smuggle a body past the length clamp.
+body = json.dumps({"interval": 5, "visible": ["seer"]}).encode()
+p = Probe({"Content-Length": "-1"}, body)
+p.do_POST()
+assert p.status == 400, p.status
+assert not wall.viewer_file(opts, "seer").exists()
+
+# A non-string visible entry is dropped; it must not crash the request.
+mixed = json.dumps({"interval": 5, "visible": [["evil"], "seer"]}).encode()
+p = Probe({"Content-Length": str(len(mixed))}, mixed)
+p.do_POST()
+assert p.status == 200, p.status
+assert wall.viewer_file(opts, "seer").read_text() == "5.0"
+PY
+	pass "the heartbeat clamps bad lengths and drops non-string names"
+}
+
 test_register_records_display_and_ownership
 test_name_must_be_token_safe
 test_allocation_skips_live_and_legacy_displays
 test_retire_drops_the_record_without_touching_the_display
 test_wall_reads_the_registry_and_gates_on_viewers
+test_wall_heartbeat_hardens_against_malformed_posts

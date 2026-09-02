@@ -206,7 +206,9 @@ class Snapshots:
                 meta["captured"] = time.time()
                 meta["error"] = str(exc)[:200]
             tmp.unlink(missing_ok=True)
-            (self.dir / ("%s.json" % name)).write_text(json.dumps(meta))
+            meta_tmp = self.dir / ("%s.json.tmp" % name)
+            meta_tmp.write_text(json.dumps(meta))
+            os.replace(meta_tmp, self.dir / ("%s.json" % name))
         finally:
             with self.lock:
                 self.in_flight.discard(name)
@@ -282,10 +284,10 @@ class WallHandler(ProxyRequestHandler):
             self.send_error(405)
             return
         try:
-            length = min(int(self.headers.get("Content-Length", "0")), 65536)
+            length = max(0, min(int(self.headers.get("Content-Length", "0")), 65536))
             payload = json.loads(self.rfile.read(length) or b"{}")
             requested = float(payload["interval"])
-            visible = list(payload.get("visible", []))[:512]
+            visible = [n for n in payload.get("visible", []) if isinstance(n, str)][:512]
         except (KeyError, TypeError, ValueError):
             self.send_error(400)
             return
