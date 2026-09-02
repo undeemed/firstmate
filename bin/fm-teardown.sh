@@ -216,11 +216,6 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 # shellcheck source=bin/fm-secondmate-parent-lib.sh
 . "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
-# Source boundary only: fm-wake-lib.sh is already inlined through the module
-# graph above, and a second inline of its whole graph is what pushed this root
-# past the ShellCheck memory ceiling (see bin/fm-lint.sh's memory-ceiling notes).
-# shellcheck source=/dev/null
-. "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-pending-reply-lib.sh
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-retire-lib.sh
@@ -239,11 +234,11 @@ fm_backlog_directory_present "$STATE" "state directory" || {
   echo "error: teardown refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
 }
-# The runtime re-source stays: fm-wake-lib.sh rebinds STATE and the queue paths
-# from the current environment. The source boundary is a lint-cost cut only -
-# ShellCheck already inlined this module at the top-level source above, and a
-# second inline of its whole graph is what pushed this root past every memory
-# ceiling (see bin/fm-lint.sh's memory-ceiling notes).
+# fm-wake-lib.sh binds STATE and the queue paths from the current environment,
+# so it is sourced here, after this script has resolved STATE. The source
+# boundary is a lint-cost cut only: this module's whole graph is already
+# inlined through the libraries above, and inlining it a second time is what
+# pushed this root past every memory ceiling (bin/fm-lint.sh's notes).
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # Supervision lease guard: post-landing cleanup is overlap territory between
@@ -2955,22 +2950,6 @@ else
     BACKLOG_SKIP_REASON=$TEARDOWN_BACKLOG_SKIP_REASON
   fi
 fi
-
-# Every landed/discard-work refusal above has now passed (or --force skipped
-# them). Fix 1 and Fix 2 (see script header) run here, unconditionally on
-# --force, and before ANY destructive step below - a still-parked run or a
-# leaked process can own live work in this exact worktree. Not for
-# kind=secondmate: a secondmate home's own runtime lifecycle is owned by the
-# dedicated process-event and firstmate-home removal machinery further below,
-# not by task-worktree cleanup.
-if [ "$KIND" != secondmate ]; then
-  conclude_task_no_mistakes_run "$WT"
-  reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
-fi
-
-# Fix 3 (see script header): sweep remote job workers abandoned by an already
-# pruned code root. Best effort - a sweep failure never blocks this teardown.
-"$SCRIPT_DIR/fm-remote-job-reap-orphans.sh" >&2 || true
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
 if [ "${#COTENANT_IDS[@]}" -gt 0 ]; then

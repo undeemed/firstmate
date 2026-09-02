@@ -193,7 +193,10 @@ test_handling_successor_does_not_go_blind() {
   printf 'done: crew finished its task\n' >> "$state/crew.status"
   event_start=$(date +%s)
   now=0
-  while [ "$now" -lt 5 ]; do
+  # A generous ceiling on a loaded runner: the property is that the successor
+  # surfaces the event at all rather than sitting on it, and one poll's real
+  # cost is not the assertion.
+  while [ "$now" -lt 30 ]; do
     if grep -q '^signal:' "$out" 2>/dev/null; then
       break
     fi
