@@ -15,7 +15,6 @@ ENDPOINTS (all on the single listener)
 USAGE
   fm-desktop-wall.py [--registry <path>] [--snapshot-dir <path>] [--port 6090]
                      [--listen <ip>] [--cert <p> --key <p>] [--web-root <dir>]
-                     [--min-interval 2]
 
   The registry is the only source of desktops: no display number or port is
   written down here. bin/fm-desktop.sh owns that file and its schema.
@@ -50,6 +49,8 @@ TICK_SECONDS = 1.0
 # back to costing nothing.
 VIEWER_TTL_SECONDS = 15.0
 CAPTURE_WORKERS = 4
+# The floor a viewer cannot go under, whatever interval it asks for.
+MIN_INTERVAL_SECONDS = 2.0
 SNAPSHOT_WIDTH = 480
 SNAPSHOT_QUALITY = 70
 
@@ -83,7 +84,7 @@ class RegistryTokens(BasePlugin):
     def lookup(self, token):
         for desktop in load_registry(self.source):
             if desktop["name"] == token:
-                return ("127.0.0.1", desktop.get("rfb_port", 5900 + desktop["display"]))
+                return ("127.0.0.1", 5900 + desktop["display"])
         return None
 
 
@@ -117,7 +118,7 @@ def viewer_interval(opts, name, now=None):
         return None
     if (now or time.time()) - stat.st_mtime > VIEWER_TTL_SECONDS:
         return None
-    return max(opts.min_interval, float(raw))
+    return max(MIN_INTERVAL_SECONDS, float(raw))
 
 
 def last_status_line(path):
@@ -145,7 +146,6 @@ def wall_state(opts):
                 "display": desktop["display"],
                 "group": desktop.get("group") or "ungrouped",
                 "owner": desktop.get("owner", ""),
-                "project": desktop.get("project", ""),
                 "up": display_up(desktop["display"]),
                 "status": last_status_line(desktop.get("status_file", "")),
                 "captured_ago": round(now - meta["captured"], 1)
@@ -286,17 +286,12 @@ class WallHandler(ProxyRequestHandler):
             return
         # The floor lives here, not in the page: a client cannot ask this box for
         # a 100ms capture loop.
-        interval = max(self.opts.min_interval, requested)
+        interval = max(MIN_INTERVAL_SECONDS, requested)
         known = self._known()
         for name in visible:
             if name in known:
                 viewer_file(self.opts, name).write_text(str(interval))
-        self._send(
-            json.dumps(
-                {"interval": interval, "min_interval": self.opts.min_interval}
-            ).encode(),
-            "application/json",
-        )
+        self._send(json.dumps({"interval": interval}).encode(), "application/json")
 
 
 def parse_args(argv):
@@ -309,7 +304,6 @@ def parse_args(argv):
     p.add_argument("--cert", default="")
     p.add_argument("--key", default="")
     p.add_argument("--web-root", default="/usr/share/novnc")
-    p.add_argument("--min-interval", type=float, default=2.0, help="server-side floor")
     return p.parse_args(argv)
 
 

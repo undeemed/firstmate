@@ -102,7 +102,7 @@ function pageSize() { return Number(el("pagesize").value) || 12; }
 
 function matches(t) {
   const q = el("q").value.trim().toLowerCase();
-  if (q && ![t.name, t.owner, t.project, t.group, t.status]
+  if (q && ![t.name, t.owner, t.group, t.status]
             .join(" ").toLowerCase().includes(q)) return false;
   const f = el("filter").value;
   if (f === "up") return t.up;
@@ -219,7 +219,7 @@ async function tick() {
     state.tiles = data.tiles.map(t => ({ ...t, server_stamp: data.server_time }));
     const capturing = state.tiles.filter(t => state.visible.has(t.name) && t.up).length;
     el("summary").textContent = state.tiles.length + " desktops · " + capturing +
-      " capturing · every " + view.interval + "s (floor " + view.min_interval + "s)";
+      " capturing · every " + view.interval + "s";
     render();
   } catch (err) {
     el("summary").textContent = "wall server unreachable: " + err;

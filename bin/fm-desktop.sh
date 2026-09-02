@@ -12,7 +12,7 @@
 #
 # REGISTRY
 #   $FM_HOME/state/desktops.json, written atomically under a lock:
-#     {"version":1,"desktops":[{"name":"seer","display":14,"rfb_port":5914,
+#     {"version":1,"desktops":[{"name":"seer","display":14,
 #       "group":"secondmates","owner":"seer-mate-e3","project":"seer",
 #       "status_file":"..."}]}
 #   "name" is also the websockify token and the snapshot filename, so it is
@@ -28,7 +28,6 @@
 #   Options for create/register:
 #     --group <g>        wall grouping, e.g. secondmates | main-firstmate
 #     --owner <id>       agent/home id that owns the desktop
-#     --project <p>      project the desktop is used for
 #     --status-file <p>  file whose last line the wall shows on the tile
 #     --display <N>      register only: the existing display number
 #
@@ -160,7 +159,6 @@ parse_options() {
 	DISPLAY_NUM=""
 	GROUP=""
 	OWNER=""
-	PROJECT=""
 	STATUS_FILE=""
 	[ $# -ge 1 ] || die "a desktop name is required"
 	NAME="$1"
@@ -181,10 +179,6 @@ parse_options() {
 			OWNER="${2:-}"
 			shift 2
 			;;
-		--project)
-			PROJECT="${2:-}"
-			shift 2
-			;;
 		--status-file)
 			STATUS_FILE="${2:-}"
 			shift 2
@@ -200,12 +194,9 @@ record() { # uses the parse_options globals
 	[ "$existing" = "0" ] || die "desktop '$NAME' is already registered (retire it first)"
 	jq \
 		--arg name "$NAME" --argjson display "$DISPLAY_NUM" \
-		--argjson rfb "$((5900 + DISPLAY_NUM))" \
-		--arg group "$GROUP" --arg owner "$OWNER" --arg project "$PROJECT" \
-		--arg status "$STATUS_FILE" \
-		'.desktops += [{name:$name, display:$display, rfb_port:$rfb, group:$group,
-                    owner:$owner, project:$project,
-                    status_file:$status}]' \
+		--arg group "$GROUP" --arg owner "$OWNER" --arg status "$STATUS_FILE" \
+		'.desktops += [{name:$name, display:$display, group:$group,
+                    owner:$owner, status_file:$status}]' \
 		"$REGISTRY" | write_registry
 	printf 'registered %s on :%s (rfb %s)\n' "$NAME" "$DISPLAY_NUM" "$((5900 + DISPLAY_NUM))"
 }
@@ -244,14 +235,14 @@ cmd_list() {
 	ensure_registry
 	printf '%-14s %-8s %-7s %-16s %-18s %s\n' NAME DISPLAY RFB GROUP OWNER STATE
 	local name n rfb group owner
-	while IFS=$'\t' read -r name n rfb group owner; do
+	while IFS=$'\t' read -r name n group owner; do
 		[ -n "$name" ] || continue
 		local state="down"
 		display_live "$n" && state="up"
 		printf '%-14s %-8s %-7s %-16s %-18s %s\n' \
-			"$name" ":$n" "$rfb" "$group" "$owner" "$state"
+			"$name" ":$n" "$((5900 + n))" "$group" "$owner" "$state"
 	done < <(jq -r '.desktops | sort_by(.display)[] |
-                  [.name, (.display|tostring), (.rfb_port|tostring),
+                  [.name, (.display|tostring),
                    (if .group == "" then "-" else .group end),
                    (if .owner == "" then "-" else .owner end)]
                   | @tsv' "$REGISTRY")
