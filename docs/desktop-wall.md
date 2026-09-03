@@ -58,6 +58,9 @@ The lookup happens per connection in the serving child, so a desktop created aft
 The capture loop runs in a thread of the parent process and submits work to a bounded pool.
 
 **Wall page - `bin/fm-desktop-wall.html`.**
+Tiles are reconciled by desktop name, not rebuilt: a node is created for a new registry row, updated in place on every refresh, and removed when the row goes.
+That is not a performance detail - a live tile holds a noVNC session in an iframe, and recreating the node would drop its websocket on every refresh.
+A snapshot tile swaps its image only when `captured_at` changes, and decodes the next frame before showing it so a refresh never flashes.
 Groups tiles by home group, paginates, searches, filters, and reports which tiles are on screen.
 Per-tile and page-level toggles switch tiles to live RFB in place; the tile link opens a full interactive session.
 Tiles embedded in the wall are view-only; the full-page link is not.
