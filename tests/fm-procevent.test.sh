@@ -553,7 +553,11 @@ pass "failed terminal retirement is fail-closed and idempotently recoverable"
 # arm command against a stand-in for the published poll shape, so registration,
 # the runner, capture, publication, and retirement all run for real.
 HLT="$TMP_ROOT/hlt"; new_home "$HLT"
+# The adapter derives the Lavish allowlist from this machine before every poll
+# (bin/fm-lavish-lib.sh). Stubbing tailscale to no identity keeps that derivation
+# inert here, so a suite run never reconciles a real Lavish server.
 LAVISH_BIN=$(fm_fakebin "$TMP_ROOT/lavish-stub")
+fm_fake_exit0 "$LAVISH_BIN" tailscale
 LAVISH_POLL_COUNT="$TMP_ROOT/lavish-poll-count"
 export LAVISH_POLL_COUNT
 cat > "$LAVISH_BIN/lavish-axi" <<'SH'
@@ -604,7 +608,9 @@ pass "one Send & End yields exactly one captured result, automatic retirement, a
 # over what is really an internal retry. Every scenario below runs through the
 # adapter's own arm command and the real runner, so registration, capture, and
 # publication are exercised for real.
+# Tailscale stubbed to no identity, for the reason given at LAVISH_BIN above.
 LAVISH_SCRIPTED_BIN=$(fm_fakebin "$TMP_ROOT/lavish-scripted-stub")
+fm_fake_exit0 "$LAVISH_SCRIPTED_BIN" tailscale
 cat > "$LAVISH_SCRIPTED_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
 # Stand-in for `lavish-axi poll <file>`, scripted per scenario: LAVISH_SCRIPT

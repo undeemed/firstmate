@@ -12,8 +12,11 @@
 #   fm-bearings-board.sh path
 #
 # build      Validate the payload and inject it into a fresh copy of the shipped
-#            template at the stable board path. Establish or resume the Lavish
-#            session on that board BEFORE binding and arming its answer source,
+#            template at the stable board path. Repair the shared Lavish
+#            server's host allowlist next (fm_lavish_prepare_server in
+#            fm-lavish-lib.sh, which may restart a stale server), then
+#            establish or resume the Lavish session on that board BEFORE
+#            binding and arming its answer source,
 #            so a registered poll can never race a session that does not exist.
 #            Bind to the keyed-answer intake (bin/fm-captain-hold.sh) ALWAYS
 #            precedes arm, so the board can never produce an answer that has
@@ -47,6 +50,9 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# shellcheck source=bin/fm-lavish-lib.sh
+. "$SCRIPT_DIR/fm-lavish-lib.sh"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 
 TEMPLATE="${FM_BEARINGS_BOARD_TEMPLATE:-$SCRIPT_DIR/../.agents/skills/bearings/assets/board-template.html}"
@@ -174,6 +180,7 @@ command_build() {
   printf 'board: %s\n' "$board"
 
   command -v lavish-axi >/dev/null 2>&1 || fail "lavish-axi is not installed"
+  fm_lavish_prepare_server
   lavish-axi "$board" || fail "cannot establish the board Lavish session"
   printf 'served: %s\n' "$board"
 
