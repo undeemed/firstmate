@@ -263,10 +263,7 @@ if [ "$KIND" = secondmate ]; then
       QUEUE_EPOCH=${QUEUE_SCAN#*	}
       QUEUE_EPOCH=${QUEUE_EPOCH%%	*}
       QUEUE_AGE=0
-      case "$QUEUE_EPOCH" in
-        '' | *[!0-9]*) ;;
-        *) QUEUE_AGE=$(( $(date +%s) - QUEUE_EPOCH )) ;;
-      esac
+      [ -n "$QUEUE_EPOCH" ] && QUEUE_AGE=$(( $(date +%s) - QUEUE_EPOCH ))
       # A mate that is provably mid-turn cannot reach its own queue yet, so its
       # unconsumed rows are not evidence that nobody is watching them. No
       # recorded target means no busy evidence, which is not busy either.
