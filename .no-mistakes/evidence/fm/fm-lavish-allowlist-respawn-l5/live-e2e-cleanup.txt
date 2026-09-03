@@ -1,0 +1,12 @@
+=== cleanup 2026-09-03T21:24:41Z ===
+--- POST /shutdown answered: {"status":"shutting-down"} ---
+--- nothing listens on the scratch port 54817 any more ---
+port 54817 free
+--- no process tied to the scratch dir remains (own shell excluded) ---
+none
+
+--- final: the shared servers still hold their baseline PIDs (3874757 / 4169153) ---
+COMMAND       PID   USER FD   TYPE     DEVICE SIZE/OFF NODE NAME
+MainThrea 3874757 ubuntu 21u  IPv4 1811024100      0t0  TCP *:4387 (LISTEN)
+COMMAND       PID   USER FD   TYPE     DEVICE SIZE/OFF NODE NAME
+MainThrea 4169153 ubuntu 21u  IPv4 1565344116      0t0  TCP *:4487 (LISTEN)
