@@ -92,10 +92,20 @@
 "use strict";
 const params = new URLSearchParams(location.search);
 const el = (id) => document.getElementById(id);
-const state = { tiles: [], visible: new Set(), live: false, page: 0, timer: null };
+// liveTiles is page state, not node state: every tick rebuilds the tile nodes,
+// so a per-tile live switch stored on the node would revert within one refresh.
+const state = { tiles: [], visible: new Set(), liveTiles: new Set(), live: false,
+                page: 0, timer: null };
 
-// The interval is the one control a link can carry: ?interval=10.
-if (params.get("interval")) el("interval").value = params.get("interval");
+// The interval is the one control a link can carry: ?interval=10. Any positive
+// value is honoured, not just the presets - the server floors it at 2s anyway.
+const wanted = Number(params.get("interval"));
+if (wanted > 0) {
+  if (![...el("interval").options].some(o => Number(o.value) === wanted)) {
+    el("interval").add(new Option(wanted + "s", String(wanted)));
+  }
+  el("interval").value = String(wanted);
+}
 
 function interval() { return Number(el("interval").value) || 5; }
 function pageSize() { return Number(el("pagesize").value) || 12; }
@@ -147,7 +157,8 @@ function tileNode(t) {
   node.querySelector(".status").title = t.error || t.status || "";
   node.querySelector(".golive").onclick = (ev) => {
     ev.preventDefault();
-    node.dataset.live = node.dataset.live === "1" ? "" : "1";
+    if (state.liveTiles.has(t.name)) state.liveTiles.delete(t.name);
+    else state.liveTiles.add(t.name);
     paintShot(node, t);
   };
   seen.observe(node);
@@ -156,7 +167,7 @@ function tileNode(t) {
 
 function paintShot(node, t) {
   const shot = node.querySelector(".shot");
-  const goLive = state.live || node.dataset.live === "1";
+  const goLive = state.live || state.liveTiles.has(t.name);
   if (goLive) {
     if (!shot.querySelector("iframe")) {
       shot.innerHTML = '<iframe src="' + liveUrl(t.name, true) + '" loading="lazy"></iframe>';
