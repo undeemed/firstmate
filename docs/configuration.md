@@ -536,7 +536,7 @@ See [verification/public-followup.md](verification/public-followup.md) for the c
 A long-polling external process is registered as a *source* through its adapter, whose header and `--help` own the commands and flags.
 `bin/fm-procevent.sh` owns the generic contract; `bin/fm-procevent-lavish.sh` is the first adapter and wraps only the currently published `lavish-axi poll` interface.
 That adapter, and only that adapter, retries the transient response a cut-short listener returns while its marks remain available (`error: Lavish Editor poll response was interrupted` with `code: SERVER_ERROR`, followed only by the vendor's own `help[...]` diagnostics lines), up to 12 times at 5 second intervals, so an internal retry never reaches the runner as a captured result.
-A listener is cut short whenever the one shared Lavish server on its fixed port goes away under it, which any `lavish-axi` invocation whose version differs from the running server's causes on its way to starting its own; opening another board does not cause it, because sessions and active polls are keyed per file and session state survives the restart.
+A listener is cut short whenever the one shared Lavish server on its fixed port goes away under it, which any `lavish-axi` invocation whose version differs from the running server's causes on its way to starting its own, and which the host allowlist repair below ("Lavish server host allowlist") causes deliberately when the running server still rejects this machine's tailnet identity; opening another board does not otherwise cause it, because sessions and active polls are keyed per file and session state survives the restart.
 Real feedback, ended and missing sessions, and any other `SERVER_ERROR` are captured and announced normally; `FM_LAVISH_POLL_RETRY_DELAY` is a bounded 0 to 60 second test override for the interval only, and the runner itself stays adapter-agnostic.
 An interruption still standing once that bound is spent is a broken answer channel rather than an ordinary result: the capture is a `POLL_UNRECOVERABLE` report naming the board and quoting the exact last server response, its wake reads `lavish board stopped listening: <board>` instead of the generic result event, and the source stays armed so the next reconcile starts a fresh listener.
 `bin/fm-procevent.sh alive <source-id>` and `bin/fm-procevent-lavish.sh listening <artifact.html>` prove a source is genuinely being consumed before anyone promises that the far side is listening: `list` reports registration and ownership only, while these exit 0 only when the runner's own process - and for Lavish the published poll for that exact board - is alive right now, exit 3 while a Lavish listener sits between bounded retries, and exit 1 otherwise.
@@ -607,6 +607,22 @@ The runner proves nothing about the source side, and the handled acknowledgement
 The published `lavish-axi poll` clears feedback destructively before returning it, so a result lost between that clearing and the runner reading process output is unrecoverable.
 Never describe this path as at-least-once, no-loss, or lossless.
 `docs/verification/process-event-sources.md` holds the measurements and `.agents/skills/process-event-sources/SKILL.md` owns the handling procedure.
+
+## Lavish server host allowlist
+
+Lavish answers `403 forbidden host` to any request whose `Host` is not in the list the server was started with, and it reads that list only from `LAVISH_AXI_ALLOWED_HOSTS` in the environment of the process that spawned it (lavish-axi 0.1.52 offers no config file or flag for it).
+Because the server is respawned on demand by whichever long-lived agent needs it next, an agent that captured its environment before the host list changed keeps bringing back a server that rejects the hostname the captain must use, days later.
+
+Every Firstmate entry point that may start that server therefore repairs the list first, through [`bin/fm-lavish-lib.sh`](../bin/fm-lavish-lib.sh), which owns the mechanism.
+It reads this machine's tailnet identity fresh from `tailscale` on each call, merges it into the inherited value so an inherited list is only ever extended, and asks a running server that still rejects that identity to shut down, so the caller's own `lavish-axi` invocation starts the corrected one.
+Before asking for that shutdown it probes the running server with every hostname this caller can know - the merged list, this machine's addresses and FQDN, and the inherited link host - and folds each one the server still answers into the exported list, so a replacement started from a sparser environment keeps serving every host the displaced server serves and no live board on another home starts answering 403.
+Boards survive that restart because Lavish keys session state per file on disk, and an interrupted poll is the transient response the adapter above already retries.
+
+The repair never widens exposure: it only ever adds hosts the displaced server already answered for, the bind address stays whatever the home configured, and before restarting a server that was reachable beyond loopback it pins `LAVISH_AXI_HOST` to that same address so the replacement cannot come back loopback-only.
+A caller with no `LAVISH_AXI_LINK_HOST` of its own likewise pins it to a non-loopback host the displaced server answered for, so post-repair session links are not minted loopback-only; a configured link host is never overwritten.
+A server that already answers the identity keeps serving untouched, and a listener on the port that is not Lavish is never shut down.
+A shutdown that does not complete within its wait never fails the caller: a listener that rebound inside the window already answering the identity counts as the repair having happened, and anything else is reported on stderr with the port and left for the caller's own `lavish-axi` invocation to surface.
+Without `tailscale`, or with no server running, the merge still happens and the reconcile is a no-op.
 
 ## Spoken interface and captain inbox (config/voice-*, config/inbox-*)
 
