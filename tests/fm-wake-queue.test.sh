@@ -499,6 +499,43 @@ SH
   pass "foreign secondmate queue stalls notify once, remain byte-stable, and stay quiet when empty or healthy"
 }
 
+# --- an unattended home reports what is AT RISK, not the loop that noticed ----
+# The 2026-08-24 detection was correct and was dismissed twice, because
+# "wake-loop stalled" reads as an internal loop diagnostic rather than as live
+# child work nobody is watching. When the mate's own home holds live child task
+# records, the durable check names that instead.
+test_secondmate_unattended_home_names_live_child_work() {
+  local dir state sub fakebin out
+  dir=$(make_case secondmate-unattended)
+  state="$dir/state"
+  sub="$dir/secondmate"
+  mkdir -p "$sub/state" "$sub/data"
+  printf 'mate\n' > "$sub/.fm-secondmate-home"
+  printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=claude\nbackend=tmux\nhome=%s\n' \
+    "$sub" > "$state/mate.meta"
+  # The mate's own home: one live child task record, and its events unconsumed.
+  printf 'window=firstmate:fm-p3\nkind=ship\nharness=claude\nbackend=tmux\nworktree=%s\n' \
+    "$sub/wt-p3" > "$sub/state/p3.meta"
+  printf '%s\t7\tsignal\tp3\tsignal: state/p3.status\n' "$(( $(date +%s) - 10 ))" \
+    > "$sub/state/.wake-queue"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$out" 2> "$dir/watch.err" || true
+  grep -F 'check: secondmate home UNATTENDED - 1 live child task(s) with nobody consuming their events: mate=mate row=7' "$out" >/dev/null \
+    || fail "an unattended home was not named as live child work: $(cat "$out")"
+  ! grep -F 'wake-loop stalled' "$out" >/dev/null \
+    || fail "an unattended home was reported as a stalled loop: $(cat "$out")"
+  grep -F 'secondmate-wake-loop-mate-' "$state/.wake-queue" >/dev/null \
+    || fail "the unattended-home report was not durable"
+  pass "a home with live children reports unattended child work, not a stalled loop"
+}
+
 # --- a mate that is merely mid-turn is not a stalled wake loop ---------------
 # Measured 2026-08-24: this check was loud in the wrong place and silent in the
 # right one. Two mates were reported repeatedly while holding ZERO undrained rows -
@@ -1298,6 +1335,7 @@ test_historical_annotation_skips_announced_status() {
 
 test_self_held_lock_reclaims_instead_of_deadlocking
 test_secondmate_foreign_queue_stall_is_one_shot_and_read_only
+test_secondmate_unattended_home_names_live_child_work
 test_secondmate_mid_turn_mate_is_not_reported_as_stalled
 test_secondmate_deep_backlog_reports_depth_and_keeps_escalating
 test_secondmate_stall_marker_rejects_symlink

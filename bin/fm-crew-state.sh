@@ -16,7 +16,7 @@
 # fixed mapping logic, no heuristics and no LLM. Output is one stable, parseable,
 # token-tight line firstmate can read every heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
+#   state: <working|parked|done|blocked|paused|failed|unattended|unknown> · source: <run-step|pane|status-log|remote-endpoint|secondmate-home|none> · <detail>
 #
 # A run-step read whose `axi status` reports an ACTIVE step ends its detail with
 # one more field, `activity: <step> <seconds>`: how long ago that step last
@@ -68,6 +68,16 @@
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
 #      agree, and are reported as parked.
+#   3b. A LOCAL secondmate is a SUPERVISOR, so its own status log answers for
+#      the mate and says nothing about the tree it supervises. Its home's live
+#      child task records are part of this answer instead of a second lookup the
+#      reader must remember to make: a mate with live children is never reported
+#      idle or done, and one whose home has also left its own wake queue
+#      unconsumed past FM_SECONDMATE_WAKE_STALL_SECS, while the mate is not
+#      itself mid-turn, reports the distinct state `unattended`. The read is
+#      durable-record-only (bin/fm-secondmate-home-lib.sh owns what may be
+#      observed): no child pane is read and no child tree is reconstructed here,
+#      which AGENTS.md forbids from a parent home.
 #   4. No run for this crew (pre-validation, or kind=scout): fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
 #      when its verb maps to a recognized run-state. Decision-only events such as
@@ -95,6 +105,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-secondmate-home-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-home-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -238,6 +250,53 @@ crew_busy_verdict() {  # <target>
   esac
   fm_busy_classify "$TASK_BACKEND" "$1" "$HARNESS" "$ID" "$STATE" "$tail40"
 }
+
+# --- local secondmate: the home it supervises is part of its state ----------
+# Measured 2026-08-24: a mate that had finished its own last item read `done`
+# here while six of its children were still live and its home's wake queue was
+# accumulating their events unread. That answer was truthful about the mate and
+# silent about its tree, so the parent read it as finished-and-idle and dismissed
+# the resulting notifications as noise twice.
+# How long a mate's own queue may sit unconsumed before that silence IS the
+# answer. Shared with the watcher's parent-side check so the bound means one
+# thing fleet-wide.
+UNATTENDED_SECS=${FM_SECONDMATE_WAKE_STALL_SECS:-60}
+case "$UNATTENDED_SECS" in ''|*[!0-9]*|0) UNATTENDED_SECS=60 ;; esac
+
+# Age in seconds of the oldest unconsumed row in <home>'s own wake queue; 0 when
+# that home has nothing queued.
+mate_queue_unconsumed_secs() {  # <home>
+  local row epoch
+  row=$(fm_secondmate_home_oldest_queue_row "$1")
+  [ -n "$row" ] || { printf '0'; return 0; }
+  epoch=${row%%	*}
+  case "$epoch" in ''|*[!0-9]*) printf '0'; return 0 ;; esac
+  printf '%s' "$(( $(date +%s) - epoch ))"
+}
+
+if [ "$KIND" = secondmate ]; then
+  MATE_HOME=$(meta_value home)
+  if fm_secondmate_home_bound "$MATE_HOME" "$ID"; then
+    LIVE_CHILDREN=$(fm_secondmate_home_live_children "$MATE_HOME")
+    if [ "$LIVE_CHILDREN" -gt 0 ]; then
+      QUEUE_DEPTH=$(fm_secondmate_home_queue_depth "$MATE_HOME")
+      QUEUE_AGE=$(mate_queue_unconsumed_secs "$MATE_HOME")
+      # A mate that is provably mid-turn cannot reach its own queue yet, so its
+      # unconsumed rows are not evidence that nobody is watching them.
+      MATE_BUSY=no
+      if [ -n "$BACKEND_TARGET" ]; then
+        MATE_VERDICT=$(crew_busy_verdict "$BACKEND_TARGET")
+        [ "${MATE_VERDICT%% *}" = busy ] && MATE_BUSY=yes
+      fi
+      if [ "$QUEUE_AGE" -ge "$UNATTENDED_SECS" ] && [ "$MATE_BUSY" = no ]; then
+        emit unattended secondmate-home \
+          "$LIVE_CHILDREN live child task record(s), and nothing in that home has consumed its $QUEUE_DEPTH queued wake row(s) for ${QUEUE_AGE}s"
+      fi
+      emit working secondmate-home \
+        "supervising $LIVE_CHILDREN live child task record(s), $QUEUE_DEPTH queued wake row(s) in its home"
+    fi
+  fi
+fi
 
 # --- no-mistakes run lookup (authoritative when a run matches this branch) --
 # trim, strip_quotes, the bounded nm_run call, nm_field's TOON parse, and the
