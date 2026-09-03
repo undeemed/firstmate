@@ -46,7 +46,8 @@
 # mode's own delivery point (the PR body for the PR modes, the branch handoff for
 # local-only), and no scaffold states a size number because the gate replaced the
 # line cap. Scouts and charters never carry it.
-# LEAN_GATE below owns the invocation and the exit codes for all three modes.
+# LEAN_GATE below owns the invocation, the exit codes, and the three-round bound
+# for all three modes.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns merge decisions, so yolo is
@@ -493,7 +494,9 @@ fi
 # every ship delivery point has, the bare form reviews an empty diff and exits 1.
 # shellcheck disable=SC2016  # single quotes are deliberate: these backticks are literal brief text
 LEAN_GATE='run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
-Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.'
+Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+The loop is bounded at THREE rounds because the gate does not always converge, so never run a fourth round, and never obey a finding that reverses what an earlier round ruled on the same code - record that contradiction and leave the earlier ruling standing.
+When the third round still exits 2, its remaining findings and every contradiction you recorded belong in the verdict you report below as named keeps, not in another round of cutting.'
 
 # Ship task: shape Setup / Rule 1 / Definition of done by this task's explicit
 # delivery mode, validated above. The generated DOD opens with the fixed
