@@ -471,8 +471,8 @@ secondmate_wake_stall_tick() {
   threshold=$(fm_secondmate_wake_stall_secs)
   local depth_limit=$SECONDMATE_WAKE_STALL_DEPTH behind=$SECONDMATE_WAKE_STALL_BEHIND_SECS
   local repeat_base=$SECONDMATE_WAKE_STALL_REPEAT_SECS repeat_max=$SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS
-  local meta task kind remote_host home row epoch seq row_key marker receipt receipt_dir notify_key queued age reason
-  local depth children scan condition reported reported_age repeat
+  local meta task kind remote_host home epoch seq row_key marker receipt receipt_dir notify_key queued age reason
+  local depth children condition reported reported_age repeat
   case "$depth_limit" in ''|*[!0-9]*|0) depth_limit=10 ;; esac
   case "$behind" in ''|*[!0-9]*|0) behind=900 ;; esac
   case "$repeat_base" in ''|*[!0-9]*|0) repeat_base=300 ;; esac
@@ -490,12 +490,12 @@ secondmate_wake_stall_tick() {
     home=$(fm_meta_get "$meta" home)
     [ -n "$home" ] || continue
     fm_secondmate_home_bound "$home" "$task" || continue
-    scan=$(fm_secondmate_home_queue_scan "$home")
-    depth=${scan%%	*}
-    row=${scan#*	}
+    IFS=$(printf '\t') read -r depth epoch seq <<EOF
+$(fm_secondmate_home_queue_scan "$home")
+EOF
     marker="$STATE/.secondmate-wake-stall-$task"
     receipt_dir="$STATE/.secondmate-wake-stall-receipts/$task"
-    if [ -z "$row" ]; then
+    if [ -z "$epoch" ]; then
       rm -f "$marker"
       if [ -e "$receipt_dir" ] || [ -L "$receipt_dir" ]; then
         [ -d "$receipt_dir" ] && [ ! -L "$receipt_dir" ] || return 1
@@ -503,11 +503,6 @@ secondmate_wake_stall_tick() {
       fi
       continue
     fi
-    IFS=$(printf '\t') read -r epoch seq _row_kind _row_key _row_payload <<EOF
-$row
-EOF
-    case "$epoch" in ''|*[!0-9]*) continue ;; esac
-    case "$seq" in ''|*[!0-9]*) continue ;; esac
     age=$((now - epoch))
     [ "$age" -ge "$threshold" ] || continue
     row_key="$epoch-$seq"
