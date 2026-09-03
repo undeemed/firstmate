@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-lavish-lib.sh: the allowlist a Lavish server is
 # started with is derived from this machine at call time, and a server that
-# rejects that identity is cleared out of the way without narrowing its bind or
-# touching a stranger on the port.
+# rejects that identity is cleared out of the way without narrowing its bind,
+# dropping a host it was serving, or touching a stranger on the port.
 #
 # The server under test is a real HTTP listener that answers /health exactly as
 # Lavish does - 200 with its app marker for a Host it was started with, 403
-# "forbidden host" for anything else - and exits on POST /shutdown. Tailscale is
-# a PATH stub, so the derived identity is a fixture rather than this machine's.
+# "forbidden host" for anything else - and exits on POST /shutdown unless told
+# to stay. Tailscale and hostname are PATH stubs, so the derived identity and
+# the probe candidates are fixtures rather than this machine's.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -24,6 +25,7 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
 TAILNET_NAME=fixture-host.example.ts.net
 TAILNET_IP=100.64.0.9
+MACHINE_IP=198.51.100.7
 
 FAKEBIN=$(fm_fakebin "$TMP_ROOT")
 cat > "$FAKEBIN/tailscale" <<SH
@@ -34,12 +36,25 @@ printf '{"Self":{"DNSName":"$TAILNET_NAME.","TailscaleIPs":["$TAILNET_IP"]}}\n'
 SH
 chmod +x "$FAKEBIN/tailscale"
 
+cat > "$FAKEBIN/hostname" <<SH
+#!/usr/bin/env bash
+# Stands in for this machine's interface addresses and FQDN, so the probe
+# candidates are fixtures rather than this box's real identity.
+case "\${1-}" in
+  -I) printf '%s\n' "$MACHINE_IP $TAILNET_IP" ;;
+  -f) printf 'fixture-host.internal\n' ;;
+  *) printf 'fixture-host\n' ;;
+esac
+SH
+chmod +x "$FAKEBIN/hostname"
+
 SERVER="$TMP_ROOT/fixture-server.py"
 cat > "$SERVER" <<'PY'
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 bind, port, allowed, app = sys.argv[1], int(sys.argv[2]), sys.argv[3].split(","), sys.argv[4]
+stay = len(sys.argv) > 5
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -63,7 +78,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/shutdown" and self._hostname() in allowed:
             self._send(200, '{"ok":true}')
-            raise SystemExit(0)
+            if not stay:
+                raise SystemExit(0)
+            return
         self._send(403, '{"error":"forbidden host"}')
 
     def log_message(self, *args):
@@ -78,7 +95,7 @@ free_port() {
 }
 
 SERVER_PIDS=()
-start_server() {  # <bind> <port> <allowed-csv> <app>
+start_server() {  # <bind> <port> <allowed-csv> <app> [stay]
   python3 "$SERVER" "$@" &
   SERVER_PIDS+=("$!")
   local deadline=$((SECONDS + 10))
@@ -109,17 +126,24 @@ wait_gone() {  # <pid> <failure message>
   return 0
 }
 
-prepare() {  # <env assignments...> -> ALLOWED= and HOST= lines
+STDERR_FILE="$TMP_ROOT/prepare-stderr"
+
+prepare() {  # <env assignments...> -> RC=, ALLOWED=, HOST= and LINK= lines
   # shellcheck disable=SC2016 # The reporting body runs in the child shell, after the lib is sourced there.
   # Every Lavish variable is cleared first: the host runner may carry the very
-  # stale values this library exists to repair.
+  # stale values this library exists to repair. The child runs under set -eu
+  # exactly like the strictest wired caller (bin/fm-bearings-board.sh), so a
+  # nonzero repair status kills it before the RC= line is printed.
   env -u LAVISH_AXI_ALLOWED_HOSTS -u LAVISH_AXI_HOST -u LAVISH_AXI_LINK_HOST -u LAVISH_AXI_PORT \
     PATH="$FAKEBIN:$PATH" "$@" bash -c '
+    set -eu
     . "$1"
-    fm_lavish_prepare_server >/dev/null 2>&1
+    fm_lavish_prepare_server >/dev/null 2>"$2"
+    printf "RC=%s\n" "$?"
     printf "ALLOWED=%s\n" "${LAVISH_AXI_ALLOWED_HOSTS-}"
     printf "HOST=%s\n" "${LAVISH_AXI_HOST-unset}"
-  ' _ "$LIB"
+    printf "LINK=%s\n" "${LAVISH_AXI_LINK_HOST-unset}"
+  ' _ "$LIB" "$STDERR_FILE"
 }
 
 # --- 1. the identity is merged into an inherited list, with no server running --
@@ -179,3 +203,30 @@ out=$(prepare LAVISH_AXI_PORT="$PORT" LAVISH_AXI_HOST=127.0.0.1)
 assert_contains "$out" "HOST=127.0.0.1" "an explicitly configured bind was overwritten"
 wait_gone "$OWN_PID" "the stale server was left running"
 pass "an explicit bind is never overwritten by the observed one"
+
+# --- 7. hosts the displaced server serves survive into the replacement -------
+# The repairing caller carries no LAVISH_AXI_* value at all, so every host the
+# replacement must keep serving is knowable only by asking the running server.
+PORT=$(free_port)
+start_server 127.0.0.1 "$PORT" "$MACHINE_IP,127.0.0.1,localhost" lavish-axi
+STALE_PID=${SERVER_PIDS[-1]}
+out=$(prepare LAVISH_AXI_PORT="$PORT")
+assert_contains "$out" "$MACHINE_IP" \
+  "a host only the displaced server carried was dropped from the replacement allowlist"
+assert_contains "$out" "$TAILNET_NAME" "the repaired allowlist lost this machine's identity"
+assert_contains "$out" "LINK=$MACHINE_IP" \
+  "session links would be minted loopback-only after the repair"
+wait_gone "$STALE_PID" "the stale server was left running"
+pass "an environment-poor repair keeps every host the displaced server serves"
+
+# --- 8. a shutdown that never completes is reported, not fatal ---------------
+PORT=$(free_port)
+start_server 127.0.0.1 "$PORT" "127.0.0.1,localhost" lavish-axi stay
+STUCK_PID=${SERVER_PIDS[-1]}
+out=$(prepare LAVISH_AXI_PORT="$PORT")
+assert_contains "$out" "RC=0" "a stuck shutdown must not fail a set -e caller"
+assert_contains "$(cat "$STDERR_FILE")" "port $PORT did not shut down" \
+  "the shutdown timeout diagnostic does not name the port"
+alive "$STUCK_PID" || fail "the stuck fixture died unexpectedly"
+kill "$STUCK_PID" 2>/dev/null || true
+pass "a stuck shutdown is reported on stderr and the caller continues"

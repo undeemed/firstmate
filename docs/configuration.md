@@ -615,10 +615,13 @@ Because the server is respawned on demand by whichever long-lived agent needs it
 
 Every Firstmate entry point that may start that server therefore repairs the list first, through [`bin/fm-lavish-lib.sh`](../bin/fm-lavish-lib.sh), which owns the mechanism.
 It reads this machine's tailnet identity fresh from `tailscale` on each call, merges it into the inherited value so an inherited list is only ever extended, and asks a running server that still rejects that identity to shut down, so the caller's own `lavish-axi` invocation starts the corrected one.
+Before asking for that shutdown it probes the running server with every hostname this caller can know - the merged list, this machine's addresses and FQDN, and the inherited link host - and folds each one the server still answers into the exported list, so a replacement started from a sparser environment keeps serving every host the displaced server serves and no live board on another home starts answering 403.
 Boards survive that restart because Lavish keys session state per file on disk, and an interrupted poll is the transient response the adapter above already retries.
 
-The repair never widens exposure: bind address and link host stay whatever the home configured, and before restarting a server that was reachable beyond loopback it pins `LAVISH_AXI_HOST` to that same address so the replacement cannot come back loopback-only.
+The repair never widens exposure: it only ever adds hosts the displaced server already answered for, the bind address stays whatever the home configured, and before restarting a server that was reachable beyond loopback it pins `LAVISH_AXI_HOST` to that same address so the replacement cannot come back loopback-only.
+A caller with no `LAVISH_AXI_LINK_HOST` of its own likewise pins it to a non-loopback host the displaced server answered for, so post-repair session links are not minted loopback-only; a configured link host is never overwritten.
 A server that already answers the identity keeps serving untouched, and a listener on the port that is not Lavish is never shut down.
+A shutdown that does not complete within its wait never fails the caller: a listener that rebound inside the window already answering the identity counts as the repair having happened, and anything else is reported on stderr with the port and left for the caller's own `lavish-axi` invocation to surface.
 Without `tailscale`, or with no server running, the merge still happens and the reconcile is a no-op.
 
 ## Spoken interface and captain inbox (config/voice-*, config/inbox-*)
