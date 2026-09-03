@@ -95,6 +95,9 @@
 #   check: inactive-outcome bounded poll-loop reconciliation found a suspicious
 #                          inactive terminal outcome that still lacks its durable
 #                          upstream receipt
+#   check: secondmate home UNATTENDED - <n> live child task(s) with nobody
+#     consuming their events: mate=<id> row=<seq> age=<seconds>s depth=<rows>
+#     (unchanged backlog not reported again before <seconds>s)
 #   check: secondmate wake-loop stalled: mate=<id> row=<seq> age=<seconds>s
 #     depth=<rows> (unchanged backlog not reported again before <seconds>s)
 #                          the oldest valid row in an endpoint-recorded local
@@ -109,7 +112,9 @@
 #                          interval (FM_SECONDMATE_WAKE_STALL_REPEAT_SECS, bounded
 #                          by FM_SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS) rather
 #                          than being silenced forever by the first report of that
-#                          row
+#                          row. The first wording is used whenever that home's own
+#                          task records show live child work, because the condition
+#                          is then unattended child work rather than a slow loop
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock.
@@ -143,6 +148,10 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# Read-only observation of a local secondmate home: its identity binding, its live
+# child task records, and its own durable wake queue.
+# shellcheck source=bin/fm-secondmate-home-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-home-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -417,40 +426,6 @@ recorded_windows() {
   done
 }
 
-# Print the oldest structurally valid row in a local secondmate's foreign queue.
-# This is a read-only observation: the receiving home owns acknowledgement and
-# this parent never changes the row or the foreign queue.
-secondmate_oldest_queue_row() {  # <queue-path>
-  local queue=$1
-  [ -f "$queue" ] && [ ! -L "$queue" ] || return 0
-  awk -F '\t' '
-    NF >= 5 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {
-      if (!found || $2 < seq) {
-        found = 1
-        seq = $2
-        row = $0
-      }
-    }
-    END { if (found) print row }
-  ' "$queue" 2>/dev/null || true
-}
-
-# Count the structurally valid rows in a local secondmate's foreign queue. Depth is
-# the half of the picture the oldest row alone cannot give: one aged row is a mate
-# mid-turn, a deep queue behind that same row is a mate whose wake loop is not
-# keeping up. Read-only, exactly like secondmate_oldest_queue_row above.
-secondmate_queue_depth() {  # <queue-path>
-  local queue=$1
-  if [ ! -f "$queue" ] || [ -L "$queue" ]; then
-    printf '0'
-    return 0
-  fi
-  awk -F '\t' '
-    NF >= 5 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { n++ }
-    END { printf "%d", n + 0 }
-  ' "$queue" 2>/dev/null || printf '0'
-}
-
 # 0 while <task>'s recorded endpoint is PROVABLY mid-turn, through the same
 # semantic busy contract every other liveness read here uses (bin/fm-busy-lib.sh).
 # Classifies through fm_busy_classify_meta, which never produces the dead verdict
@@ -487,12 +462,18 @@ secondmate_mid_turn() {  # <meta> <task>
 # The queued-key check still makes repeated watcher cycles converge without a storm,
 # and an empty queue still removes only this home's records so a later row can be
 # observed.
+# The REPORT names what is at risk, not the loop that noticed it: when that home's
+# own task records show live child work, this is an UNATTENDED home - live work
+# with nobody consuming its events - and it says so. The 2026-08-24 incident was a
+# correct detection dismissed twice as a repeating internal loop diagnostic, so the
+# wording is part of the fix. A behind queue with no live child work keeps the
+# plain wake-loop wording.
 secondmate_wake_stall_tick() {
   local now=$(( $(date +%s) )) threshold=$SECONDMATE_WAKE_STALL_SECS
   local depth_limit=$SECONDMATE_WAKE_STALL_DEPTH behind=$SECONDMATE_WAKE_STALL_BEHIND_SECS
   local repeat_base=$SECONDMATE_WAKE_STALL_REPEAT_SECS repeat_max=$SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS
-  local meta task kind remote_host home queue row epoch seq row_key marker receipt receipt_dir notify_key queued age reason
-  local depth reported reported_age repeat
+  local meta task kind remote_host home row epoch seq row_key marker receipt receipt_dir notify_key queued age reason
+  local depth children reported reported_age repeat
   case "$threshold" in ''|*[!0-9]*|0) threshold=60 ;; esac
   case "$depth_limit" in ''|*[!0-9]*|0) depth_limit=10 ;; esac
   case "$behind" in ''|*[!0-9]*|0) behind=900 ;; esac
@@ -510,10 +491,8 @@ secondmate_wake_stall_tick() {
     case "$task" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
     home=$(fm_meta_get "$meta" home)
     [ -n "$home" ] || continue
-    [ -f "$home/.fm-secondmate-home" ] && [ ! -L "$home/.fm-secondmate-home" ] || continue
-    [ "$(cat "$home/.fm-secondmate-home" 2>/dev/null || true)" = "$task" ] || continue
-    queue="$home/state/.wake-queue"
-    row=$(secondmate_oldest_queue_row "$queue")
+    fm_secondmate_home_bound "$home" "$task" || continue
+    row=$(fm_secondmate_home_oldest_queue_row "$home")
     marker="$STATE/.secondmate-wake-stall-$task"
     receipt_dir="$STATE/.secondmate-wake-stall-receipts/$task"
     if [ -z "$row" ]; then
@@ -536,7 +515,7 @@ EOF
     if [ -e "$marker" ] || [ -L "$marker" ]; then
       [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
     fi
-    depth=$(secondmate_queue_depth "$queue")
+    depth=$(fm_secondmate_home_queue_depth "$home")
     repeat=$(decayed_interval "$age" "$repeat_base" "$repeat_max")
     # When this exact row was last reported, from whichever record is newer: the
     # marker this watcher writes at publication, or the receipt the drain writes at
@@ -561,7 +540,12 @@ EOF
       continue
     fi
     notify_key="secondmate-wake-loop-$task-$row_key"
-    reason="check: secondmate wake-loop stalled: mate=$task row=$seq age=${age}s depth=$depth (unchanged backlog not reported again before ${repeat}s)"
+    children=$(fm_secondmate_home_live_children "$home")
+    if [ "$children" -gt 0 ]; then
+      reason="check: secondmate home UNATTENDED - $children live child task(s) with nobody consuming their events: mate=$task row=$seq age=${age}s depth=$depth (unchanged backlog not reported again before ${repeat}s)"
+    else
+      reason="check: secondmate wake-loop stalled: mate=$task row=$seq age=${age}s depth=$depth (unchanged backlog not reported again before ${repeat}s)"
+    fi
     queued=$(fm_wake_queued_keys check)
     if ! printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1; then
       fm_wake_append check "$notify_key" "$reason" || return 1
