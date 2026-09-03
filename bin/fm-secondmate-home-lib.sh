@@ -45,19 +45,18 @@ fm_secondmate_home_live_children() {  # <home>
   printf '%s' "$n"
 }
 
-# Print "<depth>\t<oldest valid row>" for <home>'s own durable wake queue: how
-# many structurally valid rows it holds, and the oldest of them (empty when it
-# holds none, or the queue is absent or unusable). Both come from one pass,
-# because both halves are needed together - one aged row is a home mid-turn,
-# a deep queue behind that same row is a home that is not keeping up. The row is
-# itself tab-separated, so a caller reads depth as the first field and the row as
-# the remainder. The receiving home owns acknowledgement; an observer never
-# changes the row or the queue.
+# Print "<depth>\t<epoch>\t<seq>" for <home>'s own durable wake queue: how many
+# structurally valid rows it holds, and when the oldest of them was queued (both
+# empty when it holds none, or the queue is absent or unusable). One pass,
+# because both halves are needed together - one aged row is a home mid-turn, a
+# deep queue behind that same row is a home that is not keeping up. Reading is
+# the whole contract: the receiving home owns acknowledgement, and an observer
+# never changes the row or the queue.
 fm_secondmate_home_queue_scan() {  # <home>
   local home=${1:-} queue
   queue="$home/state/.wake-queue"
   if [ -z "$home" ] || [ ! -f "$queue" ] || [ -L "$queue" ]; then
-    printf '0\t'
+    printf '0\t\t'
     return 0
   fi
   awk -F '\t' '
@@ -66,10 +65,10 @@ fm_secondmate_home_queue_scan() {  # <home>
       if (!found || $2 < seq) {
         found = 1
         seq = $2
-        row = $0
+        epoch = $1
       }
     }
-    END { printf "%d\t%s\n", n + 0, row }
+    END { printf "%d\t%s\t%s\n", n + 0, epoch, seq }
   ' "$queue" 2>/dev/null
 }
 

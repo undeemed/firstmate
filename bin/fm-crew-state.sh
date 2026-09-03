@@ -258,10 +258,9 @@ if [ "$KIND" = secondmate ]; then
   if fm_secondmate_home_bound "$MATE_HOME" "$ID"; then
     LIVE_CHILDREN=$(fm_secondmate_home_live_children "$MATE_HOME")
     if [ "$LIVE_CHILDREN" -gt 0 ]; then
-      QUEUE_SCAN=$(fm_secondmate_home_queue_scan "$MATE_HOME")
-      QUEUE_DEPTH=${QUEUE_SCAN%%	*}
-      QUEUE_EPOCH=${QUEUE_SCAN#*	}
-      QUEUE_EPOCH=${QUEUE_EPOCH%%	*}
+      IFS=$(printf '\t') read -r QUEUE_DEPTH QUEUE_EPOCH _QUEUE_SEQ <<EOF
+$(fm_secondmate_home_queue_scan "$MATE_HOME")
+EOF
       QUEUE_AGE=0
       [ -n "$QUEUE_EPOCH" ] && QUEUE_AGE=$(( $(date +%s) - QUEUE_EPOCH ))
       # A mate that is provably mid-turn cannot reach its own queue yet, so its
