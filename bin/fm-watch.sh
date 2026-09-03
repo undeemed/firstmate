@@ -462,19 +462,17 @@ secondmate_mid_turn() {  # <meta> <task>
 # The queued-key check still makes repeated watcher cycles converge without a storm,
 # and an empty queue still removes only this home's records so a later row can be
 # observed.
-# The REPORT names what is at risk, not the loop that noticed it: when that home's
-# own task records show live child work, this is an UNATTENDED home - live work
-# with nobody consuming its events - and it says so. The 2026-08-24 incident was a
-# correct detection dismissed twice as a repeating internal loop diagnostic, so the
-# wording is part of the fix. A behind queue with no live child work keeps the
-# plain wake-loop wording.
+# The REPORT names what is at risk, not the loop that noticed it: a home whose own
+# task records show live child work is reported as an UNATTENDED home, and a
+# behind queue with no live child work keeps the plain wake-loop wording
+# (bin/fm-secondmate-home-lib.sh's header owns why that distinction exists).
 secondmate_wake_stall_tick() {
   local now=$(( $(date +%s) )) threshold
   threshold=$(fm_secondmate_wake_stall_secs)
   local depth_limit=$SECONDMATE_WAKE_STALL_DEPTH behind=$SECONDMATE_WAKE_STALL_BEHIND_SECS
   local repeat_base=$SECONDMATE_WAKE_STALL_REPEAT_SECS repeat_max=$SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS
   local meta task kind remote_host home row epoch seq row_key marker receipt receipt_dir notify_key queued age reason
-  local depth children scan reported reported_age repeat
+  local depth children scan condition reported reported_age repeat
   case "$depth_limit" in ''|*[!0-9]*|0) depth_limit=10 ;; esac
   case "$behind" in ''|*[!0-9]*|0) behind=900 ;; esac
   case "$repeat_base" in ''|*[!0-9]*|0) repeat_base=300 ;; esac
@@ -543,10 +541,11 @@ EOF
     notify_key="secondmate-wake-loop-$task-$row_key"
     children=$(fm_secondmate_home_live_children "$home")
     if [ "$children" -gt 0 ]; then
-      reason="check: secondmate home UNATTENDED - $children live child task(s) with nobody consuming their events: mate=$task row=$seq age=${age}s depth=$depth (unchanged backlog not reported again before ${repeat}s)"
+      condition="secondmate home UNATTENDED - $children live child task(s) with nobody consuming their events"
     else
-      reason="check: secondmate wake-loop stalled: mate=$task row=$seq age=${age}s depth=$depth (unchanged backlog not reported again before ${repeat}s)"
+      condition="secondmate wake-loop stalled"
     fi
+    reason="check: $condition: mate=$task row=$seq age=${age}s depth=$depth (unchanged backlog not reported again before ${repeat}s)"
     queued=$(fm_wake_queued_keys check)
     if ! printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1; then
       fm_wake_append check "$notify_key" "$reason" || return 1
