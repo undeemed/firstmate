@@ -500,10 +500,10 @@ SH
 }
 
 # --- an unattended home reports what is AT RISK, not the loop that noticed ----
-# The 2026-08-24 detection was correct and was dismissed twice, because
-# "wake-loop stalled" reads as an internal loop diagnostic rather than as live
-# child work nobody is watching. When the mate's own home holds live child task
-# records, the durable check names that instead.
+# The detection bin/fm-secondmate-home-lib.sh records was correct and was
+# dismissed twice, because "wake-loop stalled" reads as an internal loop
+# diagnostic rather than as live child work nobody is watching. When the mate's
+# own home holds live child task records, the durable check names that instead.
 test_secondmate_unattended_home_names_live_child_work() {
   local dir state sub fakebin out
   dir=$(make_case secondmate-unattended)
