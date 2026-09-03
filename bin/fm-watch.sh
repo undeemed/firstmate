@@ -54,12 +54,14 @@
 #                          one, so an already-reported wedge keeps reporting
 #                          without burying every other event. Any genuine change
 #                          resets both the count and the cadence. Unless afk is
-#                          active. Two evidence classes defer that escalation
+#                          active. Three evidence classes defer that escalation
 #                          instead (wedge_defer): a task worktree written during
-#                          the quiet window, and an actively-progressing pipeline
-#                          step (crew_step_progress_evidence in
-#                          bin/fm-classify-lib.sh owns why). Both re-surface once
-#                          per PAUSE_RESURFACE_SECS, and anything the probes
+#                          the quiet window, an actively-progressing pipeline
+#                          step, and a model turn completed during that same
+#                          window (crew_step_progress_evidence and
+#                          crew_turn_progress_evidence in bin/fm-classify-lib.sh
+#                          own why). All three re-surface once per
+#                          PAUSE_RESURFACE_SECS, and anything the probes
 #                          cannot evaluate keeps the unchanged schedule.
 #                          A genuinely busy pane
 #                          (window_is_busy true) is exempt from the above, but
@@ -966,10 +968,10 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [interval]
 }
 
 # Defer ONE wedge escalation for a pane the watcher has positive evidence for that
-# its own rendered pane cannot show (see this file's header for the two evidence
+# its own rendered pane cannot show (see this file's header for the evidence
 # classes and the call sites for their probes). Deliberately a DEFERRAL, not a
 # cancellation: the idle timer restarts, so the next window probes again, and
-# the window's deferral chain keeps ageing across both evidence classes, so it
+# the window's deferral chain keeps ageing across all evidence classes, so it
 # still re-surfaces once every PAUSE_RESURFACE_SECS through the shared
 # resurface_absorbed and evidence that churns without real progress cannot stay
 # invisible. The escalation counter is left alone: it is neither
@@ -1002,9 +1004,11 @@ clear_defer_tracking() {  # <window-key>
 # by both places a hash can be absorbed this way: the plain non-terminal path, and
 # the stale_is_terminal-overridden path (a captain-relevant status-log line that an
 # active run/busy pane outranked).
-# Both evidence probes run ONLY in the at-threshold branch below, on current reads
-# rather than classification-time ones, because the question at escalation is
-# whether this crew is progressing NOW.
+# Every evidence probe runs ONLY in the at-threshold branch below, on current
+# reads rather than classification-time ones, because the question at escalation
+# is whether this crew is progressing NOW. Probes keep the order they were added
+# in; reaching any of them means this poll was about to escalate, so ordering
+# only relabels the deferral.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n interval next reason evidence
   since=$(cat "$since_file" 2>/dev/null || true)
@@ -1027,6 +1031,10 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           return 0
         fi
         if evidence=$(crew_step_progress_evidence "$task"); then
+          wedge_defer "$win" "$since_file" "$label" "$age" "$evidence"
+          return 0
+        fi
+        if evidence=$(crew_turn_progress_evidence "$task" "$STATE" "$since_file"); then
           wedge_defer "$win" "$since_file" "$label" "$age" "$evidence"
           return 0
         fi
