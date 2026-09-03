@@ -1,0 +1,34 @@
+=== baseline 2026-09-03T21:15:42Z ===
+This machine's tailnet identity (tailscale status --json): firstmate-vps.tailc4c9b.ts.net / 100.90.208.62
+MagicDNS is not resolvable from this gate shell, so the probes hit the tailnet IP
+with the MagicDNS Host header - the exact check Lavish performs.
+
+--- listeners on 4387 and 4487 (bind must stay wildcard) ---
+COMMAND       PID   USER FD   TYPE     DEVICE SIZE/OFF NODE NAME
+MainThrea 3874757 ubuntu 21u  IPv4 1811024100      0t0  TCP *:4387 (LISTEN)
+COMMAND       PID   USER FD   TYPE     DEVICE SIZE/OFF NODE NAME
+MainThrea 4169153 ubuntu 21u  IPv4 1565344116      0t0  TCP *:4487 (LISTEN)
+
+--- GET /health, Host: firstmate-vps.tailc4c9b.ts.net -> 100.90.208.62:4387 (direct, no proxy) ---
+HTTP/1.1 403 Forbidden
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 26
+ETag: W/"1a-VNXS1x+VnG3ymeDs9plB3asVr4A"
+Date: Thu, 03 Sep 2026 21:15:42 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"forbidden host"}
+
+--- GET /health, Host: firstmate-vps.tailc4c9b.ts.net -> 100.90.208.62:4487 (other home, must be untouched) ---
+HTTP/1.1 200 OK
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 49
+ETag: W/"31-YB80xakFUAPEn0Gp+0t+eiwaZ2E"
+Date: Thu, 03 Sep 2026 21:15:43 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"ok":true,"app":"lavish-axi","version":"0.1.52"}

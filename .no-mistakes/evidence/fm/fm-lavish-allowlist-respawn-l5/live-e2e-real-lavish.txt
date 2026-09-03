@@ -1,0 +1,28 @@
+=== end-to-end against the REAL lavish-axi binary (0.1.52), real tailscale, scratch port 54817, temp HOME ===
+=== 2026-09-03T21:24:04Z on the captain's box; the shared 4387/4487 servers are never touched ===
+
+## 1. a long-lived parent with the stale list starts the server (the reported fault)
+   env: LAVISH_AXI_ALLOWED_HOSTS="15.204.113.4 127.0.0.1 localhost" LAVISH_AXI_HOST=127.0.0.1
+
+## 2. BEFORE: GET /health with Host: firstmate-vps.tailc4c9b.ts.net
+HTTP/1.1 403 Forbidden
+{"error":"forbidden host"}
+## 3. the repair, exactly as the wired callers run it (set -eu, sparse env, real tailscale):
+   . bin/fm-lavish-lib.sh; fm_lavish_prepare_server; lavish-axi <board>
+lavish: restarting the server on port 54817 so it answers firstmate-vps.tailc4c9b.ts.net
+   corrected environment the respawn inherits:
+     LAVISH_AXI_ALLOWED_HOSTS=15.204.113.4 127.0.0.1 localhost firstmate-vps.tailc4c9b.ts.net 100.90.208.62 fd7a:115c:a1e0::4835:d041
+     LAVISH_AXI_HOST=127.0.0.1 (pinned to the bind the displaced server was reachable on)
+     LAVISH_AXI_LINK_HOST=15.204.113.4 (folded from what the displaced server served)
+
+## 4. AFTER the kill-and-respawn: the tailnet MagicDNS name answers 200
+HTTP/1.1 200 OK
+{"ok":true,"app":"lavish-axi","version":"0.1.52"}
+## 5. AFTER: a host only the displaced server carried still answers (no served host dropped)
+HTTP/1.1 200 OK
+{"ok":true,"app":"lavish-axi","version":"0.1.52"}
+## 6. AFTER: an unlisted host stays forbidden (exposure never widens)
+HTTP/1.1 403 Forbidden
+{"error":"forbidden host"}
+## 7. AFTER: the bind stayed exactly what the home had configured (loopback here)
+MainThrea 3179529 ubuntu 21u  IPv4 1822268643      0t0  TCP 127.0.0.1:54817 (LISTEN)

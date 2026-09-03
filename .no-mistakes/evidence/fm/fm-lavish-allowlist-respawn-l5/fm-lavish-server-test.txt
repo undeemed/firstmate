@@ -1,0 +1,8 @@
+ok - the derived identity extends the inherited allowlist
+ok - a stale-allowlist server is shut down so the next start carries the repair
+ok - a server that already answers the identity keeps serving
+ok - a stranger on the port is left running
+ok - a restart preserves the bind the running server was reachable on
+ok - an explicit bind is never overwritten by the observed one
+ok - an environment-poor repair keeps every host the displaced server serves
+ok - a stuck shutdown is reported on stderr and the caller continues

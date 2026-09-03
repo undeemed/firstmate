@@ -1,0 +1,9 @@
+=== after test suites 2026-09-03T21:19:37Z ===
+--- listeners on 4387 and 4487 (PIDs must match the baseline: 3874757 and 4169153) ---
+COMMAND       PID   USER FD   TYPE     DEVICE SIZE/OFF NODE NAME
+MainThrea 3874757 ubuntu 21u  IPv4 1811024100      0t0  TCP *:4387 (LISTEN)
+COMMAND       PID   USER FD   TYPE     DEVICE SIZE/OFF NODE NAME
+MainThrea 4169153 ubuntu 21u  IPv4 1565344116      0t0  TCP *:4487 (LISTEN)
+
+--- leftover fixture servers (must be none) ---
+none
