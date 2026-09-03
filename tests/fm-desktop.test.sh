@@ -170,12 +170,25 @@ old = time.time() - 60
 os.utime(wall.viewer_file(opts, "seer"), (old, old))
 assert wall.viewer_interval(opts, "seer") is None
 
+# captured_at is the key the page swaps a snapshot on, so it must be the
+# capture time itself, not a per-request clock: an unchanged snapshot must
+# report an unchanged key.
+snapdir = pathlib.Path(opts.snapshot_dir)
+snapdir.mkdir(parents=True, exist_ok=True)
+(snapdir / "seer.json").write_text('{"captured": 1700000000.7, "changed": 1700000000.7, "sha": "x"}')
+first = [t for t in wall.wall_state(opts)["tiles"] if t["name"] == "seer"][0]
+time.sleep(1.1)
+second = [t for t in wall.wall_state(opts)["tiles"] if t["name"] == "seer"][0]
+assert first["captured_at"] == second["captured_at"] == 1700000000, first
+assert second["captured_ago"] > first["captured_ago"]
+assert [t for t in wall.wall_state(opts)["tiles"] if t["name"] == "dorm"][0]["captured_at"] is None
+
 # Liveness is read from the X socket, not from the registry claiming it exists.
 assert wall.display_up(14) is False
 (home / "x" / "X14").touch()
 assert wall.display_up(14) is True
 PY
-	pass "the wall enumerates the registry, routes tokens from it, floors the interval and captures only what a viewer watches"
+	pass "the wall enumerates the registry, routes tokens, floors the interval, gates on viewers and keys snapshots on capture time"
 }
 
 test_wall_heartbeat_hardens_against_malformed_posts() {

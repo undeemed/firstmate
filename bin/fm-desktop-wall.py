@@ -150,6 +150,9 @@ def wall_state(opts):
                 "owner": desktop.get("owner", ""),
                 "up": display_up(desktop["display"]),
                 "status": last_status_line(desktop.get("status_file", "")),
+                # captured_at is the cache key the page swaps snapshots on: it
+                # changes only when a new frame was actually captured.
+                "captured_at": int(meta["captured"]) if meta.get("captured") else None,
                 "captured_ago": round(now - meta["captured"], 1)
                 if meta.get("captured")
                 else None,
