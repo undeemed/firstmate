@@ -38,6 +38,10 @@
 # Orca tasks use the same safety checks, then close the recorded terminal and
 # remove the recorded worktree through `orca worktree rm`; teardown never guesses
 # an Orca target from ambient CLI state.
+# The endpoint close is verified, never assumed: after the kill, teardown reads
+# the backend's recovery-grade agent state and refuses - keeping every durable
+# record for a rerun - unless the endpoint is confirmed gone. A backend with no
+# such classifier warns that the close is unproven instead of claiming it.
 # A Herdr presentation journal never authorizes cleanup. Teardown still closes
 # only the exact task pane from ordinary endpoint metadata and never calls
 # `workspace close`. It retires the non-authoritative journal only when a
@@ -99,22 +103,25 @@
 # delete, or backend kill below - a still-active run or a leaked process may
 # own live work in that worktree):
 #   Fix 1 - conclude the task's own no-mistakes run. A ship task's worktree can
-#     be torn down while its no-mistakes pipeline run is still PARKED at a gate
-#     (awaiting_approval/fix_review/any awaiting_agent field), with no worker
-#     left to ever answer it - the run then sits there holding a fleet slot
-#     indefinitely (observed 2026-08-03: runs parked 7h39m and parked at a
-#     post-CI approval gate after the worker was already cleaned up). A run
-#     with an autonomous step still under way (running/fixing/ci) is left
-#     alone: no-mistakes drives those against its own gate-repo clone, not the
-#     crew's worktree, so they are not orphaned by removing the worktree.
+#     be torn down while its no-mistakes pipeline run is still unfinished, with
+#     no worker left to own it. A run PARKED at a gate
+#     (awaiting_approval/fix_review/any awaiting_agent field) then sits there
+#     holding a fleet slot indefinitely (observed 2026-08-03: runs parked 7h39m
+#     and parked at a post-CI approval gate after the worker was already cleaned
+#     up). A run whose autonomous step is still under way (running/fixing/ci) is
+#     worse: it drives itself against its own gate-repo clone, so removing the
+#     worktree does not stop it and it keeps WRITING (observed 2026-09-01: a
+#     torn-down task's run committed and opened a PR half an hour later). Every
+#     run this task owns and that has no outcome yet is therefore aborted,
+#     whatever step it is on.
 #     conclude_task_no_mistakes_run attributes the active-or-most-recent run to
 #     THIS task only when its branch AND code identity (bin/fm-nm-run-lib.sh's
 #     fm_nm_head_matches_worktree, the match-only wrapper over the
 #     fm_nm_head_binding rule bin/fm-crew-state.sh reads in four-valued form) both
 #     match this worktree, then runs `no-mistakes axi abort --run <id>` for
-#     that verified run instance. A run already terminal
-#     (an outcome is set) or not parked at a gate is left untouched. Idempotent:
-#     an already-aborted run reads back terminal and is skipped on retry.
+#     that verified run instance. A run already terminal (an outcome is set) is
+#     left untouched. Idempotent: an already-aborted run reads back terminal and
+#     is skipped on retry.
 #   Fix 2 - reap leaked descendant processes. A backgrounded/disowned process
 #     started under the worktree (or its per-task tasktmp) does not receive the
 #     SIGHUP/SIGTERM that closing the backend pane sends to its own foreground
@@ -1542,14 +1549,15 @@ validate_worktree_teardown_safety() {
 }
 
 # Fix 1 (see script header): does the active-or-most-recent no-mistakes run in
-# worktree $1 belong to THIS task, and is it parked at a gate awaiting an agent
-# that is about to be removed? Prints nothing; returns 0 only on a genuine
-# match so the caller knows it is safe to abort - never a guess.
+# worktree $1 belong to THIS task and still have no outcome, so it can keep
+# working - and keep writing to the forge - after this task is gone? Prints
+# nothing; returns 0 only on a genuine match so the caller knows it is safe to
+# abort - never a guess.
 NM_TEARDOWN_TIMEOUT=${FM_TEARDOWN_NM_TIMEOUT:-10}
 case "$NM_TEARDOWN_TIMEOUT" in '' | *[!0-9]*) NM_TEARDOWN_TIMEOUT=10 ;; esac
 TASK_RUN_ID=
-task_status_is_own_parked_run() { # <worktree> <axi-status-output>
-	local wt=$1 out=$2 branch run_id run_branch run_head status outcome awaiting has_gate
+task_status_is_own_active_run() { # <worktree> <axi-status-output>
+	local wt=$1 out=$2 branch run_id run_branch run_head outcome
 	TASK_RUN_ID=
 	branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
 	[ -n "$branch" ] || return 1
@@ -1562,28 +1570,7 @@ task_status_is_own_parked_run() { # <worktree> <axi-status-output>
 	fm_nm_head_matches_worktree "$wt" "$run_head" || return 1
 	outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$out" outcome)")
 	[ -z "$outcome" ] || return 1
-	status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
-	awaiting=$(printf '%s\n' "$out" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
-	has_gate=$(printf '%s\n' "$out" | grep -Eq '^[[:space:]]*gate:[[:space:]]*' && echo 1 || echo 0)
-	case "$status" in
-	awaiting_approval | fix_review)
-		TASK_RUN_ID=$run_id
-		return 0
-		;;
-	esac
-	if [ -n "$awaiting" ] || [ "$has_gate" = 1 ]; then
-		TASK_RUN_ID=$run_id
-		return 0
-	fi
-	return 1
-}
-
-task_run_is_own_parked_run() { # <worktree>
-	local wt=$1 out
-	# Accepted best-effort residual: query failures stay fail-open because making
-	# no-mistakes availability a prerequisite would block ship tasks with no run.
-	out=$(fm_nm_run "$wt" "$NM_TEARDOWN_TIMEOUT" axi status)
-	task_status_is_own_parked_run "$wt" "$out"
+	TASK_RUN_ID=$run_id
 }
 
 task_status_is_terminal_run() { # <axi-status-output> <run-id>
@@ -1604,19 +1591,21 @@ task_status_is_run_not_found() { # <status-error> <run-id>
 	[ "$actual" = "$expected" ]
 }
 
-# Abort THIS task's own parked no-mistakes run before the worker that would
-# have answered its gate is removed, so no run is left orphaned holding a
-# fleet slot. Only KIND=ship drives a no-mistakes validation of its own
-# worktree (scouts and secondmates never do, mirroring bin/fm-crew-state.sh);
-# a run not attributed to this exact branch+head is left completely alone.
+# Abort THIS task's own unfinished no-mistakes run before the worker is
+# removed, so no run is left running or parked once the task it belongs to is
+# gone. Only KIND=ship drives a no-mistakes validation of its own worktree
+# (scouts and secondmates never do, mirroring bin/fm-crew-state.sh); a run not
+# attributed to this exact branch+head is left completely alone.
 conclude_task_no_mistakes_run() { # <worktree>
 	local wt=$1 out run_id
 	[ "$KIND" = ship ] || return 0
 	[ -d "$wt" ] || return 0
 	command -v no-mistakes >/dev/null 2>&1 || return 0
-	task_run_is_own_parked_run "$wt" || return 0
+	# Accepted best-effort residual: query failures stay fail-open because making
+	# no-mistakes availability a prerequisite would block ship tasks with no run.
+	task_status_is_own_active_run "$wt" "$(fm_nm_run "$wt" "$NM_TEARDOWN_TIMEOUT" axi status)" || return 0
 	run_id=$TASK_RUN_ID
-	echo "teardown: no-mistakes run for $ID is parked at a gate; aborting before the worker is removed" >&2
+	echo "teardown: no-mistakes run for $ID has no outcome yet; aborting before the worker is removed" >&2
 	# Accepted best-effort residual: abort supports run-id targeting but no atomic
 	# live-state condition; fully closing the resume race needs upstream compare-and-cancel.
 	fm_nm_run_checked "$wt" "$NM_TEARDOWN_TIMEOUT" axi abort --run "$run_id" >/dev/null 2>&1 || true
@@ -1625,7 +1614,7 @@ conclude_task_no_mistakes_run() { # <worktree>
 	elif task_status_is_run_not_found "$out" "$run_id"; then
 		return 0
 	fi
-	echo "REFUSED: no-mistakes run for $ID is still parked after axi abort; confirm it stopped (no-mistakes axi status) or abort it manually (no-mistakes axi abort --run <id>) before retrying teardown." >&2
+	echo "REFUSED: no-mistakes run for $ID is still unfinished after axi abort; confirm it stopped (no-mistakes axi status) or abort it manually (no-mistakes axi abort --run <id>) before retrying teardown." >&2
 	return 1
 }
 
@@ -3003,6 +2992,18 @@ if [ "$BACKEND" = herdr ]; then
 		echo "error: herdr pane $T for $ID is not confirmed gone after its close was refused, skipped, or failed; retaining every durable task record - rerun teardown once the close can run under the session lock" >&2
 		exit 1
 	fi
+else
+	# Same rule for every other backend (see "The endpoint close is verified" above).
+	case "$(fm_backend_agent_state "$BACKEND" "$T")" in
+	dead | missing) ;;
+	unverified)
+		echo "warning: $BACKEND cannot confirm that endpoint $T for $ID is closed; teardown continued without that proof" >&2
+		;;
+	*)
+		echo "error: $BACKEND endpoint $T for $ID is not confirmed closed; retaining every durable task record - rerun teardown once the endpoint can be closed" >&2
+		exit 1
+		;;
+	esac
 fi
 if [ "$KIND" = secondmate ]; then
 	[ -n "$HOME_PATH" ] || HOME_PATH=$WT
