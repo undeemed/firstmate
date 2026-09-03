@@ -280,6 +280,8 @@ cmd_poll() {
   [ -n "$artifact" ] || usage
   [ "$#" -eq 1 ] || usage
   command -v lavish-axi >/dev/null 2>&1 || die "lavish-axi is not installed"
+  # Clears a server whose host allowlist went stale so the poll below respawns
+  # the corrected one; bin/fm-lavish-lib.sh's header owns the mechanism.
   fm_lavish_prepare_server
   delay=$(poll_retry_delay) || exit 1
   response=$(mktemp "${TMPDIR:-/tmp}/fm-lavish-poll.XXXXXX") || die "cannot stage the poll response"
