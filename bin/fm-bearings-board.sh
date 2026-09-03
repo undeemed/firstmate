@@ -12,8 +12,11 @@
 #   fm-bearings-board.sh path
 #
 # build      Validate the payload and inject it into a fresh copy of the shipped
-#            template at the stable board path. Establish or resume the Lavish
-#            session on that board BEFORE binding and arming its answer source,
+#            template at the stable board path. Repair the shared Lavish
+#            server's host allowlist next (fm_lavish_prepare_server in
+#            fm-lavish-lib.sh, which may restart a stale server), then
+#            establish or resume the Lavish session on that board BEFORE
+#            binding and arming its answer source,
 #            so a registered poll can never race a session that does not exist.
 #            Bind to the keyed-answer intake (bin/fm-captain-hold.sh) ALWAYS
 #            precedes arm, so the board can never produce an answer that has
