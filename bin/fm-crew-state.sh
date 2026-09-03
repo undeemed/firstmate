@@ -268,13 +268,10 @@ if [ "$KIND" = secondmate ]; then
         *) QUEUE_AGE=$(( $(date +%s) - QUEUE_EPOCH )) ;;
       esac
       # A mate that is provably mid-turn cannot reach its own queue yet, so its
-      # unconsumed rows are not evidence that nobody is watching them.
-      MATE_BUSY=no
-      if [ -n "$BACKEND_TARGET" ]; then
-        MATE_VERDICT=$(crew_busy_verdict "$BACKEND_TARGET")
-        [ "${MATE_VERDICT%% *}" = busy ] && MATE_BUSY=yes
-      fi
-      if [ "$QUEUE_AGE" -ge "$(fm_secondmate_wake_stall_secs)" ] && [ "$MATE_BUSY" = no ]; then
+      # unconsumed rows are not evidence that nobody is watching them. No
+      # recorded target means no busy evidence, which is not busy either.
+      MATE_VERDICT=${BACKEND_TARGET:+$(crew_busy_verdict "$BACKEND_TARGET")}
+      if [ "$QUEUE_AGE" -ge "$(fm_secondmate_wake_stall_secs)" ] && [ "${MATE_VERDICT%% *}" != busy ]; then
         emit unattended secondmate-home \
           "$LIVE_CHILDREN live child task record(s), and nothing in that home has consumed its $QUEUE_DEPTH queued wake row(s) for ${QUEUE_AGE}s"
       fi
