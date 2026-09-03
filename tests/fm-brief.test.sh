@@ -922,6 +922,14 @@ test_ship_modes_carry_the_lean_gate_and_scout_charter_do_not() {
       "$mode: ship brief lost the could-not-run exit code, the one a worker must never read as a pass"
     assert_grep 'name any finding you deliberately did not cut with the reason it earns its place' "$brief" \
       "$mode: ship brief lost the kept-finding disclosure"
+    # The gate has answered exit 0 and exit 2 on one unchanged diff, and has
+    # reversed its own earlier ruling, so an unbounded re-run loop never lands.
+    assert_grep 'bounded at THREE rounds' "$brief" \
+      "$mode: ship brief lost the round bound, so the gate can loop forever"
+    assert_grep 'never obey a finding that reverses what an earlier round ruled' "$brief" \
+      "$mode: ship brief lost the contradiction rule, so a reversed ruling gets obeyed"
+    assert_grep 'When the third round still exits 2' "$brief" \
+      "$mode: ship brief lost what to do when the bound is reached"
   done
 
   assert_grep 'Carry that verdict into the PR body' "$home/data/brief-lean-d1/brief.md" \
