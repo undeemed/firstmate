@@ -1162,14 +1162,10 @@ test_torn_down_worktree() {
 }
 
 # --- a secondmate is a SUPERVISOR: its home's live work is part of its state -
-# Regression for 2026-08-24 (subliminal-mate-b8): the mate had finished its own
-# last item and appended `done`, six of its children were still live, and its own
-# wake queue was accumulating their events unread. This reader answered `done`
-# from that log - truthful about the mate, silent about its tree - so the parent
-# read the home as finished-and-idle and dismissed the resulting notifications
-# twice. The three shapes are pinned here: an empty home still reads from the
-# mate's own log, a home with live children never reads idle or done, and a home
-# that is also not consuming its own queue reads `unattended`.
+# Regression for the incident bin/fm-secondmate-home-lib.sh records. The shapes
+# pinned here: an empty home still reads from the mate's own log, a home with
+# live children never reads idle or done, and a home that is also not consuming
+# its own queue reads `unattended`.
 test_secondmate_live_children_are_part_of_its_state() {
   reset_fakes
   local d out gen

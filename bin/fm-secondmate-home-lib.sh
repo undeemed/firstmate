@@ -45,39 +45,40 @@ fm_secondmate_home_live_children() {  # <home>
   printf '%s' "$n"
 }
 
-# Print the oldest structurally valid row in <home>'s own durable wake queue, or
-# nothing when that queue is absent, unusable, or holds no valid row. The
-# receiving home owns acknowledgement; an observer never changes the row or the
-# queue.
-fm_secondmate_home_oldest_queue_row() {  # <home>
+# Print "<depth>\t<oldest valid row>" for <home>'s own durable wake queue: how
+# many structurally valid rows it holds, and the oldest of them (empty when it
+# holds none, or the queue is absent or unusable). Both come from one pass,
+# because both halves are needed together - one aged row is a home mid-turn,
+# a deep queue behind that same row is a home that is not keeping up. The row is
+# itself tab-separated, so a caller reads depth as the first field and the row as
+# the remainder. The receiving home owns acknowledgement; an observer never
+# changes the row or the queue.
+fm_secondmate_home_queue_scan() {  # <home>
   local home=${1:-} queue
-  [ -n "$home" ] || return 0
   queue="$home/state/.wake-queue"
-  [ -f "$queue" ] && [ ! -L "$queue" ] || return 0
+  if [ -z "$home" ] || [ ! -f "$queue" ] || [ -L "$queue" ]; then
+    printf '0\t'
+    return 0
+  fi
   awk -F '\t' '
     NF >= 5 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {
+      n++
       if (!found || $2 < seq) {
         found = 1
         seq = $2
         row = $0
       }
     }
-    END { if (found) print row }
-  ' "$queue" 2>/dev/null || true
+    END { printf "%d\t%s\n", n + 0, row }
+  ' "$queue" 2>/dev/null
 }
 
-# Print how many structurally valid rows <home>'s own wake queue holds. Depth is
-# the half of the picture the oldest row alone cannot give: one aged row is a home
-# mid-turn, a deep queue behind that same row is a home that is not keeping up.
-fm_secondmate_home_queue_depth() {  # <home>
-  local home=${1:-} queue
-  queue="$home/state/.wake-queue"
-  if [ -z "$home" ] || [ ! -f "$queue" ] || [ -L "$queue" ]; then
-    printf '0'
-    return 0
-  fi
-  awk -F '\t' '
-    NF >= 5 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { n++ }
-    END { printf "%d", n + 0 }
-  ' "$queue" 2>/dev/null || printf '0'
+# The one bound for how long a home's own queue may sit unconsumed before that
+# silence is itself the answer, shared by the watcher's push check and the
+# reader's pull verdict so it means one thing fleet-wide.
+# FM_SECONDMATE_WAKE_STALL_SECS overrides it; zero or invalid values use 60.
+fm_secondmate_wake_stall_secs() {
+  local secs=${FM_SECONDMATE_WAKE_STALL_SECS:-60}
+  case "$secs" in '' | *[!0-9]* | 0) secs=60 ;; esac
+  printf '%s' "$secs"
 }

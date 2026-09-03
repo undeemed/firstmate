@@ -275,9 +275,9 @@ fi
 # turn-ended and resets the age. Set generously above any legitimate interval
 # between completed turns, including long tool calls, builds, or test runs.
 BUSY_TURN_MAX_SECS=${FM_BUSY_TURN_MAX_SECS:-3600}
-# A local secondmate's foreign queue is checked on every poll, but only after this
-# bounded age can it produce a parent notification.
-SECONDMATE_WAKE_STALL_SECS=${FM_SECONDMATE_WAKE_STALL_SECS:-60}
+# A local secondmate's foreign queue is checked on every poll, but only after the
+# shared unconsumed-queue bound (fm_secondmate_wake_stall_secs, in
+# bin/fm-secondmate-home-lib.sh) can it produce a parent notification.
 # An aged row alone does not mean the mate's wake loop stalled: a mate that is
 # mid-turn cannot reach its queue until that turn ends, so a row arriving during a
 # long turn ages past the threshold every time (measured 2026-08-24: two mates
@@ -469,12 +469,12 @@ secondmate_mid_turn() {  # <meta> <task>
 # wording is part of the fix. A behind queue with no live child work keeps the
 # plain wake-loop wording.
 secondmate_wake_stall_tick() {
-  local now=$(( $(date +%s) )) threshold=$SECONDMATE_WAKE_STALL_SECS
+  local now=$(( $(date +%s) )) threshold
+  threshold=$(fm_secondmate_wake_stall_secs)
   local depth_limit=$SECONDMATE_WAKE_STALL_DEPTH behind=$SECONDMATE_WAKE_STALL_BEHIND_SECS
   local repeat_base=$SECONDMATE_WAKE_STALL_REPEAT_SECS repeat_max=$SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS
   local meta task kind remote_host home row epoch seq row_key marker receipt receipt_dir notify_key queued age reason
-  local depth children reported reported_age repeat
-  case "$threshold" in ''|*[!0-9]*|0) threshold=60 ;; esac
+  local depth children scan reported reported_age repeat
   case "$depth_limit" in ''|*[!0-9]*|0) depth_limit=10 ;; esac
   case "$behind" in ''|*[!0-9]*|0) behind=900 ;; esac
   case "$repeat_base" in ''|*[!0-9]*|0) repeat_base=300 ;; esac
@@ -492,7 +492,9 @@ secondmate_wake_stall_tick() {
     home=$(fm_meta_get "$meta" home)
     [ -n "$home" ] || continue
     fm_secondmate_home_bound "$home" "$task" || continue
-    row=$(fm_secondmate_home_oldest_queue_row "$home")
+    scan=$(fm_secondmate_home_queue_scan "$home")
+    depth=${scan%%	*}
+    row=${scan#*	}
     marker="$STATE/.secondmate-wake-stall-$task"
     receipt_dir="$STATE/.secondmate-wake-stall-receipts/$task"
     if [ -z "$row" ]; then
@@ -515,7 +517,6 @@ EOF
     if [ -e "$marker" ] || [ -L "$marker" ]; then
       [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
     fi
-    depth=$(fm_secondmate_home_queue_depth "$home")
     repeat=$(decayed_interval "$age" "$repeat_base" "$repeat_max")
     # When this exact row was last reported, from whichever record is newer: the
     # marker this watcher writes at publication, or the receipt the drain writes at
