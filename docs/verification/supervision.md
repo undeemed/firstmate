@@ -518,6 +518,38 @@ tests/fm-claude-stop-autoarm.test.sh
 tests/fm-turnend-guard.test.sh
 ```
 
+## Turn-boundary wedge evidence
+
+The wedge detector's turn-boundary progress probe (`crew_turn_progress_evidence` in [`bin/fm-classify-lib.sh`](../../bin/fm-classify-lib.sh)) reads `state/<id>.turn-ended`, so it can only defer an escalation on a harness whose turn-end hook fires at every turn boundary rather than only when a whole turn ends.
+That granularity was measured live on 2026-09-01 against Pi 0.84.2 workers launched by `fm-spawn`, by sampling one task's busy record and turn marker twice inside a single uninterrupted turn.
+
+```sh
+s=~/Dev/firstmate/state; id=fm-wedge-absorb-covers-nonpipeline-w9
+date +%s; cat "$s/$id.busy-state"; stat -c '%n mtime=%Y' "$s/$id.turn-ended"
+```
+
+First sample, then the second 4039 seconds later:
+
+```text
+now=1788242724
+v1 gen=g1788242298.3862243.30878 seq=2 state=busy source=pi-ext event=agent-start ts=1788242302
+/home/ubuntu/Dev/firstmate/state/fm-wedge-absorb-covers-nonpipeline-w9.turn-ended mtime=1788242678
+
+now=1788246659
+v1 gen=g1788242298.3862243.30878 seq=2 state=busy source=pi-ext event=agent-start ts=1788242302
+/home/ubuntu/Dev/firstmate/state/fm-wedge-absorb-covers-nonpipeline-w9.turn-ended mtime=1788246629
+```
+
+The busy record is byte-identical across both samples, so one turn stayed open for 72 minutes, while the turn marker advanced to 30 seconds before the second sample: the probe's evidence is present mid-turn, which is when a wedge escalation would otherwise fire.
+Four other live Pi lanes in the same fleet read the same way at that moment, each with a busy record minutes to hours old and a turn marker seconds old.
+
+
+Deterministic entry points:
+
+```sh
+bin/fm-test-run.sh tests/fm-watch-triage.test.sh
+```
+
 ## Wedge-alarm channels
 
 The two real notification channels were bounded manually on 2026-07-10 on macOS 26.5.2 with Herdr 0.7.3.

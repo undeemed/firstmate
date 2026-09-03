@@ -4262,6 +4262,124 @@ test_active_recent_step_absorbs_the_wedge() {
   pass "an active step with recent activity absorbs the wedge, is recorded with its reason, and escalates again once the step goes silent"
 }
 
+# --- non-pipeline lane: the turn-boundary progress signal ---------------------
+# The policy these cases pin is owned by crew_turn_progress_evidence in
+# bin/fm-classify-lib.sh. A direct-PR lane runs no pipeline at all, so the
+# step-progress probe above can never apply to it, and a long reading-and-reasoning
+# turn writes nothing its worktree probe can find - the exact shape that raised
+# `possible wedge, escalation 1` on 2026-08-31 against a worker whose cost rose
+# 12.117 -> 14.217 and context 23.4% -> 24.1% over the 50 seconds the alarm stood.
+
+test_crew_turn_progress_evidence_classifier() {
+	local dir state evidence back
+	dir=$(make_case classify-turn-progress)
+	state="$dir/state"
+	back=$(($(date +%s) - 500))
+	: >"$state/anchor"
+	set_mtime "$back" "$state/anchor"
+
+	: >"$state/quiet.turn-ended"
+	evidence=$(crew_turn_progress_evidence quiet "$state" "$state/anchor") ||
+		fail "a turn boundary recorded after the quiet window opened was not read as progress"
+	case "$evidence" in
+	*"completing model turns"*"turn boundary"*) ;;
+	*) fail "the evidence phrase did not name the turn boundary: $evidence" ;;
+	esac
+
+	# The comparison IS the check: a lane whose last turn ended before this quiet
+	# stretch opened has recorded nothing during it.
+	set_mtime "$((back - 60))" "$state/quiet.turn-ended"
+	! crew_turn_progress_evidence quiet "$state" "$state/anchor" >/dev/null ||
+		fail "a turn boundary older than the quiet window was read as progress"
+
+	# Nothing to evaluate is never evidence, so every one of these keeps the
+	# caller's escalation schedule exactly as it was.
+	! crew_turn_progress_evidence nomarker "$state" "$state/anchor" >/dev/null ||
+		fail "a task with no turn record at all was read as progress"
+	: >"$state/fresh.turn-ended"
+	! crew_turn_progress_evidence fresh "$state" "$state/absent-anchor" >/dev/null ||
+		fail "a missing anchor was read as progress"
+	! crew_turn_progress_evidence "" "$state" "$state/anchor" >/dev/null ||
+		fail "an empty id was read as progress"
+	pass "crew_turn_progress_evidence: a turn boundary inside the quiet window is progress; an older one, a missing record, and a missing anchor are not"
+}
+
+# threshold_case plus what a direct-PR lane has and the pipeline fixture does not:
+# a recorded worktree whose every file predates the quiet window, so the write
+# probe genuinely runs and finds nothing. The idle-window timer is aged on disk as
+# well as in its contents, because the evidence probes compare against its mtime
+# while the escalation clock reads its contents. Echoes the case directory.
+nonpipeline_case() { # <name> <age>
+	local name=$1 age=$2 dir wt
+	dir=$(threshold_case "$name" "$age")
+	wt="$dir/wt"
+	mkdir -p "$wt"
+	: >"$wt/old"
+	set_mtime "$(($(date +%s) - 900))" "$wt/old"
+	printf 'worktree=%s\n' "$wt" >>"$dir/state/quiet.meta"
+	set_mtime "$(($(date +%s) - age))" "$dir/state/.stale-since-test_fm-quiet"
+	printf '%s\n' "$dir"
+}
+
+# A lane with no pipeline run whose own turn-boundary record advanced during the
+# quiet window is measurably progressing, so it is deferred rather than escalated -
+# and the SAME lane, once those turns stop landing, escalates on the unchanged
+# schedule. Both halves run on one fixture because only the turn evidence differs.
+test_turn_progress_absorbs_the_nonpipeline_wedge() {
+	local dir key pane_state
+	dir=$(nonpipeline_case wedge-turn-progress 500)
+	key=test_fm-quiet
+	# No run to attribute: this lane's authoritative state comes off its pane, so it
+	# carries no activity field for the step-progress probe to read.
+	pane_state='FM_FAKE_CREW_STATE=state: working · source: pane · harness busy (pi-ext)'
+	touch "$dir/state/quiet.turn-ended"
+	prime_turnend_seen "$dir/state/quiet.turn-ended"
+	if threshold_run "$dir" "$pane_state" FM_PAUSE_RESURFACE_SECS=999; then
+		fail "a lane that completed a model turn inside its quiet window still raised possible wedge: $(cat "$dir/watch.out")"
+	fi
+	[ ! -s "$dir/watch.out" ] || fail "an absorbed lane printed a wake reason: $(cat "$dir/watch.out")"
+	[ ! -s "$dir/state/.wake-queue" ] || fail "an absorbed lane enqueued a wake"
+	[ ! -e "$dir/state/.wedge-escalations-$key" ] || fail "an absorbed lane advanced the escalation counter"
+	[ -e "$dir/state/.defer-since-$key" ] || fail "the deferral chain was not recorded"
+	[ "$(cat "$dir/state/.stale-since-$key" 2>/dev/null || echo 0)" -gt "$(($(date +%s) - 60))" ] ||
+		fail "the deferral did not restart the idle timer, so the next window cannot re-probe"
+	grep -F "completing model turns" "$dir/state/.watch-triage.log" >/dev/null ||
+		fail "the absorb was not recorded in the watcher debug log with its reason: $(cat "$dir/state/.watch-triage.log" 2>/dev/null)"
+
+	# Same lane, same quiet pane, but its last turn boundary now predates the quiet
+	# window: the worker really has stopped, and the alarm must still fire.
+	threshold_backdate "$dir" 500
+	set_mtime "$(($(date +%s) - 500))" "$dir/state/.stale-since-$key"
+	set_mtime "$(($(date +%s) - 900))" "$dir/state/quiet.turn-ended"
+	prime_turnend_seen "$dir/state/quiet.turn-ended"
+	threshold_run "$dir" "$pane_state" ||
+		fail "a lane whose last turn ended before its quiet window did not wedge-escalate: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
+		fail "the stopped-lane escalation did not flag a possible wedge"
+	[ "$(cat "$dir/state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] ||
+		fail "the stopped-lane escalation was not counted"
+	pass "a non-pipeline lane completing model turns is deferred, while the same lane with no turn since the window opened still wedge-escalates"
+}
+
+# The third outcome, and the one that must never be traded away: a lane whose
+# progress cannot be measured AT ALL - no pipeline run, no worktree write, and no
+# turn record to compare - escalates exactly as it did before this probe existed.
+test_unmeasurable_nonpipeline_lane_still_escalates() {
+	local dir key
+	dir=$(nonpipeline_case wedge-turn-unmeasurable 500)
+	key=test_fm-quiet
+	[ ! -e "$dir/state/quiet.turn-ended" ] || fail "the unmeasurable fixture seeded a turn record"
+	threshold_run "$dir" \
+		"FM_FAKE_CREW_STATE=state: working · source: pane · harness busy (pi-ext)" ||
+		fail "a lane with nothing to measure was absorbed instead of escalating: $(cat "$dir/watch.out")"
+	grep -F "possible wedge" "$dir/watch.out" >/dev/null ||
+		fail "the unmeasurable-lane escalation did not flag a possible wedge"
+	[ "$(cat "$dir/state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] ||
+		fail "the unmeasurable-lane escalation was not counted"
+	[ ! -e "$dir/state/.defer-since-$key" ] || fail "an unmeasurable lane recorded a deferral chain"
+	pass "a lane whose progress cannot be measured at all still wedge-escalates"
+}
+
 test_triage_log_size_cap_accepts_spaced_wc_counts() {
   local dir state fakebin out status_file pid lines i
   dir=$(make_case triage-log-spaced-wc)
@@ -5018,6 +5136,9 @@ test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain
 test_crew_step_progress_evidence_classifier
 test_active_recent_step_absorbs_the_wedge
+test_crew_turn_progress_evidence_classifier
+test_turn_progress_absorbs_the_nonpipeline_wedge
+test_unmeasurable_nonpipeline_lane_still_escalates
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_procevent_captured_result_surfaces_proactively
 test_procevent_unacknowledged_result_redrains_until_handled
