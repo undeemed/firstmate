@@ -313,6 +313,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/captain-hold-lifecycle.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/cd-guard.md",
       "audience": "maintainer-architecture"
     },
@@ -333,8 +337,8 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/captain-hold-lifecycle.md",
-      "audience": "maintainer-architecture"
+      "path": "docs/desktop-wall.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/documentation-audiences.md",

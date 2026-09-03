@@ -193,7 +193,7 @@ family_for_basename() {
     fm-composer-matrix-live-e2e.test.sh|\
     fm-codegraph-guard-live-e2e.test.sh|\
     fm-codex-continuity-live-e2e.test.sh|fm-grok-continuity-live-e2e.test.sh|\
-    fm-cursor-primary-live-e2e.test.sh|\
+    fm-cursor-primary-live-e2e.test.sh|fm-desktop-wall-live-e2e.test.sh|\
     fm-grok-stop-live-e2e.test.sh|fm-harness-liveness-drift-live-e2e.test.sh|\
     fm-lavish-poll-channel-live-e2e.test.sh|\
     fm-muse-signals-live-e2e.test.sh|\
