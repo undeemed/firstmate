@@ -80,14 +80,24 @@ SH
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
-case " $* " in
-  *" state "*)
-    [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
-    [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
-    printf '%s\n' "${FM_TEST_GH_STATE:-OPEN}"
-    ;;
-esac
 if [ "${1:-}" = api ]; then
+  # The REST merge read behind bin/fm-pr-poll.sh. GraphQL `gh pr view --json
+  # state` is answered by nothing at all, so a return to it never reports a
+  # merge. FM_TEST_GH_STATE stays the knob: only MERGED is a merged resource,
+  # and any other value reaches the poll verbatim, so a malformed or empty
+  # reading is exercised too.
+  case " $* " in
+    *" --jq .merged "*)
+      [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
+      [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
+      case "${FM_TEST_GH_STATE-OPEN}" in
+        MERGED) printf 'true\n' ;;
+        OPEN|CLOSED) printf 'false\n' ;;
+        *) printf '%s\n' "${FM_TEST_GH_STATE-}" ;;
+      esac
+      exit 0
+      ;;
+  esac
   # The REST head read behind bin/fm-pr-check.sh's pr_head lookup. GraphQL
   # `gh pr view --json headRefOid` is answered by nothing at all, so a return to
   # it records no head.
@@ -765,8 +775,15 @@ test_static_poll_contract() {
     out=$(FM_TEST_GH_STATE="$value" run_poll "$dir")
     [ -z "$out" ] || fail "static poll emitted for non-merged state"
   done
+  : > "$dir/gh.log"
   out=$(FM_TEST_GH_STATE=MERGED run_poll "$dir")
   [ "$out" = merged ] || fail "static poll did not emit exactly one merged line"
+  # This read runs on every check sweep for every armed PR, so it must stay on
+  # REST and off the budget the whole fleet shares.
+  grep -q 'repos/o/r/pulls/1' "$dir/gh.log" \
+    || fail "static poll did not read the REST pull request resource"
+  ! grep -q 'pr view' "$dir/gh.log" \
+    || fail "static poll read PR state with GraphQL gh pr view"
   out=$(FM_TEST_GH_FAIL=1 run_poll "$dir")
   [ -z "$out" ] || fail "static poll emitted after gh failure"
 

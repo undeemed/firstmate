@@ -38,6 +38,8 @@
 #   (o) fm-pr-check rerun after HEAD moved                      -> no stale pr_head
 #   (p) fm-pr-check when local HEAD lags                        -> record remote PR head
 #   (q) no-mistakes + NO pr= recorded, PR discovered by branch  -> ALLOW  (yolo/no-CI merge)
+#   (q1) no-mistakes + recorded PR still open                   -> REFUSE (not landed)
+#   (q2) no-mistakes + PR discovered by branch, closed unmerged -> REFUSE (not landed)
 #
 # Build-cache reaping (fm-teardown.sh's reap_task_build_cache):
 #   (aa) task-owned, idle cache                 -> REAPED, bytes reported
@@ -262,41 +264,40 @@ land_on_origin_main() {
   rm -rf "$tmp"
 }
 
-# Override GitHub lookups to report PR 7 as merged with the supplied head. The
-# head is answered on two shapes because two owners read it differently:
-# bin/fm-pr-check.sh reads the REST pull request resource for pr_head=, and
-# bin/fm-teardown.sh reads state and head together through gh pr view.
-add_gh_pr_merged_for_head() {
-  local case_dir=$1 head=$2
+# Override GitHub lookups to report PR 7 in <state> with the supplied head.
+# Every lookup bin/ makes here is REST, so the fake answers the three shapes the
+# scripts ask for: the branch->number list route bin/fm-teardown.sh discovers a
+# PR with, the merge state and head together that the same script reads, and the
+# head alone that bin/fm-pr-check.sh records as pr_head=. GraphQL `gh pr view`
+# and `gh-axi pr list` are answered by nothing, so a reintroduced GraphQL read
+# fails the case instead of passing quietly.
+# <state> is the value the scripts' own jq expression produces: MERGED for a
+# merged PR (REST reports that as state "closed" plus merged true), OPEN for one
+# still open, CLOSED for one closed without merging.
+add_gh_pr_for_head() {  # <case_dir> <head> <state>
+  local case_dir=$1 head=$2 state=$3
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
-case "${1:-} ${2:-}" in
-  "pr list")
-    printf '%s\n' "count: 1 (showing first 1)" "pull_requests[1]{number,state}:" "  7,merged" ; exit 0 ;;
-  "pr view")
-    printf '%s\n' "pull_request:" "  number: 7" "  state: merged" '  merged: "2026-06-26T00:00:00Z"' ; exit 0 ;;
-esac
-exit 0
+echo "error: no GraphQL lookup is expected on this path" >&2
+exit 1
 SH
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
 if [ "\${1:-}" = api ]; then
   case " \$* " in
-    *" --jq .head.sha "*) printf '%s\n' '$head' ; exit 0 ;;
+    *"/pulls?"*) printf '%s\n' '7' ; exit 0 ;;
+    *".merged"*) printf '%s\t%s\n' '$state' '$head' ; exit 0 ;;
+    *".head.sha"*) printf '%s\n' '$head' ; exit 0 ;;
   esac
 fi
-case "\${1:-} \${2:-}" in
-  "pr view")
-    case " \$* " in
-      *"state,headRefOid"*) printf '%s\t%s\n' 'MERGED' '$head' ; exit 0 ;;
-      *"headRefOid"*) printf '%s\n' '$head' ; exit 0 ;;
-    esac
-    ;;
-esac
 echo "error: pull request not found" >&2
 exit 1
 SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+}
+
+add_gh_pr_merged_for_head() {
+  add_gh_pr_for_head "$1" "$2" MERGED
 }
 
 append_pr_meta_for_current_head() {
@@ -791,6 +792,50 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
   expect_code 0 "$rc" "no-pr-branch-discovery: teardown should succeed by discovering the merged PR from the branch name"
   ! grep -q REFUSED "$case_dir/stderr" || fail "no-pr-branch-discovery: teardown printed a REFUSED line"
   pass "teardown discovers a merged PR by branch name and tears down when no pr= was ever recorded"
+}
+
+test_open_pr_refuses() {
+  local case_dir rc pr_head
+  case_dir=$(make_case open-pr)
+  write_meta "$case_dir" no-mistakes ship
+  # The merged fixture with the PR still open: unpushed work whose only possible
+  # landing signal is a PR that has not landed anything yet.
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_for_current_head "$case_dir"
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  add_gh_pr_for_head "$case_dir" "$pr_head" OPEN
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "open-pr: teardown should refuse while the PR is still open"
+  grep -q REFUSED "$case_dir/stderr" || fail "open-pr: no REFUSED line in stderr"
+  pass "an open PR is not landed work and the worktree is kept"
+}
+
+test_closed_unmerged_pr_discovered_by_branch_refuses() {
+  local case_dir rc pr_head
+  case_dir=$(make_case closed-pr-branch-discovery)
+  write_meta "$case_dir" no-mistakes ship
+  # No pr= recorded, so the number comes from the branch lookup; the PR it finds
+  # was closed without merging, which lands nothing.
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  add_gh_pr_for_head "$case_dir" "$pr_head" CLOSED
+
+  ! grep -qE '^(pr|pr_head)=' "$case_dir/state/task-x1.meta" \
+    || fail "closed-pr-branch-discovery: test setup bug, meta unexpectedly has a pr= line"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "closed-pr-branch-discovery: teardown should refuse for a closed unmerged PR"
+  grep -q REFUSED "$case_dir/stderr" || fail "closed-pr-branch-discovery: no REFUSED line in stderr"
+  pass "a PR found by branch name but closed unmerged is not landed work"
 }
 
 test_squash_merged_pr_allows_replayed_unpushed_patch() {
@@ -2951,6 +2996,8 @@ test_herdr_projection_teardown_surfaces_restore_failure_without_blocking_cleanup
 test_squash_merged_branch_deleted_allows
 test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
+test_open_pr_refuses
+test_closed_unmerged_pr_discovered_by_branch_refuses
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_merged_pr_with_later_local_commit_refuses
 test_pr_check_does_not_refresh_stale_pr_head

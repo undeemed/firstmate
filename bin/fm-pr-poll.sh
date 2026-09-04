@@ -6,6 +6,10 @@
 # interpolated into this source: these bytes are identical for every task.
 # Each provider is read through its own standard CLI, gh for GitHub and glab
 # for GitLab, so an upstream checkout needs no extra tooling to follow either.
+# The GitHub read is REST rather than `gh pr view --json state`, which is
+# GraphQL: this poll runs on every watcher check sweep for every armed PR, so it
+# must not spend the scarcer shared GraphQL budget on a field REST answers
+# directly. bin/fm-pr-check.sh:95-98 owns the same rationale for the head read.
 set -u
 LC_ALL=C
 export LC_ALL
@@ -62,8 +66,12 @@ case "$provider" in
       .|..|*[!A-Za-z0-9._-]*) exit 0 ;;
     esac
     [ "$url" = "https://github.com/$owner/$repo/pull/$number" ] || exit 0
-    state=$(gh pr view "$url" --json state -q .state 2>/dev/null) || exit 0
-    [ "$state" = MERGED ] && printf '%s\n' merged
+    # REST reports a merged PR as state "closed" plus merged true, so the merge
+    # is read from .merged alone. --hostname pins the request to the validated
+    # host, so an ambient GH_HOST cannot redirect this poll at another forge.
+    merged=$(gh api --hostname "$host" "repos/$owner/$repo/pulls/$number" \
+      --jq .merged 2>/dev/null) || exit 0
+    [ "$merged" = true ] && printf '%s\n' merged
     ;;
   gitlab)
     [ "${#host}" -ge 1 ] && [ "${#host}" -le 253 ] || exit 0
