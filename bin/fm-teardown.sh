@@ -1111,12 +1111,10 @@ pr_repo_slug_from_origin() {
 # Resolve the PR number for a worktree branch over REST. Echoes the number on a
 # single match and returns 0; returns non-zero on no match or any lookup failure,
 # so the caller treats it as "no PR found" (fail-safe).
-# REST rather than `gh-axi pr list`, which is GraphQL: teardown must not spend
-# the scarcer shared GraphQL budget on a lookup REST answers directly.
-pr_number_from_branch() {
-	local branch=$1 slug owner n
+# REST for the shared-budget reason bin/fm-pr-check.sh states.
+pr_number_from_branch() {  # <branch> <owner/repo>
+	local branch=$1 slug=$2 owner n
 	[ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
-	slug=$(pr_repo_slug_from_origin) || return 1
 	owner=${slug%%/*}
 	n=$(gh api "repos/$slug/pulls?state=all&head=$owner:$branch&per_page=1" \
 		--jq '.[0].number // empty' 2>/dev/null) || return 1
@@ -1180,11 +1178,10 @@ pr_is_merged() {
 		number=$FM_PR_NUMBER
 	else
 		slug=$(pr_repo_slug_from_origin) || return 1
-		number=$(pr_number_from_branch "$branch") || return 1
+		number=$(pr_number_from_branch "$branch" "$slug") || return 1
 	fi
-	# REST rather than `gh pr view --json state,headRefOid`, which is GraphQL.
-	# The REST resource reports a merged PR as state "closed" plus merged true,
-	# so the head is selected on .merged and an unmerged PR answers with nothing.
+	# REST reports a merged PR as state "closed" plus merged true, so the head is
+	# selected on .merged and an unmerged PR answers with nothing.
 	head=$(gh api "repos/$slug/pulls/$number" \
 		--jq 'select(.merged) | .head.sha' 2>/dev/null) || return 1
 	[ -n "$head" ] || return 1
