@@ -8,6 +8,18 @@ set -u
 
 TMP_ROOT=$(fm_test_tmproot fm-backend-orca-tests)
 
+write_spawn_brief() {  # <data-dir> <id>
+  local data=$1 id=$2
+  cat > "$data/$id/brief.md" <<'EOF'
+# Task
+## Captain's intent
+Exercise Orca dispatch.
+
+## Firstmate spec
+Verify the Orca lifecycle behavior under test.
+EOF
+}
+
 make_orca_fakebin() {  # <dir> -> echoes fakebin dir
   local fb="$1/fakebin"
   mkdir -p "$fb"
@@ -461,7 +473,7 @@ test_spawn_preserves_orca_metadata_when_pathless_worktree_cleanup_fails() {
   config="$TMP_ROOT/pathless-cleanup-config"
   fm_git_init_commit "$proj"
   mkdir -p "$data/$id" "$state" "$config"
-  printf 'brief\n' > "$data/$id/brief.md"
+  write_spawn_brief "$data" "$id"
   touch "$state/.last-watcher-beat"
   orca_case pathless-cleanup-fail
   printf '1\n' > "$RESP/1.exit"
@@ -497,7 +509,7 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
   config="$TMP_ROOT/spawn-config"
   fm_git_worktree "$proj" "$wt" "fm/$id"
   mkdir -p "$data/$id" "$state" "$config"
-  printf 'brief\n' > "$data/$id/brief.md"
+  write_spawn_brief "$data" "$id"
   touch "$state/.last-watcher-beat"
   orca_case spawn
   log="$LOG"
@@ -522,7 +534,7 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
     "spawn did not export GOTMPDIR through the Orca terminal"
   assert_contains "$(cat "$log")" $'orca\x1f''terminal'$'\x1f''send'$'\x1f''--terminal'$'\x1f''term-spawn'$'\x1f''--text'$'\x1f''export TMPDIR='"'$FM_TASKTMP_ROOT/fm-$id/tmp'"$'\x1f''--enter'$'\x1f''--json' \
     "spawn did not export TMPDIR through the Orca terminal"
-  assert_contains "$(cat "$log")" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions" \
+  assert_contains "$(cat "$log")" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}'" \
     "spawn did not send the selected harness launch command through Orca"
   rm -rf "$FM_TASKTMP_ROOT/fm-$id"
   pass "fm-spawn.sh --backend orca: reuses implicit terminal, records metadata, launches harness"
@@ -564,7 +576,7 @@ test_spawn_refuses_orca_when_runtime_not_ready() {
   config="$TMP_ROOT/runtime-down-config"
   fm_git_init_commit "$proj"
   mkdir -p "$data/$id" "$state" "$config"
-  printf 'brief\n' > "$data/$id/brief.md"
+  write_spawn_brief "$data" "$id"
   touch "$state/.last-watcher-beat"
   orca_case runtime-down-spawn
   printf '{"ok":true,"result":{"runtime":{"reachable":false,"state":"starting"}}}\n' > "$RESP/1.out"
@@ -593,7 +605,7 @@ test_spawn_refuses_orca_nonisolated_worktree() {
   config="$TMP_ROOT/bad-spawn-config"
   fm_git_init_commit "$proj"
   mkdir -p "$data/$id" "$state" "$config"
-  printf 'brief\n' > "$data/$id/brief.md"
+  write_spawn_brief "$data" "$id"
   touch "$state/.last-watcher-beat"
   orca_case bad-spawn
   printf '1\n' > "$RESP/1.exit"
@@ -627,7 +639,7 @@ test_spawn_removes_orca_worktree_when_terminal_create_fails() {
   config="$TMP_ROOT/terminal-fail-config"
   fm_git_worktree "$proj" "$wt" "fm/$id"
   mkdir -p "$data/$id" "$state" "$config"
-  printf 'brief\n' > "$data/$id/brief.md"
+  write_spawn_brief "$data" "$id"
   touch "$state/.last-watcher-beat"
   orca_case terminal-fail
   printf '1\n' > "$RESP/1.exit"
@@ -660,7 +672,7 @@ test_spawn_preserves_orca_metadata_when_abort_cleanup_fails() {
   config="$TMP_ROOT/cleanup-fail-config"
   fm_git_worktree "$proj" "$wt" "fm/$id"
   mkdir -p "$data/$id" "$state" "$config"
-  printf 'brief\n' > "$data/$id/brief.md"
+  write_spawn_brief "$data" "$id"
   touch "$state/.last-watcher-beat"
   orca_case cleanup-fail
   printf '1\n' > "$RESP/1.exit"
@@ -694,7 +706,7 @@ test_spawn_releases_orca_resources_when_metadata_write_fails() {
   config="$TMP_ROOT/meta-fail-config"
   fm_git_worktree "$proj" "$wt" "fm/$id"
   mkdir -p "$data/$id" "$state/$id.meta" "$config"
-  printf 'brief\n' > "$data/$id/brief.md"
+  write_spawn_brief "$data" "$id"
   orca_case meta-fail
   printf '1\n' > "$RESP/1.exit"
   printf '{"ok":true,"result":{"repo":{"id":"repo-meta-fail"}}}\n' > "$RESP/2.out"

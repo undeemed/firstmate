@@ -13,7 +13,12 @@ FM_LOCK_STALE_AFTER="${FM_LOCK_STALE_AFTER:-2}"
 # confirm and 0.5s attach polls, and forking uname per call is a measurable cost on
 # the platform (Git Bash/MSYS) that already pays the highest fork price.
 _FM_UNAME=$(uname 2>/dev/null || echo unknown)
-mkdir -p "$STATE"
+# Private, like every other creator of a home's state root. Creating it under
+# the ambient umask made the mode depend on the operator's shell: on a umask 002
+# box this produced a group-writable state root that the process-event state-root
+# check then refused, so whichever tool happened to create the directory first
+# decided whether process events worked at all.
+(umask 077; mkdir -p "$STATE")
 
 # Most wake-library consumers need only queue and lock primitives, including
 # deliberately minimal recovery fixtures and remote installations.
@@ -241,6 +246,35 @@ fm_pi_extension_owns_supervision() {
   done
   session_pid=$(sed -n '1p' "$lock" 2>/dev/null)
   fm_pid_alive "$session_pid"
+}
+
+# Away-mode supervision evidence. While state/.afk exists the away-mode daemon
+# (bin/fm-supervise-daemon.sh) owns supervision: it runs bin/fm-watch.sh
+# one-shot, so the watcher exits on EVERY wake and the daemon starts its
+# replacement. Between those cycles no watcher process holds the watch lock,
+# with nothing at all wrong - the supervisor is the daemon, and the watcher is
+# its restarting child.
+#
+# fm_afk_daemon_owns_supervision <state>
+# True when away mode is active AND a live, identity-matched daemon holds this
+# home's singleton daemon lock. The identity match is the same discipline the
+# watcher lock uses (fm_watcher_lock_matches_pid): a recycled pid, a lock left
+# by a killed daemon, or a daemon that never recorded its identity all fail it,
+# so only a daemon process that is genuinely still running counts as ownership.
+# This proves an OWNER, never freshness: callers keep their own beacon test, so
+# a daemon that stops restarting its watcher still fails supervision once the
+# beacon passes grace.
+fm_afk_daemon_owns_supervision() {
+  local state=$1 lockdir pid recorded current
+  [ -e "$state/.afk" ] || return 1
+  lockdir="$state/.supervise-daemon.lock"
+  pid=$(cat "$lockdir/pid" 2>/dev/null) || return 1
+  fm_pid_alive "$pid" || return 1
+  recorded=$(cat "$lockdir/pid-identity" 2>/dev/null) || return 1
+  [ -n "$recorded" ] || return 1
+  current=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
+  [ -n "$current" ] || return 1
+  [ "$current" = "$recorded" ]
 }
 
 # fm_watcher_supervision_verdict <state> <watch-path> [grace] [home] [root]
@@ -938,10 +972,13 @@ _fm_lock_acquire_wait_handoff() {  # <lockdir> <caller-pid>
 
 # fm_lock_acquire_wait_bounded <lockdir> <positive-seconds>
 #
-# Presentation-only acquire variant. It preserves the ordinary wait/reclaim
-# behavior until fm-timeout-lib.sh's hard deadline, returns 124 when a live
-# holder still owns the lock, and leaves FM_LOCK_HELD_PID naming that holder.
-# Mutation-critical callers continue to use fm_lock_acquire_wait.
+# Bounded acquire variant. It preserves the ordinary wait/reclaim behavior
+# until fm-timeout-lib.sh's hard deadline, returns 124 when a live holder still
+# owns the lock, and leaves FM_LOCK_HELD_PID naming that holder.
+# Use it where a caller must refuse rather than block: wake presentation, and
+# the guarded remote link clear, whose whole contract is to return a
+# reconciliation refusal instead of wedging an unattended close.
+# Mutation-critical callers that can safely block keep fm_lock_acquire_wait.
 fm_lock_acquire_wait_bounded() {
   local lockdir=$1 seconds=$2 caller_pid rc owner_pid
   case "$seconds" in ''|*[!0-9]*|0) return 2 ;; esac
