@@ -48,7 +48,7 @@ SH
 }
 
 test_fm_home_parameterization() {
-  local brief home_one home_two out
+  local brief home_one home_two out fakebin
   home_one="$TMP_ROOT/home one"
   home_two="$TMP_ROOT/home-two"
   mkdir -p "$home_one/data" "$home_one/state" "$home_two/data" "$home_two/state"
@@ -74,7 +74,20 @@ test_fm_home_parameterization() {
   grep -F ">> '$home_one/state/task-c.status'" "$brief" >/dev/null || fail "secondmate brief did not shell-quote FM_HOME state path"
 
   printf 'project=x\n' > "$home_one/state/task-a.meta"
-  FM_HOME="$home_one" FM_GUARD_GRACE=999999 "$ROOT/bin/fm-pr-check.sh" task-a https://github.com/example/repo/pull/1 >/dev/null 2>/dev/null \
+  # The audience read bin/fm-pr-check.sh makes on every published GitHub body
+  # must be served here: this case is about FM_HOME parameterization, not the
+  # audience contract, and an unreadable body refuses before the check script
+  # is written.
+  fakebin=$(fm_fakebin "$TMP_ROOT/pr-check-gh")
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" --jq .body"*) printf '%s\n' 'Adds the thing, described for the repository that receives it.' ; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/gh"
+  PATH="$fakebin:$PATH" FM_HOME="$home_one" FM_GUARD_GRACE=999999 "$ROOT/bin/fm-pr-check.sh" task-a https://github.com/example/repo/pull/1 >/dev/null 2>/dev/null \
     || fail "fm-pr-check failed under FM_HOME"
   [ -f "$home_one/state/task-a.check.sh" ] || fail "pr check was not written under FM_HOME/state"
   [ ! -e "$home_two/state/task-a.check.sh" ] || fail "pr check leaked into another home"
