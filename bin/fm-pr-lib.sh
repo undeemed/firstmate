@@ -213,7 +213,7 @@ fm_pr_url_parse() {
 # recorded state; fm_pr_url_parse above remains the validating parser.
 fm_pr_github_slug() {  # <url>
   printf '%s' "${1-}" |
-    sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\).*#\1#p' | sed 's#\.git$##; s#/$##'
+    sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\).*#\1#p' | sed 's#\.git$##'
 }
 
 fm_pr_head_valid() {
