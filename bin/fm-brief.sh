@@ -565,6 +565,8 @@ Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
 When starting no-mistakes, make \`--intent\` preserve all relevant content from this brief's \`# Task\` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
+The pipeline publishes that \`--intent\` text verbatim as the published pull request body's \`## Intent\` section, so write it for the repository's own public audience: put every requirement in the project's vocabulary, and never carry fleet-internal vocabulary (firstmate, crewmate, secondmate, captain, ponytail, treehouse, \`fm-*.sh\` script names) or any path from this worktree into it.
+Firstmate reads the published body back and refuses to record a pull request whose body carries that vocabulary, so a body written for the fleet stops the task instead of shipping.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
 Two firstmate-specific rules layer on top of that guidance:
