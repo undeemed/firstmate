@@ -290,6 +290,10 @@ if [ "\${1:-}" = api ]; then
       [ '$state' = MERGED ] && printf '%s\n' '$head'
       exit 0 ;;
     *".head.sha"*) printf '%s\n' '$head' ; exit 0 ;;
+    # The audience read bin/fm-pr-check.sh makes on every published body must
+    # succeed here: these cases are about pr_head recording, not the audience
+    # contract, and a refusal would stop them before their subject.
+    *" --jq .body"*) printf '%s\n' 'Adds the thing, described for the repository that receives it.' ; exit 0 ;;
   esac
 fi
 echo "error: pull request not found" >&2
