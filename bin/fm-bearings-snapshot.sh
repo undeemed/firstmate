@@ -234,6 +234,9 @@ EOF
     for repo in $repos; do
       if [ "$ALL_PR_REPOS" != 1 ] && [ "$nrepos" -ge "$FM_BEARINGS_PR_REPOS" ]; then break; fi
       nrepos=$((nrepos + 1))
+      # Deliberately GraphQL: one point per repository returns the review
+      # decision, mergeability and check rollup for every open PR at once, and
+      # REST has no batch equal - matching it would cost three calls per PR.
       out=$(gh_bounded pr list --repo "$repo" --state open --limit "$pr_fetch_limit" \
         --json number,title,url,headRefName,reviewDecision,mergeable,statusCheckRollup 2>/dev/null) \
         || { nwarn=$((nwarn + 1)); continue; }
