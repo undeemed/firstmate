@@ -824,14 +824,6 @@ run_unmerged_pr_refusal_case() {  # <state>
   pass "a PR that is $state is not landed work and the worktree is kept"
 }
 
-test_open_pr_refuses() {
-  run_unmerged_pr_refusal_case OPEN
-}
-
-test_closed_unmerged_pr_refuses() {
-  run_unmerged_pr_refusal_case CLOSED
-}
-
 test_squash_merged_pr_allows_replayed_unpushed_patch() {
   local case_dir rc parent_head pr_head
   case_dir=$(make_case squash-replayed-patch)
@@ -2990,8 +2982,8 @@ test_herdr_projection_teardown_surfaces_restore_failure_without_blocking_cleanup
 test_squash_merged_branch_deleted_allows
 test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
-test_open_pr_refuses
-test_closed_unmerged_pr_refuses
+run_unmerged_pr_refusal_case OPEN
+run_unmerged_pr_refusal_case CLOSED
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_merged_pr_with_later_local_commit_refuses
 test_pr_check_does_not_refresh_stale_pr_head
