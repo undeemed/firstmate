@@ -1,0 +1,20 @@
+Regression proof: the four new teardown tests, run against the UNPATCHED
+bin/fm-teardown.sh from base commit 77fa951 (all sibling libs identical
+between base and target; only fm-teardown.sh differs).
+
+=== test_own_autonomous_run_is_aborted vs BASE script (77fa951) ===
+not ok - autonomous-run-stopped: teardown left a task-owned running pipeline alive
+test exit code: 1
+
+=== test_unclosed_endpoint_refuses_completion vs BASE script (77fa951) ===
+not ok - endpoint-still-open: teardown should refuse an unconfirmed close: expected exit 1, got 0
+test exit code: 1
+
+=== test_forced_secondmate_child_run_is_aborted vs BASE script (77fa951) ===
+not ok - secondmate-child-run-abort: forced cleanup left the child's running pipeline alive
+test exit code: 1
+
+=== test_forced_secondmate_child_live_endpoint_stops_cleanup vs BASE script (77fa951) ===
+not ok - secondmate-child-endpoint-open: forced cleanup should stop on a live child endpoint: expected exit 1, got 0
+test exit code: 1
+

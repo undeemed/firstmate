@@ -1,0 +1,22 @@
+############################################################
+# Unconfirmed pane close: tmux still lists the window with a
+# live 'claude' pane after the kill.
+############################################################
+
+================ PATCHED script (e12c266) ================
+--- OPERATOR RUNS: fm-teardown.sh task-x1 (pane still alive after kill) ---
+  stderr| error: tmux endpoint firstmate:fm-task-x1 for task-x1 is not confirmed closed; retaining every durable task record - rerun teardown once the endpoint can be closed
+  exit code: 1
+
+--- AFTER refused teardown ---
+task record state/task-x1.meta: RETAINED (rerun possible)
+
+================ UNPATCHED script (77fa951) ================
+--- OPERATOR RUNS: fm-teardown.sh task-x1 (pane still alive after kill) ---
+  stdout| /tmp/fm-teardown-tests.EvtBK0/demo-unconfirmed/project: already current
+  stdout| teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.EvtBK0/demo-unconfirmed/wt)
+  stdout| Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+  exit code: 0
+
+--- AFTER refused teardown ---
+task record: ERASED

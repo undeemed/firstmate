@@ -1,0 +1,27 @@
+Same tests plus the pre-existing process-reap coverage, run against the
+PATCHED bin/fm-teardown.sh at target commit e12c266.
+
+=== test_own_autonomous_run_is_aborted vs PATCHED script (e12c266) ===
+ok - a task-owned running pipeline is aborted before teardown returns
+test exit code: 0
+
+=== test_unclosed_endpoint_refuses_completion vs PATCHED script (e12c266) ===
+ok - an unconfirmed pane close refuses loudly instead of reporting completion
+test exit code: 0
+
+=== test_forced_secondmate_child_run_is_aborted vs PATCHED script (e12c266) ===
+ok - forced secondmate teardown aborts a child ship task's still-running pipeline
+test exit code: 0
+
+=== test_forced_secondmate_child_live_endpoint_stops_cleanup vs PATCHED script (e12c266) ===
+ok - a live child endpoint after the kill stops forced cleanup with records intact
+test exit code: 0
+
+=== test_leaked_worktree_process_is_reaped vs PATCHED script (e12c266) ===
+ok - a leaked descendant process rooted under the task's worktree is reaped by teardown, not left surviving
+test exit code: 0
+
+=== test_run_abort_precedes_process_reap_precedes_worktree_removal vs PATCHED script (e12c266) ===
+ok - the run abort and the leaked-process reap both complete before the destructive worktree return
+test exit code: 0
+
