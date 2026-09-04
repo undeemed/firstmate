@@ -1,0 +1,4 @@
+== AGENTS.md section 7 (Task lifecycle) — the firstmate-side bound ==
+371:Bound that loop at three rounds, because the gate does not always converge: one unchanged diff answered exit 0 and then exit 2 minutes apart, and a later round asked to delete what an earlier round asked to create.
+372:Never obey a finding that reverses what an earlier round ruled on the same code - record the contradiction and leave the earlier ruling standing.
+373:When the third round still exits 2, record its remaining findings in the PR body as named keeps with the reason each earns its place and let the work proceed, rather than running a fourth round.
