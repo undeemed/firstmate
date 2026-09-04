@@ -1096,18 +1096,6 @@ remove_pr_poll_artifacts() {
 	fi
 }
 
-# owner/repo from the worktree's origin remote, for a task with no pr= recorded.
-# Returns non-zero when origin is not a GitHub remote, so the caller falls back
-# the same way it already does on a failed lookup.
-pr_repo_slug_from_origin() {
-	local url slug
-	url=$(git -C "$WT" remote get-url origin 2>/dev/null) || return 1
-	slug=$(printf '%s' "$url" |
-		sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\).*#\1#p' | sed 's#\.git$##')
-	[ -n "$slug" ] || return 1
-	printf '%s' "$slug"
-}
-
 # Resolve the PR number for a worktree branch over REST. Echoes the number on a
 # single match and returns 0; returns non-zero on no match or any lookup failure,
 # so the caller treats it as "no PR found" (fail-safe).
@@ -1177,7 +1165,10 @@ pr_is_merged() {
 		slug=$FM_PR_PATH
 		number=$FM_PR_NUMBER
 	else
-		slug=$(pr_repo_slug_from_origin) || return 1
+		# No recorded URL: the repository is the worktree's own origin remote.
+		slug=$(git -C "$WT" remote get-url origin 2>/dev/null) || return 1
+		slug=$(fm_pr_github_slug "$slug")
+		[ -n "$slug" ] || return 1
 		number=$(pr_number_from_branch "$branch" "$slug") || return 1
 	fi
 	# REST reports a merged PR as state "closed" plus merged true, so the head is

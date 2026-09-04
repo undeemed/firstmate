@@ -693,10 +693,13 @@ SH
   pass "valid direct and merge flows record exact metadata and reject multiline head metadata"
 }
 
+# The alarm is a hang tripwire, not a performance assertion: a healthy bounded
+# watcher run finishes in well under a second, and 10s produced spurious kills
+# (exit 124, empty stderr) whenever this box was running many lanes at once.
 run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   shift 2
-  perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 10; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
+  perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 90; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
     env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
@@ -866,11 +869,11 @@ SH
       run_check_entry "$dir" task-a https://github.com/o/r/pull/1 > "$dir/direct.out" 2> "$dir/direct.err" &
     direct_pid=$!
     i=0
-    while [ "$i" -lt 100 ] && ! find "$dir/home/state" -name '.fm-pr-poll-check.*' -print | grep . >/dev/null; do
+    while [ "$i" -lt 1500 ] && ! find "$dir/home/state" -name '.fm-pr-poll-check.*' -print | grep . >/dev/null; do
       sleep 0.01
       i=$((i + 1))
     done
-    [ "$i" -lt 100 ] || fail "atomic publication did not reach staged check"
+    [ "$i" -lt 1500 ] || fail "atomic publication did not reach staged check"
 
     set +e
     FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
@@ -2567,19 +2570,21 @@ SH
     > "$dir/watch.out" 2> "$dir/watch.err" &
   pid=$!
   i=0
-  while [ "$i" -lt 100 ]; do
+  while [ "$i" -lt 1500 ]; do
     [ -s "$child_pid_file" ] && break
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.02
     i=$((i + 1))
   done
+  # 1500 x 0.02s is a 30s hang tripwire, not a startup-latency assertion: a
+  # healthy watcher starts the child in milliseconds and breaks out at once.
   [ -s "$child_pid_file" ] || fail "watcher did not start the custom check child"
   find "$state" -maxdepth 1 -name '.fm-custom-check.*' -print | grep . >/dev/null \
     || fail "watcher did not create the custom check snapshot"
   child_pid=$(cat "$child_pid_file")
   kill -TERM "$pid" 2>/dev/null || fail "could not signal watcher during custom check"
   i=0
-  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 1500 ]; do
     sleep 0.02
     i=$((i + 1))
   done

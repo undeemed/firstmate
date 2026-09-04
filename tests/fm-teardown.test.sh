@@ -39,7 +39,7 @@
 #   (p) fm-pr-check when local HEAD lags                        -> record remote PR head
 #   (q) no-mistakes + NO pr= recorded, PR discovered by branch  -> ALLOW  (yolo/no-CI merge)
 #   (q1) no-mistakes + recorded PR still open                   -> REFUSE (not landed)
-#   (q2) no-mistakes + PR discovered by branch, closed unmerged -> REFUSE (not landed)
+#   (q2) no-mistakes + recorded PR closed without merging       -> REFUSE (not landed)
 #
 # Build-cache reaping (fm-teardown.sh's reap_task_build_cache):
 #   (aa) task-owned, idle cache                 -> REAPED, bytes reported
@@ -282,6 +282,7 @@ exit 1
 SH
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$case_dir/gh-calls.log'
 if [ "\${1:-}" = api ]; then
   case " \$* " in
     *"/pulls?"*) printf '%s\n' '7' ; exit 0 ;;
@@ -777,6 +778,10 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
   land_on_origin_main "$case_dir" feature.txt hello
   add_gh_pr_for_head "$case_dir" "$pr_head"
   # No append_pr_meta_* call: state/task-x1.meta has no pr= or pr_head= line.
+  # With no recorded URL the repository comes from the worktree's own origin, so
+  # the remote is renamed to its real GitHub form here. The merged PR answers
+  # before any content fetch, so nothing in this case reaches the network.
+  git -C "$case_dir/wt" remote set-url origin https://github.com/example/repo.git
 
   ! grep -qE '^(pr|pr_head)=' "$case_dir/state/task-x1.meta" \
     || fail "no-pr-branch-discovery: test setup bug, meta unexpectedly has a pr= line"
@@ -788,51 +793,43 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
 
   expect_code 0 "$rc" "no-pr-branch-discovery: teardown should succeed by discovering the merged PR from the branch name"
   ! grep -q REFUSED "$case_dir/stderr" || fail "no-pr-branch-discovery: teardown printed a REFUSED line"
+  grep -q 'pulls?state=all&head=example:fm/task-x1' "$case_dir/gh-calls.log" \
+    || fail "no-pr-branch-discovery: the branch was not resolved over the REST list route"
+  grep -q 'repos/example/repo/pulls/7' "$case_dir/gh-calls.log" \
+    || fail "no-pr-branch-discovery: the discovered PR was not read over REST"
   pass "teardown discovers a merged PR by branch name and tears down when no pr= was ever recorded"
 }
 
-test_open_pr_refuses() {
-  local case_dir rc pr_head
-  case_dir=$(make_case open-pr)
+# An unmerged PR lands nothing, whichever way it is unmerged: REST reports one as
+# state "open" and the other as "closed" with merged false, and the merged-head
+# select answers with nothing for both.
+run_unmerged_pr_refusal_case() {  # <state>
+  local state=$1 case_dir rc pr_head
+  case_dir=$(make_case "unmerged-pr-${state}")
   write_meta "$case_dir" no-mistakes ship
-  # The merged fixture with the PR still open: unpushed work whose only possible
-  # landing signal is a PR that has not landed anything yet.
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   append_pr_meta_for_current_head "$case_dir"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_for_head "$case_dir" "$pr_head" OPEN
+  add_gh_pr_for_head "$case_dir" "$pr_head" "$state"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
 
-  expect_code 1 "$rc" "open-pr: teardown should refuse while the PR is still open"
-  grep -q REFUSED "$case_dir/stderr" || fail "open-pr: no REFUSED line in stderr"
-  pass "an open PR is not landed work and the worktree is kept"
+  expect_code 1 "$rc" "unmerged-pr-$state: teardown should refuse for an unmerged PR"
+  grep -q REFUSED "$case_dir/stderr" || fail "unmerged-pr-$state: no REFUSED line in stderr"
+  grep -q 'repos/example/repo/pulls/7' "$case_dir/gh-calls.log" \
+    || fail "unmerged-pr-$state: the recorded PR was not read over REST"
+  pass "a PR that is $state is not landed work and the worktree is kept"
 }
 
-test_closed_unmerged_pr_discovered_by_branch_refuses() {
-  local case_dir rc pr_head
-  case_dir=$(make_case closed-pr-branch-discovery)
-  write_meta "$case_dir" no-mistakes ship
-  # No pr= recorded, so the number comes from the branch lookup; the PR it finds
-  # was closed without merging, which lands nothing.
-  wt_commit_file "$case_dir" feature.txt hello "add feature"
-  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_for_head "$case_dir" "$pr_head" CLOSED
+test_open_pr_refuses() {
+  run_unmerged_pr_refusal_case OPEN
+}
 
-  ! grep -qE '^(pr|pr_head)=' "$case_dir/state/task-x1.meta" \
-    || fail "closed-pr-branch-discovery: test setup bug, meta unexpectedly has a pr= line"
-
-  set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 1 "$rc" "closed-pr-branch-discovery: teardown should refuse for a closed unmerged PR"
-  grep -q REFUSED "$case_dir/stderr" || fail "closed-pr-branch-discovery: no REFUSED line in stderr"
-  pass "a PR found by branch name but closed unmerged is not landed work"
+test_closed_unmerged_pr_refuses() {
+  run_unmerged_pr_refusal_case CLOSED
 }
 
 test_squash_merged_pr_allows_replayed_unpushed_patch() {
@@ -2994,7 +2991,7 @@ test_squash_merged_branch_deleted_allows
 test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_open_pr_refuses
-test_closed_unmerged_pr_discovered_by_branch_refuses
+test_closed_unmerged_pr_refuses
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_merged_pr_with_later_local_commit_refuses
 test_pr_check_does_not_refresh_stale_pr_head

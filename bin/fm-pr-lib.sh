@@ -207,6 +207,15 @@ fm_pr_url_parse() {
   FM_PR_NUMBER=${BASH_REMATCH[3]}
 }
 
+# owner/repository from any GitHub URL: an https or ssh remote with or without
+# .git, or a pull request URL. Prints nothing when the URL is not GitHub. This
+# is a convenience read for a caller that already has a URL from git or from
+# recorded state; fm_pr_url_parse above remains the validating parser.
+fm_pr_github_slug() {  # <url>
+  printf '%s' "${1-}" |
+    sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\).*#\1#p' | sed 's#\.git$##; s#/$##'
+}
+
 fm_pr_head_valid() {
   local head=${1-}
   local LC_ALL=C
