@@ -1096,14 +1096,35 @@ remove_pr_poll_artifacts() {
 	fi
 }
 
-# Resolve the PR number for a worktree branch via gh-axi. Echoes the number on a
+# owner/repo for the REST pull request reads below. The recorded pr= URL names
+# the repository when there is one; otherwise the worktree's origin remote does.
+# Returns non-zero when neither yields a GitHub slug, so each caller falls back
+# the same way it already does on a failed lookup.
+pr_repo_slug() {
+	local url slug
+	if [ -n "$PR_URL" ]; then
+		url=$PR_URL
+	else
+		url=$(git -C "$WT" remote get-url origin 2>/dev/null) || return 1
+	fi
+	slug=$(printf '%s' "$url" |
+		sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\).*#\1#p' | sed 's#\.git$##')
+	[ -n "$slug" ] || return 1
+	printf '%s' "$slug"
+}
+
+# Resolve the PR number for a worktree branch over REST. Echoes the number on a
 # single match and returns 0; returns non-zero on no match or any lookup failure,
 # so the caller treats it as "no PR found" (fail-safe).
+# REST rather than `gh-axi pr list`, which is GraphQL: teardown must not spend
+# the scarcer shared GraphQL budget on a lookup REST answers directly.
 pr_number_from_branch() {
-	local branch=$1 out n
+	local branch=$1 slug owner n
 	[ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
-	out=$(cd "$WT" && gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null) || return 1
-	n=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\),.*/\1/p' | head -1)
+	slug=$(pr_repo_slug) || return 1
+	owner=${slug%%/*}
+	n=$(gh api "repos/$slug/pulls?state=all&head=$owner:$branch&per_page=1" \
+		--jq '.[0].number // empty' 2>/dev/null) || return 1
 	[ -n "$n" ] || return 1
 	printf '%s' "$n"
 }
@@ -1172,14 +1193,20 @@ EOF
 # current work is not contained in the PR head, no PR is found, or any gh error
 # occurs - the caller then falls back to the content check.
 pr_is_merged() {
-	local branch=$1 target view state head current
+	local branch=$1 target number slug view state head current
 	if [ -n "$PR_URL" ]; then
 		target=$PR_URL
 	else
 		target=$(pr_number_from_branch "$branch") || return 1
 	fi
 	[ -n "$target" ] || return 1
-	view=$(cd "$WT" && gh pr view "$target" --json state,headRefOid -q '.state + "\t" + .headRefOid' 2>/dev/null) || return 1
+	number=$(pr_number_from_target "$target") || return 1
+	slug=$(pr_repo_slug) || return 1
+	# REST rather than `gh pr view --json state,headRefOid`, which is GraphQL.
+	# The REST resource reports a merged PR as state "closed" plus merged true,
+	# so the merge is read from .merged and never from the state alone.
+	view=$(gh api "repos/$slug/pulls/$number" \
+		--jq '(if .merged then "MERGED" else (.state | ascii_upcase) end) + "\t" + .head.sha' 2>/dev/null) || return 1
 	state=${view%%$'\t'*}
 	head=${view#*$'\t'}
 	[ "$state" != "$view" ] || return 1

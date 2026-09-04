@@ -878,6 +878,39 @@ test_every_scaffold_forbids_intention_as_completion() {
   pass "fm-brief.sh: every scaffold forbids reporting an intention as completion"
 }
 
+# A hand-written wait loop is the largest burst consumer of the fleet's shared
+# GraphQL budget (measured: 2 points per `gh-axi pr view`, so 160 points/hour per
+# PR waited on), and firstmate's armed merge poll costs none of it. Every worker
+# scaffold must therefore forbid the loop and name the poll that replaces it.
+test_every_worker_scaffold_forbids_forge_poll_loops() {
+  local home id brief
+  home="$TMP_ROOT/forge-poll-home"
+  mkdir -p "$home/data"
+
+  for id_mode in "poll-a1:no-mistakes" "poll-a2:direct-PR" "poll-a3:local-only"; do
+    id=${id_mode%%:*}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_mode##*:}" >/dev/null 2>&1 \
+      || fail "$id: ship scaffold failed"
+  done
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" poll-a4 some-proj --scout >/dev/null 2>&1 \
+    || fail "scout scaffold failed"
+
+  for id in poll-a1 poll-a2 poll-a3 poll-a4; do
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep 'Never wait on a forge by polling it in a shell loop' "$brief" \
+      "$id: brief does not forbid the shell polling loop"
+    # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+    assert_grep 'while ...; do gh pr view ...; sleep ...; done' "$brief" \
+      "$id: brief does not name the loop shape it forbids"
+    assert_grep "fleet's shared GraphQL budget" "$brief" \
+      "$id: brief does not say what the loop spends"
+    assert_grep 'bin/fm-pr-check.sh' "$brief" \
+      "$id: brief does not point at the armed merge poll that replaces the loop"
+  done
+  pass "fm-brief.sh: every worker scaffold bans forge polling loops and names the armed poll"
+}
+
 test_scout_and_secondmate_load_decision_hold_policy() {
   local home scout charter
   home="$TMP_ROOT/decision-policy-home"
@@ -1045,6 +1078,7 @@ test_pause_verb_override_renders_all_brief_scaffolds
 test_ship_and_scout_declare_every_stop
 test_every_scaffold_carries_the_progress_contract
 test_every_scaffold_forbids_intention_as_completion
+test_every_worker_scaffold_forbids_forge_poll_loops
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_every_scaffold_states_the_key_before_the_colon

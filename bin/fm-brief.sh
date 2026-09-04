@@ -87,6 +87,9 @@
 # line folds under the shared "default" bucket and cannot be answered by its own
 # key; bin/fm-classify-lib.sh owns that grammar and the drain warning that
 # catches a misplaced one.
+# Every worker scaffold's rules also forbid waiting on a forge by polling it in a
+# shell loop and point at firstmate's armed merge poll (bin/fm-pr-check.sh)
+# instead; FORGE_POLL_RULE below owns that text and the measured reason for it.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -298,6 +301,20 @@ If you intend to finish but have not finished, the line is `working:`, or `block
 EOF
 STATUS_HONESTY=${STATUS_HONESTY%$'\n'}
 
+# Forge-poll prohibition, byte-identical in every worker scaffold, quoted for the
+# same backtick reason as the two blocks above. A hand-written wait loop re-reads
+# the PR through GraphQL on every iteration: `gh-axi pr view` costs 2 points, so a
+# 45-second loop spends 160 of the fleet's shared 5,000 points per hour per PR
+# waited on, which is the largest burst consumer measured in the fleet. The armed
+# merge poll bin/fm-pr-check.sh spends none of that budget.
+IFS= read -r -d '' FORGE_POLL_RULE <<'EOF' || true
+   Never wait on a forge by polling it in a shell loop - no `while ...; do gh pr view ...; sleep ...; done`
+   and no `gh pr checks` variant of it. Every iteration spends the fleet's shared GraphQL budget, and one
+   hour of waiting can empty it for every other task. Report the PR URL and stop instead: firstmate arms
+   the merge poll (`bin/fm-pr-check.sh`), which watches the PR on the supervision sweep at no GraphQL cost.
+EOF
+FORGE_POLL_RULE=${FORGE_POLL_RULE%$'\n'}
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -443,6 +460,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 1. Never push to any remote and never open a PR.
 2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+$FORGE_POLL_RULE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
@@ -596,6 +614,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 $RULE1
 2. Stay inside this worktree; modify nothing outside it.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+$FORGE_POLL_RULE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
