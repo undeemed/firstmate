@@ -305,8 +305,7 @@ STATUS_HONESTY=${STATUS_HONESTY%$'\n'}
 # same backtick reason as the two blocks above. A hand-written wait loop re-reads
 # the PR through GraphQL on every iteration: `gh-axi pr view` costs 2 points, so a
 # 45-second loop spends 160 of the fleet's shared 5,000 points per hour per PR
-# waited on, which is the largest burst consumer measured in the fleet. The armed
-# merge poll bin/fm-pr-check.sh spends none of that budget.
+# waited on. The armed merge poll bin/fm-pr-check.sh spends none of that budget.
 IFS= read -r -d '' FORGE_POLL_RULE <<'EOF' || true
    Never wait on a forge by polling it in a shell loop - no `while ...; do gh pr view ...; sleep ...; done`
    and no `gh pr checks` variant of it. Every iteration spends the fleet's shared GraphQL budget, and one

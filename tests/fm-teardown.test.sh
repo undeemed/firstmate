@@ -271,10 +271,10 @@ land_on_origin_main() {
 # that bin/fm-pr-check.sh records as pr_head=. GraphQL `gh pr view` and `gh-axi
 # pr list` are answered by nothing, so a reintroduced GraphQL read fails the case
 # instead of passing quietly.
-# <state> is the fixture's PR state: MERGED, OPEN, or CLOSED without merging.
-# Only MERGED answers the merged-head select, exactly as the REST resource does.
-add_gh_pr_for_head() {  # <case_dir> <head> <state>
-  local case_dir=$1 head=$2 state=$3
+# <state> is the fixture's PR state, MERGED by default, or OPEN or CLOSED without
+# merging. Only MERGED answers the merged-head select, as the REST resource does.
+add_gh_pr_for_head() {  # <case_dir> <head> [state]
+  local case_dir=$1 head=$2 state=${3:-MERGED}
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 echo "error: no GraphQL lookup is expected on this path" >&2
@@ -295,10 +295,6 @@ echo "error: pull request not found" >&2
 exit 1
 SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
-}
-
-add_gh_pr_merged_for_head() {
-  add_gh_pr_for_head "$1" "$2" MERGED
 }
 
 append_pr_meta_for_current_head() {
@@ -731,7 +727,7 @@ test_squash_merged_branch_deleted_allows() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   append_pr_meta_for_current_head "$case_dir"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -751,7 +747,7 @@ test_squash_merged_pr_allows_when_head_ancestor_of_pr_head() {
   append_pr_meta_url "$case_dir"
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -779,7 +775,7 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes auto-fix")
   land_on_origin_main "$case_dir" feature.txt hello
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
   # No append_pr_meta_* call: state/task-x1.meta has no pr= or pr_head= line.
 
   ! grep -qE '^(pr|pr_head)=' "$case_dir/state/task-x1.meta" \
@@ -850,7 +846,7 @@ test_squash_merged_pr_allows_replayed_unpushed_patch() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   append_pr_meta_url "$case_dir"
   pr_head=$(land_equivalent_patch_on_origin_branch "$case_dir" pr-head feature.txt hello "add feature")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -870,7 +866,7 @@ test_merged_pr_with_later_local_commit_refuses() {
   append_pr_meta_for_current_head "$case_dir"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   wt_commit_file "$case_dir" later.txt local-only "local follow-up"
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -888,7 +884,7 @@ test_pr_check_does_not_refresh_stale_pr_head() {
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
@@ -925,7 +921,7 @@ test_pr_check_records_remote_head_when_local_lags() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
@@ -989,7 +985,7 @@ test_dirty_worktree_refuses() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   land_on_origin_main "$case_dir" feature.txt hello
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
   printf '%s\n' "uncommitted edit" > "$case_dir/wt/feature.txt"
 
   set +e
