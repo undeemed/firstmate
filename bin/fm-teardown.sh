@@ -40,8 +40,9 @@
 # an Orca target from ambient CLI state.
 # The endpoint close is verified, never assumed: after the kill, teardown reads
 # the backend's recovery-grade agent state and refuses - keeping every durable
-# record for a rerun - unless the endpoint is confirmed gone. A backend with no
-# such classifier warns that the close is unproven instead of claiming it.
+# record for a rerun - unless the endpoint is confirmed gone or confidently
+# agent-free. A backend with no such classifier warns that the close is
+# unproven instead of claiming it.
 # A Herdr presentation journal never authorizes cleanup. Teardown still closes
 # only the exact task pane from ordinary endpoint metadata and never calls
 # `workspace close`. It retires the non-authoritative journal only when a
@@ -59,7 +60,11 @@
 # that mate's backlog-handoff lock under the registry lock. Pending handoff wake
 # state is retired with the home, and local removal failure restores that state
 # before preserving the route for retry. Teardown then discards child work, kills
-# child runtime endpoints, and removes the retired home. Removing a leased home
+# child runtime endpoints, and removes the retired home. Forced child cleanup
+# holds each child to the same two guarantees as the main task - conclude the
+# child's own unfinished no-mistakes run, then prove the non-Herdr child
+# endpoint agent-free after its kill - refusing with that child's durable
+# records intact when either fails. Removing a leased home
 # releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
@@ -1591,21 +1596,21 @@ task_status_is_run_not_found() { # <status-error> <run-id>
 	[ "$actual" = "$expected" ]
 }
 
-# Abort THIS task's own unfinished no-mistakes run before the worker is
+# Abort task $1's own unfinished no-mistakes run before its worker is
 # removed, so no run is left running or parked once the task it belongs to is
-# gone. Only KIND=ship drives a no-mistakes validation of its own worktree
+# gone. Only kind=ship ($2) drives a no-mistakes validation of its own worktree
 # (scouts and secondmates never do, mirroring bin/fm-crew-state.sh); a run not
 # attributed to this exact branch+head is left completely alone.
-conclude_task_no_mistakes_run() { # <worktree>
-	local wt=$1 out run_id
-	[ "$KIND" = ship ] || return 0
+conclude_task_no_mistakes_run() { # <task-id> <kind> <worktree>
+	local task_id=$1 kind=$2 wt=$3 out run_id
+	[ "$kind" = ship ] || return 0
 	[ -d "$wt" ] || return 0
 	command -v no-mistakes >/dev/null 2>&1 || return 0
 	# Accepted best-effort residual: query failures stay fail-open because making
 	# no-mistakes availability a prerequisite would block ship tasks with no run.
 	task_status_is_own_active_run "$wt" "$(fm_nm_run "$wt" "$NM_TEARDOWN_TIMEOUT" axi status)" || return 0
 	run_id=$TASK_RUN_ID
-	echo "teardown: no-mistakes run for $ID has no outcome yet; aborting before the worker is removed" >&2
+	echo "teardown: no-mistakes run for $task_id has no outcome yet; aborting before the worker is removed" >&2
 	# Accepted best-effort residual: abort supports run-id targeting but no atomic
 	# live-state condition; fully closing the resume race needs upstream compare-and-cancel.
 	fm_nm_run_checked "$wt" "$NM_TEARDOWN_TIMEOUT" axi abort --run "$run_id" >/dev/null 2>&1 || true
@@ -1614,8 +1619,27 @@ conclude_task_no_mistakes_run() { # <worktree>
 	elif task_status_is_run_not_found "$out" "$run_id"; then
 		return 0
 	fi
-	echo "REFUSED: no-mistakes run for $ID is still unfinished after axi abort; confirm it stopped (no-mistakes axi status) or abort it manually (no-mistakes axi abort --run <id>) before retrying teardown." >&2
+	echo "REFUSED: no-mistakes run for $task_id is still unfinished after axi abort; confirm it stopped (no-mistakes axi status) or abort it manually (no-mistakes axi abort --run <id>) before retrying teardown." >&2
 	return 1
+}
+
+# One post-kill endpoint verification rule for the main task and each forced
+# child (see "The endpoint close is verified" in the header): dead or missing
+# proceeds, a backend with no recovery-grade classifier warns that the close
+# is unproven, and any other reading refuses so the caller retains the durable
+# records named by <retain-msg>.
+verify_endpoint_closed_after_kill() { # <backend> <target> <task-label> <retain-msg>
+	local backend=$1 target=$2 task_label=$3 retain_msg=$4
+	case "$(fm_backend_agent_state "$backend" "$target")" in
+	dead | missing) ;;
+	unverified)
+		echo "warning: $backend cannot confirm that endpoint $target for $task_label is closed; teardown continued without that proof" >&2
+		;;
+	*)
+		echo "error: $backend endpoint $target for $task_label is not confirmed closed; $retain_msg" >&2
+		return 1
+		;;
+	esac
 }
 
 # Fix 2 (see script header): pids of every process whose CURRENT WORKING
@@ -2629,6 +2653,10 @@ cleanup_firstmate_home_children() {
 				validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
 			fi
 		fi
+		if ! conclude_task_no_mistakes_run "$child_id" "$child_kind" "$child_wt"; then
+			echo "error: no-mistakes run for child $child_id is not confirmed stopped; retaining that child's durable identity records and stopping forced cleanup" >&2
+			return 1
+		fi
 		if [ -n "$child_t" ]; then
 			if [ "$child_backend" = herdr ]; then
 				fm_backend_herdr_parse_target "$child_t" || return 1
@@ -2650,6 +2678,10 @@ cleanup_firstmate_home_children() {
 				) 2>/dev/null || true
 			else
 				fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" 2>/dev/null || true
+			fi
+			if [ "$child_backend" != herdr ]; then
+				verify_endpoint_closed_after_kill "$child_backend" "$child_t" "child $child_id" \
+					"retaining that child's durable identity records and stopping forced cleanup" || return 1
 			fi
 		fi
 		if [ "$child_kind" = secondmate ]; then
@@ -2848,7 +2880,7 @@ fi
 teardown_resolve_worktree_cotenants
 if [ "$KIND" != secondmate ]; then
 	# A run matching a shared checkout's branch cannot be attributed to $ID.
-	[ "${#COTENANT_IDS[@]}" -gt 0 ] || conclude_task_no_mistakes_run "$WT"
+	[ "${#COTENANT_IDS[@]}" -gt 0 ] || conclude_task_no_mistakes_run "$ID" "$KIND" "$WT"
 	reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
 fi
 
@@ -2994,16 +3026,8 @@ if [ "$BACKEND" = herdr ]; then
 	fi
 else
 	# Same rule for every other backend (see "The endpoint close is verified" above).
-	case "$(fm_backend_agent_state "$BACKEND" "$T")" in
-	dead | missing) ;;
-	unverified)
-		echo "warning: $BACKEND cannot confirm that endpoint $T for $ID is closed; teardown continued without that proof" >&2
-		;;
-	*)
-		echo "error: $BACKEND endpoint $T for $ID is not confirmed closed; retaining every durable task record - rerun teardown once the endpoint can be closed" >&2
-		exit 1
-		;;
-	esac
+	verify_endpoint_closed_after_kill "$BACKEND" "$T" "$ID" \
+		"retaining every durable task record - rerun teardown once the endpoint can be closed" || exit 1
 fi
 if [ "$KIND" = secondmate ]; then
 	[ -n "$HOME_PATH" ] || HOME_PATH=$WT
