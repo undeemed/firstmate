@@ -112,7 +112,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-forge-audit-lib.sh`  | Own the acting home's audit record of every outbound forge write made through `bin/` |
 | `fm-pr-poll.sh`          | Provide the byte-static watcher program for validated PR/MR-poll sidecars           |
 | `fm-pr-check-migrate.sh` | Quarantine older task polls without execution and rebuild only canonical polls       |
-| `fm-pr-check.sh`         | Record validated `pr=` and `pr_head=` values, publish and read back any declared PR-body content, then atomically arm a static merge poll |
+| `fm-pr-check.sh`         | Record validated `pr=` and `pr_head=` values, publish and read back any declared PR-body content, refuse a published body carrying fleet-internal vocabulary, then atomically arm a static merge poll |
 | `fm-pr-merge.sh`         | Merge a task's canonical full GitHub or GitLab URL after recording PR metadata, or green-gate a `--pipeline` GitHub PR fail-closed and merge pinned to the gated head |
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
