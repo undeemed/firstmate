@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 # GitHub concurrency groups retain at most one pending run, replacing older
 # pending runs even when cancel-in-progress is false. Give body-bearing events
@@ -26,5 +27,36 @@ jobs:
       github.event.pull_request.user.login != 'github-actions[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
+      # The event payload's pull_request.body is a snapshot taken when the event
+      # fired, and a queued run can start long after it. On PR #58 a synchronize
+      # run judged the pre-supersede body 15 minutes late and recorded a failure
+      # after an edited run had already passed the fixed body; had no later edit
+      # arrived, the check would have stuck red on a compliant PR. Read the body
+      # and head as they exist now and hand both to the gate, which accepts them
+      # exactly so a caller can override the payload snapshot.
+      - name: Read the current pull request body and head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+          if ! pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '{body: (.body // ""), head: .head.sha}'); then
+            echo "::error::Could not fetch the current state of PR #${PR_NUMBER} from the GitHub API; re-run this check." >&2
+            exit 1
+          fi
+          # A PR body is attacker-controlled text, so a fixed heredoc delimiter is
+          # an output-injection hole: a body containing that literal line would
+          # end the value early and let the rest be read as further outputs.
+          delimiter="PR_BODY_$(openssl rand -hex 24)"
+          {
+            echo "head-sha=$(printf '%s' "$pr" | jq -r '.head')"
+            echo "body<<$delimiter"
+            printf '%s' "$pr" | jq -r '.body'
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
       - name: Verify no-mistakes signature and pipeline attestation
         uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6 # post-v1.57.1, untagged (action added in #819)
+        with:
+          pr-body: ${{ steps.pr.outputs.body }}
+          pr-head-sha: ${{ steps.pr.outputs.head-sha }}
