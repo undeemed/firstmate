@@ -1,0 +1,33 @@
+===== ship mode: no-mistakes — lean-gate section of generated brief.md =====
+102-
+103-# Definition of done
+104-Delivery contract: mode=no-mistakes
+105-The task is complete only when committed on your branch.
+106-Before the PR is opened, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+107-Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+108:The loop is bounded at THREE rounds because the gate does not always converge, so never run a fourth round, and never obey a finding that reverses what an earlier round ruled on the same code - record that contradiction and leave the earlier ruling standing.
+109-When the third round still exits 2, its remaining findings and every contradiction you recorded belong in the verdict you report below as named keeps, not in another round of cutting.
+110-Carry that verdict into the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
+
+===== ship mode: direct-PR — lean-gate section of generated brief.md =====
+102-# Definition of done
+103-Delivery contract: mode=direct-PR
+104-This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+105-The task is complete only when committed on your branch.
+106-Before you open the PR, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+107-Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+108:The loop is bounded at THREE rounds because the gate does not always converge, so never run a fourth round, and never obey a finding that reverses what an earlier round ruled on the same code - record that contradiction and leave the earlier ruling standing.
+109-When the third round still exits 2, its remaining findings and every contradiction you recorded belong in the verdict you report below as named keeps, not in another round of cutting.
+110-Report that verdict in the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
+
+===== ship mode: local-only — lean-gate section of generated brief.md =====
+103-Delivery contract: mode=local-only
+104-This task ships **local-only**: no remote, no PR, no pipeline.
+105-The task is complete only when committed on your branch `fm/ev-local-only`. Do NOT push, do NOT open a PR, do NOT merge.
+106-Keep your branch a clean fast-forward onto the current default branch - if `main` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+107-Before you hand the branch off, run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+108-Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+109:The loop is bounded at THREE rounds because the gate does not always converge, so never run a fourth round, and never obey a finding that reverses what an earlier round ruled on the same code - record that contradiction and leave the earlier ruling standing.
+110-When the third round still exits 2, its remaining findings and every contradiction you recorded belong in the verdict you report below as named keeps, not in another round of cutting.
+111-Record that verdict in your handoff, and name any finding you deliberately did not cut with the reason it earns its place.
+
