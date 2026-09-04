@@ -1,0 +1,14 @@
+############################################################
+# Load-bearing 'unverified' arm: zellij has no recovery-grade
+# endpoint classifier, so teardown must WARN and proceed
+# (refusing here would block every teardown on zellij/orca/cmux).
+############################################################
+
+================ PATCHED script (e12c266) ================
+--- OPERATOR RUNS: fm-teardown.sh task-x1 (backend=zellij, no recovery classifier) ---
+  stdout| /tmp/fm-teardown-tests.jAWJwV/demo-unverified2/project: already current
+  stdout| teardown task-x1 complete (window sess:7, worktree /tmp/fm-teardown-tests.jAWJwV/demo-unverified2/wt)
+  stdout| Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+  stderr| warning: zellij cannot confirm that endpoint sess:7 for task-x1 is closed; teardown continued without that proof
+  exit code: 0
+task record: removed (teardown completed)

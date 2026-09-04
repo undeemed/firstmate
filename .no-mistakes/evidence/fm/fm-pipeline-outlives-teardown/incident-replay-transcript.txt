@@ -1,0 +1,41 @@
+############################################################
+# Incident replay (seer-cov-gatepage-c3 shape): task with a
+# RUNNING no-mistakes pipeline + a live background child.
+############################################################
+
+================ PATCHED script (e12c266) ================
+--- BEFORE teardown ---
+pipeline run 01RUN: RUNNING (step: running) on fm/task-x1 @ df0d111
+background child pid 3194931: ALIVE (cwd under task worktree)
+task worktree: present
+
+--- OPERATOR RUNS: fm-teardown.sh task-x1 ---
+  stdout| /tmp/fm-teardown-tests.IETp2m/demo-incident/project: already current
+  stdout| teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.IETp2m/demo-incident/wt)
+  stdout| Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+  stderr| teardown: no-mistakes run for task-x1 has no outcome yet; aborting before the worker is removed
+  stderr| teardown: reaping leaked worktree process(es) for task-x1: 3194931
+  exit code: 0
+
+--- AFTER teardown ---
+no-mistakes abort issued: abort --run 01RUN
+background child pid 3194931: GONE
+task worktree: still present
+
+================ UNPATCHED script (77fa951) ================
+--- BEFORE teardown ---
+pipeline run 01RUN: RUNNING (step: running) on fm/task-x1 @ 8c445e9
+background child pid 3204923: ALIVE (cwd under task worktree)
+task worktree: present
+
+--- OPERATOR RUNS: fm-teardown.sh task-x1 ---
+  stdout| /tmp/fm-teardown-tests.FqcyGr/demo-incident/project: already current
+  stdout| teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.FqcyGr/demo-incident/wt)
+  stdout| Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+  stderr| teardown: reaping leaked worktree process(es) for task-x1: 3204923
+  exit code: 0
+
+--- AFTER teardown ---
+no-mistakes abort issued: NONE
+background child pid 3204923: GONE
+task worktree: still present
