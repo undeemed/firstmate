@@ -6,10 +6,7 @@
 # interpolated into this source: these bytes are identical for every task.
 # Each provider is read through its own standard CLI, gh for GitHub and glab
 # for GitLab, so an upstream checkout needs no extra tooling to follow either.
-# The GitHub read is REST rather than `gh pr view --json state`, which is
-# GraphQL: this poll runs on every watcher check sweep for every armed PR, so it
-# must not spend the scarcer shared GraphQL budget on a field REST answers
-# directly. bin/fm-pr-check.sh:95-98 owns the same rationale for the head read.
+# GitHub is read over REST for the shared-budget reason bin/fm-pr-check.sh states.
 set -u
 LC_ALL=C
 export LC_ALL
