@@ -8,8 +8,6 @@
 # unreachable.
 set -u
 
-# shellcheck source=tests/spawn-helpers.sh
-. "$(dirname "${BASH_SOURCE[0]}")/spawn-helpers.sh"
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
@@ -23,8 +21,9 @@ make_case() {
 	origin="$case_dir/origin.git"
 	pool="$case_dir/pool"
 	publisher="$case_dir/publisher"
-	fakebin=$(fm_spawn_fake_terminal "$case_dir/fake")
-	fm_spawn_home "$home" "$id"
+	fakebin=$(fm_test_make_spawn_fakebin "$case_dir/fake")
+	fm_test_spawn_home "$home" codex
+	fm_test_spawn_brief "$home" "$id"
 
 	git init --quiet -b "$default" "$project"
 	printf 'base\n' >"$project/README.md"
@@ -70,7 +69,7 @@ test_stale_pool_base_refreshes_before_branching() {
 	rec=$(make_case current-base "$id")
 	read_case_record "$rec"
 
-	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
+	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
 	status=$?
 	expect_code 0 "$status" "spawn should refresh a stale pooled worktree"
 	assert_contains "$out" "spawned $id" "spawn did not report success"
@@ -90,8 +89,8 @@ test_stale_pool_base_refreshes_before_branching() {
 	# this case still measures base-refresh idempotency and nothing else.
 	rm -f "$HOME_DIR/state/pool-current-base-r1.meta"
 	id='pool-current-base-repeat-r1'
-	fm_spawn_home "$HOME_DIR" "$id"
-	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
+	fm_test_spawn_brief "$HOME_DIR" "$id"
+	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
 	status=$?
 	expect_code 0 "$status" "repeating the base refresh should be idempotent"
 	[ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$current" ] ||
@@ -111,7 +110,7 @@ test_non_main_default_branch_refreshes_before_branching() {
 	rec=$(make_case current-trunk "$id" trunk)
 	read_case_record "$rec"
 
-	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
+	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
 	status=$?
 	expect_code 0 "$status" "spawn should refresh a stale pooled worktree on a non-main default branch"
 	current=$(git -C "$POOL_DIR" rev-parse "origin/$DEFAULT_BRANCH")
@@ -129,7 +128,7 @@ test_unreachable_origin_refuses_stale_pool_base() {
 	git -C "$POOL_DIR" remote set-url origin "file://$CASE_DIR/missing-origin.git"
 	before=$(git -C "$POOL_DIR" rev-parse HEAD)
 
-	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
+	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
 	status=$?
 	[ "$status" -ne 0 ] || fail "spawn succeeded despite an unreachable origin"
 	assert_contains "$out" "could not fetch origin" \
@@ -149,9 +148,9 @@ test_direct_pr_and_scout_refresh_before_launch() {
 		rec=$(make_case "$contract" "$id")
 		read_case_record "$rec"
 		if [ "$contract" = scout ]; then
-			out=$(fm_spawn_run "$id" --scout)
+			out=$(run_spawn "$id" --scout)
 		else
-			out=$(fm_spawn_run "$id" --mode direct-PR --yolo off)
+			out=$(run_spawn "$id" --mode direct-PR --yolo off)
 		fi
 		status=$?
 		expect_code 0 "$status" "$contract spawn should refresh a stale pooled worktree"
@@ -175,7 +174,7 @@ test_dirty_pool_refuses_without_discarding_work() {
 	before=$(git -C "$POOL_DIR" rev-parse HEAD)
 	printf 'keep this local work\n' >"$POOL_DIR/uncommitted.txt"
 
-	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
+	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
 	status=$?
 	[ "$status" -ne 0 ] || fail "spawn succeeded despite a dirty pooled worktree"
 	assert_contains "$out" "is not clean" "spawn did not clearly refuse a dirty pooled worktree"
@@ -198,7 +197,7 @@ test_unresolved_remote_default_refuses_pool() {
 	git --git-dir="$CASE_DIR/origin.git" symbolic-ref HEAD refs/heads/missing-default
 	before=$(git -C "$POOL_DIR" rev-parse HEAD)
 
-	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
+	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
 	status=$?
 	[ "$status" -ne 0 ] || fail "spawn succeeded despite an unresolved remote default branch"
 	assert_contains "$out" "could not resolve origin's current default branch" \
@@ -230,7 +229,7 @@ make_submodule_case() {  # <name> <id>
 
   mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
   printf 'codex\n' > "$home/config/crew-harness"
-  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  fm_test_spawn_brief "$home" "$id"
   touch "$home/state/.last-watcher-beat"
 
   git init --quiet -b main "$sub"
@@ -284,8 +283,7 @@ EOF
 # starts from residue this code path actually produced rather than a hand-built one.
 strand_submodule_pin_via_spawn() {  # <seed-id>
   local id=$1 out status
-  mkdir -p "$HOME_DIR/data/$id"
-  printf 'brief for %s\n' "$id" > "$HOME_DIR/data/$id/brief.md"
+  fm_test_spawn_brief "$HOME_DIR" "$id"
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
   expect_code 0 "$status" "the spawn that moves the submodule pin should succeed"

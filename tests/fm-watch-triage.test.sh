@@ -2441,6 +2441,7 @@ test_live_declared_pause_outranks_a_lying_busy_source() {
 # repeating flat - and it is bounded, so a wait that really does rot still reports.
 test_declared_pause_recheck_cadence_decays_and_stays_bounded() {
   local dir state fakebin out capture_file window key pane_hash sig pid statusf back
+  local throttle declaration
   dir=$(make_case pause-recheck-decay)
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -2457,6 +2458,8 @@ test_declared_pause_recheck_cadence_decays_and_stays_bounded() {
   printf '%s' "$pane_hash" >"$state/.stale-$key"
   printf '1\n' >"$state/.count-$key"
   : >"$state/.paused-$key"
+  throttle="$state/.paused-resurfaced-$key"
+  declaration="declared:$(status_observed_signature "$statusf")"
   export FM_FAKE_CREW_STATE='state: paused · source: status-log · holding for the upstream tool release'
 
   # A wait 500s old, with a 240s base: the interval has already doubled once to
@@ -2466,9 +2469,10 @@ test_declared_pause_recheck_cadence_decays_and_stays_bounded() {
   set_mtime "$back" "$statusf"
   sig=$(seen_sig "$statusf")
   printf '%s' "$sig" >"$state/.seen-decay_status"
-  # touch -t creates the throttle marker if it is absent, so this both seeds the
-  # last re-surface and dates it.
-  set_mtime "$(($(date +%s) - 300))" "$state/.paused-resurfaced-$key"
+  # The throttle body names the declaration it throttles, so seed both the body
+  # and the date of the last re-surface.
+  printf '%s' "$declaration" >"$throttle"
+  set_mtime "$(($(date +%s) - 300))" "$throttle"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
@@ -2485,7 +2489,8 @@ test_declared_pause_recheck_cadence_decays_and_stays_bounded() {
 
   # Past the decayed interval it still fires, and the reason states when the next
   # recheck of this unchanged wait is due.
-  set_mtime "$(($(date +%s) - 600))" "$state/.paused-resurfaced-$key"
+  printf '%s' "$declaration" >"$throttle"
+  set_mtime "$(($(date +%s) - 600))" "$throttle"
   : >"$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
@@ -2508,7 +2513,8 @@ test_declared_pause_recheck_cadence_decays_and_stays_bounded() {
   set_mtime "$(($(date +%s) - 200000))" "$statusf"
   sig=$(seen_sig "$statusf")
   printf '%s' "$sig" >"$state/.seen-decay_status"
-  set_mtime "$(($(date +%s) - 500))" "$state/.paused-resurfaced-$key"
+  printf '%s' "$declaration" >"$throttle"
+  set_mtime "$(($(date +%s) - 500))" "$throttle"
   : >"$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
@@ -2524,7 +2530,8 @@ test_declared_pause_recheck_cadence_decays_and_stays_bounded() {
   [ ! -s "$out" ] || fail "a days-old declared wait fired inside its ceiling: $(cat "$out")"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional ceiling-window stop"
 
-  set_mtime "$(($(date +%s) - 700))" "$state/.paused-resurfaced-$key"
+  printf '%s' "$declaration" >"$throttle"
+  set_mtime "$(($(date +%s) - 700))" "$throttle"
   : >"$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
@@ -2540,6 +2547,212 @@ test_declared_pause_recheck_cadence_decays_and_stays_bounded() {
     fail "the ceiling did not bound the decayed interval: $(cat "$out")"
   unset FM_FAKE_CREW_STATE
   pass "an unchanged declared wait is rechecked on a decaying interval bounded by its ceiling"
+}
+
+# A dead worker reaches handle_paused_stale rather than the live fallback above.
+# When one declared wait directly replaces another, the existing
+# throttle belongs to the old declaration and must not suppress the new wait's
+# first inspection merely because its timestamp is still young.
+test_absorbed_replacement_wait_does_not_inherit_the_old_throttle() {
+  local spec name initial replacement expected dir state fakebin out capture_file
+  local statusf window key sig back pid wakes
+  for spec in \
+    'paused-replacement|paused: waiting on validation run one|paused: waiting on validation run two|awaiting external' \
+    'captain-held-replacement|captain-held [key=route]: awaiting the routing call|captain-held [key=release]: awaiting the release call|awaiting the captain'
+  do
+    name=${spec%%|*}; spec=${spec#*|}
+    initial=${spec%%|*}; spec=${spec#*|}
+    replacement=${spec%%|*}; expected=${spec#*|}
+    dir=$(make_case "$name"); state="$dir/state"; fakebin="$dir/fakebin"
+    out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/held.status"
+    window="test:fm-held"
+    printf 'idle after agent exit\n' > "$capture_file"
+    printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/held.meta"
+    printf '%s\n' "$initial" > "$statusf"
+    back=$(( $(date +%s) - 500 ))
+    if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+    else touch -m -d "@$back" "$statusf"; fi
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+    key=$(printf '%s' "$window" | tr ':/.' '___')
+    printf '%s' "$(hash_text 'idle after agent exit')" > "$state/.hash-$key"
+    printf '1\n' > "$state/.count-$key"
+
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+      FM_FAKE_TMUX_CURRENT_COMMAND=zsh FM_FAKE_CREW_STATE='state: stopped · source: pane · bare shell' \
+      FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+      FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" &
+    pid=$!
+    wait_for_exit "$pid" 100 || fail "[$name] initial declared wait did not re-surface"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the initial declared wait"
+
+    printf '%s\n' "$replacement" >> "$statusf"
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+    printf 'idle after replacement wait\n' > "$capture_file"
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+      FM_FAKE_TMUX_CURRENT_COMMAND=zsh FM_FAKE_CREW_STATE='state: stopped · source: pane · bare shell' \
+      FM_WATCH_HANDLING_SUCCESSOR=1 \
+      FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+      FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" &
+    pid=$!
+    wait_for_exit "$pid" 100 \
+      || { reap "$pid"; fail "[$name] replacement declared wait inherited the old throttle"; }
+    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    [ "$wakes" -eq 1 ] || fail "[$name] replacement declared wait produced $wakes wakes instead of one"
+    grep -F "$expected" "$state/.wake-queue" >/dev/null \
+      || fail "[$name] replacement declared wait used the wrong recheck reason: $(cat "$state/.wake-queue")"
+  done
+  pass "absorbed paused and captain-held replacements each start their own re-surface cadence"
+}
+
+# Run one watcher round against a parked-worker fixture, so a round differs only
+# in the pane contents the case just wrote. Armed the way fm-watch-arm.sh arms a
+# successor after firstmate handled a wake, because that is what a supervision
+# turn actually does and it is the only arm that stays in the poll loop instead of
+# re-announcing the previous round's downtime - without it a round exits on
+# `check: rearm-resurface` before it ever reaches the stale path, and every
+# absorb assertion below passes vacuously. A live agent (pane_current_command
+# matching the recorded harness) on an idle pane is the exact population
+# pause_state_class answers `none` for.
+# <mode> `exit` requires the watcher to surface and exit; `absorb` requires it to
+# survive whole poll cycles - enough to see the new hash, count it stable, and
+# reach the stale path. Returns 1 when the watcher does the other thing.
+parked_watch_round() {  # <state> <fakebin> <out> <capture> <window> <exit|absorb>
+  local state=$1 fakebin=$2 out=$3 capture=$4 window=$5 mode=$6 pid cycles=0
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+    FM_FAKE_CREW_STATE='state: paused · source: status-log · parked' \
+    FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" &
+  pid=$!
+  if [ "$mode" = exit ]; then
+    wait_for_exit "$pid" 100 || { reap "$pid"; return 1; }
+    return 0
+  fi
+  while [ "$cycles" -lt 4 ]; do
+    wait_poll_cycle "$state" "$pid" 300 || { reap "$pid"; return 1; }
+    cycles=$((cycles + 1))
+  done
+  reap "$pid"
+  return 0
+}
+
+# --- a live worker parked on a declared wait: pane churn must not re-alarm ----
+# The 2026-08/09 alarm loop, in both observed forms - a worker parked on the
+# CAPTAIN (captain-held, five consecutive alarms) and one parked on the PIPELINE
+# (paused:, dozens across one day). An idle parked pane still churns its hash (a
+# clock, a token counter), so every tick used to re-enter the first-sight path and
+# wake firstmate.
+# The contract pinned here: a declared wait whose authoritative crew state names
+# that same wait takes the bounded pause cadence from FIRST sight rather than a
+# one-shot surface - test_declared_pause_is_bounded_for_exited_and_live_agents
+# owns that rule for the live half - pane churn inside the window never
+# re-alarms, a replacement declaration is still absorbed while that window
+# stands, and the window's end re-surfaces exactly once carrying the recheck
+# reason, so a forgotten wait cannot rot invisibly.
+test_live_declared_wait_churn_honors_the_resurface_throttle() {
+  local spec name status_line expected dir state fakebin out capture_file statusf window key
+  local sig round wakes reasoned text throttle replacement
+  for spec in \
+    'paused-pipeline-churn|paused: waiting on the validation run to finish|awaiting external' \
+    'captain-held-churn|captain-held [key=route]: awaiting the captain on the routing call|awaiting the captain'; do
+    name=${spec%%|*}
+    spec=${spec#*|}
+    status_line=${spec%%|*}
+    expected=${spec#*|}
+    dir=$(make_case "$name")
+    state="$dir/state"
+    fakebin="$dir/fakebin"
+    out="$dir/watch.out"
+    capture_file="$dir/pane.txt"
+    statusf="$state/parked.status"
+    window="test:fm-parked"
+    printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" >"$state/parked.meta"
+    printf '%s\n' "$status_line" >"$statusf"
+    sig=$(seen_sig "$statusf")
+    printf '%s' "$sig" >"$state/.seen-parked_status"
+    key=$(printf '%s' "$window" | tr ':/.' '___')
+    throttle="$state/.paused-resurfaced-$key"
+
+    # First sight of a parked-but-live worker whose authoritative state names the
+    # declared wait: the bounded recheck owns it, so nothing is alarmed here.
+    text='parked, elapsed 1s'
+    printf '%s' "$text" >"$capture_file"
+    printf '%s' "$(hash_text "$text")" >"$state/.hash-$key"
+    printf '1\n' >"$state/.count-$key"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb ||
+      fail "[$name] first sight of a parked live worker alarmed instead of taking the pause cadence"
+    [ -e "$state/.paused-$key" ] || fail "[$name] first sight did not put the parked worker on the pause cadence"
+    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    [ "$wakes" -eq 0 ] || fail "[$name] first sight of a parked live worker queued $wakes wakes"
+
+    # The pane now churns while the SAME declared wait stands, each round fully
+    # handled as a real supervision turn would. Every one of these used to alarm.
+    round=2
+    while [ "$round" -le 4 ]; do
+      printf 'parked, elapsed %ss' "$round" >"$capture_file"
+      parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb ||
+        fail "[$name] watcher exited during churn round $round instead of supervising through it"
+      wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+        "$state/.wake-queue" 2>/dev/null || echo 0)
+      [ "$wakes" -eq 0 ] ||
+        fail "[$name] pane churn re-alarmed a parked worker $wakes time(s) inside the re-surface window"
+      round=$((round + 1))
+    done
+
+    # A direct wait-to-wait transition starts a NEW declaration even though the
+    # same window remains parked. It stays on the bounded cadence rather than
+    # alarming, because the worker is still accounting for its own quiet pane.
+    case "$name" in
+    paused-pipeline-churn) replacement='paused: waiting on the replacement validation run' ;;
+    captain-held-churn) replacement='captain-held [key=release]: awaiting the captain on the release call' ;;
+    esac
+    printf '%s\n' "$replacement" >>"$statusf"
+    sig=$(seen_sig "$statusf")
+    printf '%s' "$sig" >"$state/.seen-parked_status"
+    printf 'replacement wait, elapsed 1s' >"$capture_file"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb ||
+      fail "[$name] a replacement declared wait alarmed inside the cadence window"
+    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    [ "$wakes" -eq 0 ] ||
+      fail "[$name] a replacement declared wait re-alarmed $wakes time(s) inside the re-surface window"
+
+    # End of the window - the cadence ages against the worker's own status line -
+    # so the wait re-surfaces exactly once, carrying the recheck reason rather
+    # than a bare stale identity, and absorbing churn never becomes silence.
+    set_mtime "$(($(date +%s) - 2000))" "$statusf"
+    sig=$(seen_sig "$statusf")
+    printf '%s' "$sig" >"$state/.seen-parked_status"
+    printf 'parked, elapsed 5s' >"$capture_file"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit ||
+      fail "[$name] a parked worker did not re-surface once its re-surface window elapsed"
+    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    reasoned=$(awk -F '\t' -v w="$window" -v r="$expected" \
+      '$3 == "stale" && $4 == w && index($5, r) { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    [ "$wakes" -eq 1 ] || fail "[$name] elapsed re-surface window produced $wakes wakes instead of one"
+    [ "$reasoned" -eq 1 ] ||
+      fail "[$name] elapsed re-surface did not carry the declared-wait recheck reason: $(cat "$state/.wake-queue")"
+    [ -e "$throttle" ] || fail "[$name] the elapsed re-surface recorded no re-surface throttle"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the elapsed re-surface"
+
+    # The fresh window absorbs again, so one elapsed recheck never becomes a storm.
+    printf 'parked, elapsed 6s' >"$capture_file"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb ||
+      fail "[$name] the parked worker re-alarmed inside its fresh re-surface window"
+    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    [ "$wakes" -eq 0 ] ||
+      fail "[$name] the parked worker re-alarmed $wakes time(s) inside its fresh re-surface window"
+  done
+  pass "a parked live worker takes the bounded pause cadence, absorbs pane churn, then re-surfaces once with its recheck reason when the window elapses"
 }
 
 test_secondmate_paused_resurfaces_in_normal_mode() {
@@ -4444,6 +4657,7 @@ SH
 # inside the case so nothing here can observe a real home's source ownership.
 pe_case() { # <dir> <command>...
   local dir=$1
+  dir=$(cd "$dir" && pwd -P) || return 1
   shift
   (
     unset FM_ROOT_OVERRIDE
@@ -4472,6 +4686,7 @@ seed_captured_procevent_result() { # <dir>
 # per-cycle reconcile it launches resolves the same home's state.
 procevent_watch_bg() { # <dir> <out>
   local dir=$1 out=$2
+  dir=$(cd "$dir" && pwd -P) || return 1
   PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_PROCEVENT_CLAIM_ROOT="$dir/claims" \
     FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
     FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >"$out" &
@@ -5121,6 +5336,8 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_declared_pause_is_bounded_for_exited_and_live_agents
 test_live_declared_pause_outranks_a_lying_busy_source
 test_declared_pause_recheck_cadence_decays_and_stays_bounded
+test_absorbed_replacement_wait_does_not_inherit_the_old_throttle
+test_live_declared_wait_churn_honors_the_resurface_throttle
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_captain_held_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed

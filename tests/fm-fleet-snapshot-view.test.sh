@@ -143,6 +143,7 @@ EOF
 test_secondmate_aggregation_survives_payload_beyond_argv() {
   local home fakebin mate id out payload pad i j
   home=$(make_home oversized)
+  fakebin=$(make_fakebin "$home")
   pad=$(printf '%0440d' 0)
   i=0
   while [ "$i" -lt 2 ]; do
@@ -160,8 +161,13 @@ test_secondmate_aggregation_survives_payload_beyond_argv() {
     } >> "$mate/data/backlog.md"
     fm_append_secondmate_registry "$home" "$id" "$mate"
     fm_write_parent_secondmate_event "$home" "$id" "$mate" "watching scope"
+    # A local mate is now read from its own published ledger, so each fixture
+    # home must publish one before the parent aggregates it.
+    PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$mate" \
+      FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME=1000 \
+      "$ROOT/bin/fm-home-summary-refresh.sh" >/dev/null 2>&1 \
+      || fail "fixture home $id could not publish its structured ledger"
   done
-  fakebin=$(make_fakebin "$home")
   mkdir -p "$TMP_ROOT/oversized-root"
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" \
     FM_ROOT_OVERRIDE="$TMP_ROOT/oversized-root" \
@@ -855,9 +861,107 @@ test_parked_scout_decision_stays_pending() {
   pass "a scout still parked at a decision stays pending (terminal clear does not over-fire)"
 }
 
+# Home-summary validity treats persistent secondmates as registered homes, not
+# in-flight children. They have no backlog rows, so they must not produce
+# unowned_current or terminal_in_flight. Ordinary crew/ship metas still do.
+test_home_summary_excludes_secondmate_from_child_inventory() {
+  local home fakebin out
+  home=$(make_home summary-secondmate-only)
+  mkdir -p "$home/secondmate-home" "$home/projects/unowned" "$home/projects/terminal"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+
+## Done
+EOF
+  fm_write_meta "$home/state/mate.meta" \
+    "window=firstmate:fm-mate" \
+    "worktree=$home/secondmate-home" \
+    "project=$home/secondmate-home" \
+    "harness=codex" \
+    "kind=secondmate" \
+    "mode=secondmate" \
+    "home=$home/secondmate-home" \
+    "projects=alpha"
+  printf 'working: watching delegated scope\n' > "$home/state/mate.status"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .schema == "fm-secondmate-home-summary.v1"
+      and .valid == true
+      and .reason == null
+      and .invalidity == {kind:null,ids:[]}
+      and (.invalidity.kind != "unowned_current")
+      and (.invalidity.kind != "terminal_in_flight")
+  ' >/dev/null || fail "secondmate-only home with a clean backlog must be VALID: $out"
+
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] mate - Registered secondmate home (repo: alpha) (kind: secondmate) (since 2026-07-11)
+
+## Queued
+
+## Done
+EOF
+  printf 'done: delegated scope complete\n' > "$home/state/mate.status"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .valid == true
+      and .reason == null
+      and .invalidity == {kind:null,ids:[]}
+      and (.invalidity.kind != "terminal_in_flight")
+  ' >/dev/null || fail "terminal secondmate with a matching in-flight row must not produce terminal_in_flight: $out"
+
+  fm_write_meta "$home/state/unowned-ship.meta" \
+    "window=firstmate:fm-unowned-ship" \
+    "worktree=$home/projects/unowned" \
+    "project=alpha" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=no-mistakes"
+  record_claude_idle "$home/state" unowned-ship
+  printf 'needs-decision [key=unowned-ship]: choose a route\n' > "$home/state/unowned-ship.status"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .valid == false
+      and .invalidity == {kind:"unowned_current",ids:["unowned-ship"]}
+      and (.reason | contains("unowned-ship=parked"))
+      and (.reason | contains("mate=") | not)
+  ' >/dev/null || fail "ordinary unowned ship must still produce unowned_current without listing the secondmate: $out"
+
+  rm -f "$home/state/unowned-ship.meta" "$home/state/unowned-ship.status"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] terminal-ship - Done child still in flight (repo: alpha) (kind: ship) (since 2026-07-11)
+
+## Queued
+
+## Done
+EOF
+  fm_write_meta "$home/state/terminal-ship.meta" \
+    "window=firstmate:fm-terminal-ship" \
+    "worktree=$home/projects/terminal" \
+    "project=alpha" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=no-mistakes"
+  record_claude_idle "$home/state" terminal-ship
+  printf 'done: complete\n' > "$home/state/terminal-ship.status"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .valid == false
+      and .invalidity == {kind:"terminal_in_flight",ids:["terminal-ship"]}
+      and (.reason | contains("terminal-ship=done"))
+      and (.reason | contains("mate=") | not)
+  ' >/dev/null || fail "ordinary terminal in-flight ship must still produce terminal_in_flight without listing the secondmate: $out"
+  pass "home-summary excludes kind=secondmate from unowned_current and terminal_in_flight"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_secondmate_aggregation_survives_payload_beyond_argv
+test_home_summary_excludes_secondmate_from_child_inventory
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state
