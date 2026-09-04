@@ -1099,12 +1099,14 @@ remove_pr_poll_artifacts() {
 # Resolve the PR number for a worktree branch over REST. Echoes the number on a
 # single match and returns 0; returns non-zero on no match or any lookup failure,
 # so the caller treats it as "no PR found" (fail-safe).
-# REST for the shared-budget reason bin/fm-pr-check.sh states.
+# REST for the shared-budget reason bin/fm-pr-check.sh states. --hostname pins
+# the read to github.com - the only host the caller's slug parse accepts - so
+# an ambient GH_HOST cannot redirect it at another forge.
 pr_number_from_branch() {  # <branch> <owner/repo>
 	local branch=$1 slug=$2 owner n
 	[ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
 	owner=${slug%%/*}
-	n=$(gh api "repos/$slug/pulls?state=all&head=$owner:$branch&per_page=1" \
+	n=$(gh api --hostname github.com "repos/$slug/pulls?state=all&head=$owner:$branch&per_page=1" \
 		--jq '.[0].number // empty' 2>/dev/null) || return 1
 	[ -n "$n" ] || return 1
 	printf '%s' "$n"
@@ -1172,8 +1174,10 @@ pr_is_merged() {
 		number=$(pr_number_from_branch "$branch" "$slug") || return 1
 	fi
 	# REST reports a merged PR as state "closed" plus merged true, so the head is
-	# selected on .merged and an unmerged PR answers with nothing.
-	head=$(gh api "repos/$slug/pulls/$number" \
+	# selected on .merged and an unmerged PR answers with nothing. --hostname pins
+	# the read to github.com - the only host either slug source can name - so an
+	# ambient GH_HOST cannot redirect it at another forge.
+	head=$(gh api --hostname github.com "repos/$slug/pulls/$number" \
 		--jq 'select(.merged) | .head.sha' 2>/dev/null) || return 1
 	[ -n "$head" ] || return 1
 	ensure_commit_object "$number" "$head" || return 1
