@@ -1,0 +1,14 @@
+=== shipped regex (bin/fm-pr-check.sh AUDIENCE_TERMS) ===
+firstmate|crewmate|secondmate|captain|ponytail|treehouse|fm-[a-z0-9-]*\.sh
+
+=== seer #25 body: 'captain rulings' sentence ===
+body: Two standing captain rulings bound the wider design, so the worker split the change.
+hits: [captain]
+-> refuses on 'captain'; 'rulings' NOT flagged
+
+=== measured false-positive body (footer/attestation/worktree redaction/quoted commit) ===
+hits: []
+-> empty => records/publishes (no false positive)
+
+=== every banned term + treehouse scratch path ===
+hits: [captain,crewmate,firstmate,fm-pr-check.sh,ponytail,secondmate,treehouse]
