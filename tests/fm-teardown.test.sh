@@ -267,13 +267,12 @@ land_on_origin_main() {
 # Override GitHub lookups to report PR 7 in <state> with the supplied head.
 # Every lookup bin/ makes here is REST, so the fake answers the three shapes the
 # scripts ask for: the branch->number list route bin/fm-teardown.sh discovers a
-# PR with, the merge state and head together that the same script reads, and the
-# head alone that bin/fm-pr-check.sh records as pr_head=. GraphQL `gh pr view`
-# and `gh-axi pr list` are answered by nothing, so a reintroduced GraphQL read
-# fails the case instead of passing quietly.
-# <state> is the value the scripts' own jq expression produces: MERGED for a
-# merged PR (REST reports that as state "closed" plus merged true), OPEN for one
-# still open, CLOSED for one closed without merging.
+# PR with, the merged-only head that the same script selects, and the head alone
+# that bin/fm-pr-check.sh records as pr_head=. GraphQL `gh pr view` and `gh-axi
+# pr list` are answered by nothing, so a reintroduced GraphQL read fails the case
+# instead of passing quietly.
+# <state> is the fixture's PR state: MERGED, OPEN, or CLOSED without merging.
+# Only MERGED answers the merged-head select, exactly as the REST resource does.
 add_gh_pr_for_head() {  # <case_dir> <head> <state>
   local case_dir=$1 head=$2 state=$3
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
@@ -286,7 +285,9 @@ SH
 if [ "\${1:-}" = api ]; then
   case " \$* " in
     *"/pulls?"*) printf '%s\n' '7' ; exit 0 ;;
-    *".merged"*) printf '%s\t%s\n' '$state' '$head' ; exit 0 ;;
+    *".merged"*)
+      [ '$state' = MERGED ] && printf '%s\n' '$head'
+      exit 0 ;;
     *".head.sha"*) printf '%s\n' '$head' ; exit 0 ;;
   esac
 fi

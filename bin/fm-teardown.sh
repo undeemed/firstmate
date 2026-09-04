@@ -1096,17 +1096,12 @@ remove_pr_poll_artifacts() {
 	fi
 }
 
-# owner/repo for the REST pull request reads below. The recorded pr= URL names
-# the repository when there is one; otherwise the worktree's origin remote does.
-# Returns non-zero when neither yields a GitHub slug, so each caller falls back
+# owner/repo from the worktree's origin remote, for a task with no pr= recorded.
+# Returns non-zero when origin is not a GitHub remote, so the caller falls back
 # the same way it already does on a failed lookup.
-pr_repo_slug() {
+pr_repo_slug_from_origin() {
 	local url slug
-	if [ -n "$PR_URL" ]; then
-		url=$PR_URL
-	else
-		url=$(git -C "$WT" remote get-url origin 2>/dev/null) || return 1
-	fi
+	url=$(git -C "$WT" remote get-url origin 2>/dev/null) || return 1
 	slug=$(printf '%s' "$url" |
 		sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\).*#\1#p' | sed 's#\.git$##')
 	[ -n "$slug" ] || return 1
@@ -1121,7 +1116,7 @@ pr_repo_slug() {
 pr_number_from_branch() {
 	local branch=$1 slug owner n
 	[ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
-	slug=$(pr_repo_slug) || return 1
+	slug=$(pr_repo_slug_from_origin) || return 1
 	owner=${slug%%/*}
 	n=$(gh api "repos/$slug/pulls?state=all&head=$owner:$branch&per_page=1" \
 		--jq '.[0].number // empty' 2>/dev/null) || return 1
@@ -1129,29 +1124,11 @@ pr_number_from_branch() {
 	printf '%s' "$n"
 }
 
-pr_number_from_target() {
-	local target=$1 n
-	case "$target" in
-	'') return 1 ;;
-	*"/pull/"*)
-		n=${target##*/pull/}
-		n=${n%%[!0-9]*}
-		;;
-	[0-9]*)
-		n=${target%%[!0-9]*}
-		;;
-	*) return 1 ;;
-	esac
-	[ -n "$n" ] || return 1
-	printf '%s' "$n"
-}
-
 ensure_commit_object() {
-	local target=$1 commit=$2 n
+	local number=$1 commit=$2
 	git -C "$WT" cat-file -e "$commit^{commit}" 2>/dev/null && return 0
-	n=$(pr_number_from_target "$target") || return 1
 	git -C "$WT" remote get-url origin >/dev/null 2>&1 || return 1
-	git -C "$WT" fetch --quiet origin "refs/pull/$n/head" >/dev/null 2>&1 || return 1
+	git -C "$WT" fetch --quiet origin "refs/pull/$number/head" >/dev/null 2>&1 || return 1
 	git -C "$WT" cat-file -e "$commit^{commit}" 2>/dev/null
 }
 
@@ -1189,33 +1166,29 @@ EOF
 
 # Is the worktree's PR merged for local work contained in that PR? Resolves the
 # PR from the recorded pr= URL first, then from the branch name, and asks GitHub
-# for both the PR state and head. Returns non-zero when the PR is not merged, the
+# for the head of that PR only if it merged. Returns non-zero when the PR is not merged, the
 # current work is not contained in the PR head, no PR is found, or any gh error
 # occurs - the caller then falls back to the content check.
 pr_is_merged() {
-	local branch=$1 target number slug view state head current
+	local branch=$1 number slug head current
 	if [ -n "$PR_URL" ]; then
-		target=$PR_URL
+		# One validated parse yields the repository and the number together, and
+		# refuses a URL this GitHub REST read cannot serve.
+		fm_pr_url_parse "$PR_URL" || return 1
+		[ "$FM_PR_PROVIDER" = github ] || return 1
+		slug=$FM_PR_PATH
+		number=$FM_PR_NUMBER
 	else
-		target=$(pr_number_from_branch "$branch") || return 1
+		slug=$(pr_repo_slug_from_origin) || return 1
+		number=$(pr_number_from_branch "$branch") || return 1
 	fi
-	[ -n "$target" ] || return 1
-	number=$(pr_number_from_target "$target") || return 1
-	slug=$(pr_repo_slug) || return 1
 	# REST rather than `gh pr view --json state,headRefOid`, which is GraphQL.
 	# The REST resource reports a merged PR as state "closed" plus merged true,
-	# so the merge is read from .merged and never from the state alone.
-	view=$(gh api "repos/$slug/pulls/$number" \
-		--jq '(if .merged then "MERGED" else (.state | ascii_upcase) end) + "\t" + .head.sha' 2>/dev/null) || return 1
-	state=${view%%$'\t'*}
-	head=${view#*$'\t'}
-	[ "$state" != "$view" ] || return 1
-	case "$state" in
-	MERGED | merged) ;;
-	*) return 1 ;;
-	esac
+	# so the head is selected on .merged and an unmerged PR answers with nothing.
+	head=$(gh api "repos/$slug/pulls/$number" \
+		--jq 'select(.merged) | .head.sha' 2>/dev/null) || return 1
 	[ -n "$head" ] || return 1
-	ensure_commit_object "$target" "$head" || return 1
+	ensure_commit_object "$number" "$head" || return 1
 	current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
 	git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null && return 0
 	unpushed_patches_are_in_pr_head "$head"
