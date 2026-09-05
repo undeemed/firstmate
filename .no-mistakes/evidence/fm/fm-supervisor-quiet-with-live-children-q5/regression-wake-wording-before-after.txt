@@ -1,0 +1,9 @@
+=== new wake-wording test on BASE 77fa951 (expect FAIL) ===
+not ok - an unattended home was not named as live child work: check: secondmate wake-loop stalled: mate=mate row=7 age=12s depth=1 (unchanged backlog not reported again before 300s)
+
+=== new wake-wording test on TARGET 043596f (expect PASS) ===
+ok - a home with live children reports unattended child work, not a stalled loop
+SINGLE-TEST RUN COMPLETE
+=== actual watcher report on TARGET 043596f ===
+check: secondmate home UNATTENDED - 1 live child task(s) with nobody consuming their events: mate=mate row=7 age=13s depth=1 (unchanged backlog not reported again before 300s)
+ok - a home with live children reports unattended child work, not a stalled loop
