@@ -2122,7 +2122,7 @@ test_parked_own_run_is_aborted_before_teardown() {
     "parked-run-abort: no-mistakes axi abort was never invoked for the task's own parked run"
   assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
     "parked-run-abort: no-mistakes axi abort did not target the verified run id"
-  assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
+  assert_grep "has no outcome yet; aborting" "$case_dir/stderr" \
     "parked-run-abort: teardown did not report aborting the parked run before removing the worker"
   pass "a task's own parked no-mistakes run is aborted, not orphaned, before the worker is removed"
 }
@@ -2201,7 +2201,7 @@ test_parked_own_run_refuses_when_abort_is_unconfirmed() {
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
   expect_code 1 "$rc" "parked-run-abort-unconfirmed: teardown should refuse"
-  assert_grep "REFUSED: no-mistakes run for task-x1 is still parked after axi abort" "$case_dir/stderr" \
+  assert_grep "REFUSED: no-mistakes run for task-x1 is still unfinished after axi abort" "$case_dir/stderr" \
     "parked-run-abort-unconfirmed: teardown did not explain the parked-run refusal"
   assert_present "$case_dir/wt" \
     "parked-run-abort-unconfirmed: teardown removed the worktree after refusing"
@@ -2236,9 +2236,11 @@ test_another_branchs_parked_run_is_never_touched() {
   pass "a parked run on another branch is never aborted by this task's teardown (ownership is precise)"
 }
 
-test_own_autonomous_run_is_left_alone() {
+# A task-owned run still RUNNING at teardown time (Fix 1 in bin/fm-teardown.sh's
+# header). An aborted run stands in for "no later forge write".
+test_own_autonomous_run_is_aborted() {
   local case_dir rc head
-  case_dir=$(make_case autonomous-run-left-alone)
+  case_dir=$(make_case autonomous-run-stopped)
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
@@ -2248,12 +2250,109 @@ test_own_autonomous_run_is_left_alone() {
   FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
-  expect_code 0 "$rc" "autonomous-run-left-alone: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "autonomous-run-left-alone: teardown aborted a task-owned autonomous run"
-  assert_not_contains "$(cat "$case_dir/stderr")" "aborting" \
-    "autonomous-run-left-alone: teardown reported aborting an autonomous run"
-  pass "a task-owned autonomous running step is left alone rather than aborted"
+  expect_code 0 "$rc" "autonomous-run-stopped: teardown should still succeed"
+  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
+    "autonomous-run-stopped: teardown left a task-owned running pipeline alive"
+  pass "a task-owned running pipeline is aborted before teardown returns"
+}
+
+# The other half of that incident: the pane close was never confirmed, yet an
+# unpatched teardown printed "complete" and erased the records that make the
+# still-live worker findable.
+test_unclosed_endpoint_refuses_completion() {
+  local case_dir rc
+  case_dir=$(make_case endpoint-still-open)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  # The recorded window is still listed after the kill, with a live agent as its
+  # current command.
+  cat > "$case_dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) printf '%s\n' 'fm-task-x1' ;;
+  display-message) [ "${*: -1}" != '#{pane_current_command}' ] || printf '%s\n' 'claude' ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "endpoint-still-open: teardown should refuse an unconfirmed close"
+  assert_grep "is not confirmed closed" "$case_dir/stderr" \
+    "endpoint-still-open: teardown did not explain the unconfirmed close"
+  assert_not_contains "$(cat "$case_dir/stdout")" "complete" \
+    "endpoint-still-open: teardown reported completion over a live endpoint"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "endpoint-still-open: teardown erased the task record for a live endpoint"
+  pass "an unconfirmed pane close refuses loudly instead of reporting completion"
+}
+
+# The same two guarantees on the forced secondmate child path: a child ship
+# task's own still-running pipeline is aborted before that child's records and
+# worktree are removed.
+test_forced_secondmate_child_run_is_aborted() {
+  local case_dir rc child_head
+  case_dir=$(make_case secondmate-child-run-abort)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+  child_head=$(git -C "$case_dir/child-a-wt" rev-parse HEAD)
+
+  rc=0
+  FM_FAKE_AXI_STATUS="$(running_axi_status_toon fm/child-a "$child_head" 01CHILDRUN)" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "secondmate-child-run-abort: forced teardown should still succeed"
+  assert_present "$case_dir/nm-abort.log" \
+    "secondmate-child-run-abort: forced cleanup left the child's running pipeline alive"
+  assert_grep "abort --run 01CHILDRUN" "$case_dir/nm-abort.log" \
+    "secondmate-child-run-abort: the abort did not target the child's verified run id"
+  [ "$(wc -l < "$case_dir/nm-abort.log")" -eq 1 ] \
+    || fail "secondmate-child-run-abort: forced cleanup aborted a run it does not own"
+  pass "forced secondmate teardown aborts a child ship task's still-running pipeline"
+}
+
+# ...and a child endpoint still alive after its kill stops the forced cleanup
+# with every durable record intact.
+test_forced_secondmate_child_live_endpoint_stops_cleanup() {
+  local case_dir home rc
+  case_dir=$(make_case secondmate-child-endpoint-open)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+  home="$case_dir/secondmate-home"
+  # The child's recorded window is still listed after the kill, with a live
+  # agent as its current command.
+  cat > "$case_dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) printf '%s\n' 'fm-child-a' ;;
+  display-message) [ "${*: -1}" != '#{pane_current_command}' ] || printf '%s\n' 'claude' ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "secondmate-child-endpoint-open: forced cleanup should stop on a live child endpoint"
+  assert_grep "is not confirmed closed" "$case_dir/stderr" \
+    "secondmate-child-endpoint-open: teardown did not explain the unconfirmed child close"
+  assert_grep "retaining that child's durable identity records" "$case_dir/stderr" \
+    "secondmate-child-endpoint-open: refusal did not explain child record retention"
+  assert_present "$home/state/child-a.meta" \
+    "secondmate-child-endpoint-open: forced cleanup erased the live child's record"
+  [ -d "$case_dir/child-a-wt" ] \
+    || fail "secondmate-child-endpoint-open: forced cleanup removed the live child's worktree"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "secondmate-child-endpoint-open: the stopped cleanup erased the parent record"
+  [ -d "$home" ] \
+    || fail "secondmate-child-endpoint-open: the stopped cleanup removed the secondmate home"
+  assert_not_contains "$(cat "$case_dir/stdout")" "complete" \
+    "secondmate-child-endpoint-open: teardown reported completion over a live child endpoint"
+  pass "a live child endpoint after the kill stops forced cleanup with records intact"
 }
 
 # Record a SECOND task in the same home holding the SAME checkout - the
@@ -3008,7 +3107,10 @@ test_mismatched_run_after_abort_refuses_unconfirmed
 test_empty_status_after_abort_refuses_unconfirmed
 test_not_found_status_after_abort_confirms_completion
 test_another_branchs_parked_run_is_never_touched
-test_own_autonomous_run_is_left_alone
+test_own_autonomous_run_is_aborted
+test_unclosed_endpoint_refuses_completion
+test_forced_secondmate_child_run_is_aborted
+test_forced_secondmate_child_live_endpoint_stops_cleanup
 test_cotenant_process_survives_teardown
 test_unattributable_shared_worktree_process_refuses_teardown
 test_leaked_worktree_process_is_reaped
