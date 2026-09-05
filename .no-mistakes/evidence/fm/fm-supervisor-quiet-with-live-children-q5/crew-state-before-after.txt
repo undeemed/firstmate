@@ -1,0 +1,15 @@
+== fixture: mate says done; 6 live child records; 3 wake rows unread for 6-10 min ==
+
+-- BEFORE (base 77fa951) --
+
+$ /tmp/nm-base-77fa951/bin/fm-crew-state.sh subliminal-mate-b8
+state: done · source: status-log · last item shipped, PR checks green
+
+-- AFTER (target 043596f) --
+
+$ /home/ubuntu/.no-mistakes/worktrees/5d83c95b53c3/01M1PWYCJTRNRE3GW80XJ4R7SR/bin/fm-crew-state.sh subliminal-mate-b8
+state: unattended · source: secondmate-home · 6 live child task record(s), and nothing in that home has consumed its 3 queued wake row(s) for 602s
+
+== healthy supervision on TARGET: 6 live children, wake queue DRAINED ==
+$ bin/fm-crew-state.sh mate
+state: working · source: secondmate-home · supervising 6 live child task record(s), 0 queued wake row(s) in its home

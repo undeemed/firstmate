@@ -1,0 +1,10 @@
+=== new crew-state regression test on BASE 77fa951 (expect FAIL) ===
+not ok - a mate with a live child must not read done (missing: 'state: working')
+--- output ---
+state: done · source: status-log · last item shipped, PR https://example.invalid/pr/9 checks green
+exit=1
+
+=== new crew-state regression test on TARGET 043596f (expect PASS) ===
+ok - a secondmate with live children is never read as idle or done
+SINGLE-TEST RUN COMPLETE
+exit=0
