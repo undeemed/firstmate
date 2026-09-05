@@ -38,6 +38,8 @@
 #   (o) fm-pr-check rerun after HEAD moved                      -> no stale pr_head
 #   (p) fm-pr-check when local HEAD lags                        -> record remote PR head
 #   (q) no-mistakes + NO pr= recorded, PR discovered by branch  -> ALLOW  (yolo/no-CI merge)
+#   (q1) no-mistakes + recorded PR still open                   -> REFUSE (not landed)
+#   (q2) no-mistakes + recorded PR closed without merging       -> REFUSE (not landed)
 #
 # Build-cache reaping (fm-teardown.sh's reap_task_build_cache):
 #   (aa) task-owned, idle cache                 -> REAPED, bytes reported
@@ -262,37 +264,34 @@ land_on_origin_main() {
   rm -rf "$tmp"
 }
 
-# Override GitHub lookups to report PR 7 as merged with the supplied head. The
-# head is answered on two shapes because two owners read it differently:
-# bin/fm-pr-check.sh reads the REST pull request resource for pr_head=, and
-# bin/fm-teardown.sh reads state and head together through gh pr view.
-add_gh_pr_merged_for_head() {
-  local case_dir=$1 head=$2
+# Override GitHub lookups to report PR 7 in <state> with the supplied head.
+# Every lookup bin/ makes here is REST, so the fake answers the three shapes the
+# scripts ask for: the branch->number list route bin/fm-teardown.sh discovers a
+# PR with, the merged-only head that the same script selects, and the head alone
+# that bin/fm-pr-check.sh records as pr_head=. GraphQL `gh pr view` and `gh-axi
+# pr list` are answered by nothing, so a reintroduced GraphQL read fails the case
+# instead of passing quietly.
+# <state> is the fixture's PR state, MERGED by default, or OPEN or CLOSED without
+# merging. Only MERGED answers the merged-head select, as the REST resource does.
+add_gh_pr_for_head() {  # <case_dir> <head> [state]
+  local case_dir=$1 head=$2 state=${3:-MERGED}
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
-case "${1:-} ${2:-}" in
-  "pr list")
-    printf '%s\n' "count: 1 (showing first 1)" "pull_requests[1]{number,state}:" "  7,merged" ; exit 0 ;;
-  "pr view")
-    printf '%s\n' "pull_request:" "  number: 7" "  state: merged" '  merged: "2026-06-26T00:00:00Z"' ; exit 0 ;;
-esac
-exit 0
+echo "error: no GraphQL lookup is expected on this path" >&2
+exit 1
 SH
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$case_dir/gh-calls.log'
 if [ "\${1:-}" = api ]; then
   case " \$* " in
-    *" --jq .head.sha "*) printf '%s\n' '$head' ; exit 0 ;;
+    *"/pulls?"*) printf '%s\n' '7' ; exit 0 ;;
+    *".merged"*)
+      [ '$state' = MERGED ] && printf '%s\n' '$head'
+      exit 0 ;;
+    *".head.sha"*) printf '%s\n' '$head' ; exit 0 ;;
   esac
 fi
-case "\${1:-} \${2:-}" in
-  "pr view")
-    case " \$* " in
-      *"state,headRefOid"*) printf '%s\t%s\n' 'MERGED' '$head' ; exit 0 ;;
-      *"headRefOid"*) printf '%s\n' '$head' ; exit 0 ;;
-    esac
-    ;;
-esac
 echo "error: pull request not found" >&2
 exit 1
 SH
@@ -729,7 +728,7 @@ test_squash_merged_branch_deleted_allows() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   append_pr_meta_for_current_head "$case_dir"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -749,7 +748,7 @@ test_squash_merged_pr_allows_when_head_ancestor_of_pr_head() {
   append_pr_meta_url "$case_dir"
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -777,8 +776,12 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes auto-fix")
   land_on_origin_main "$case_dir" feature.txt hello
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
   # No append_pr_meta_* call: state/task-x1.meta has no pr= or pr_head= line.
+  # With no recorded URL the repository comes from the worktree's own origin, so
+  # the remote is renamed to its real GitHub form here. The merged PR answers
+  # before any content fetch, so nothing in this case reaches the network.
+  git -C "$case_dir/wt" remote set-url origin https://github.com/example/repo.git
 
   ! grep -qE '^(pr|pr_head)=' "$case_dir/state/task-x1.meta" \
     || fail "no-pr-branch-discovery: test setup bug, meta unexpectedly has a pr= line"
@@ -790,7 +793,35 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
 
   expect_code 0 "$rc" "no-pr-branch-discovery: teardown should succeed by discovering the merged PR from the branch name"
   ! grep -q REFUSED "$case_dir/stderr" || fail "no-pr-branch-discovery: teardown printed a REFUSED line"
+  grep -q 'pulls?state=all&head=example:fm/task-x1' "$case_dir/gh-calls.log" \
+    || fail "no-pr-branch-discovery: the branch was not resolved over the REST list route"
+  grep -q 'repos/example/repo/pulls/7' "$case_dir/gh-calls.log" \
+    || fail "no-pr-branch-discovery: the discovered PR was not read over REST"
   pass "teardown discovers a merged PR by branch name and tears down when no pr= was ever recorded"
+}
+
+# An unmerged PR lands nothing, whichever way it is unmerged: REST reports one as
+# state "open" and the other as "closed" with merged false, and the merged-head
+# select answers with nothing for both.
+run_unmerged_pr_refusal_case() {  # <state>
+  local state=$1 case_dir rc pr_head
+  case_dir=$(make_case "unmerged-pr-${state}")
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_for_current_head "$case_dir"
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  add_gh_pr_for_head "$case_dir" "$pr_head" "$state"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "unmerged-pr-$state: teardown should refuse for an unmerged PR"
+  grep -q REFUSED "$case_dir/stderr" || fail "unmerged-pr-$state: no REFUSED line in stderr"
+  grep -q 'repos/example/repo/pulls/7' "$case_dir/gh-calls.log" \
+    || fail "unmerged-pr-$state: the recorded PR was not read over REST"
+  pass "a PR that is $state is not landed work and the worktree is kept"
 }
 
 test_squash_merged_pr_allows_replayed_unpushed_patch() {
@@ -804,7 +835,7 @@ test_squash_merged_pr_allows_replayed_unpushed_patch() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   append_pr_meta_url "$case_dir"
   pr_head=$(land_equivalent_patch_on_origin_branch "$case_dir" pr-head feature.txt hello "add feature")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -824,7 +855,7 @@ test_merged_pr_with_later_local_commit_refuses() {
   append_pr_meta_for_current_head "$case_dir"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   wt_commit_file "$case_dir" later.txt local-only "local follow-up"
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -842,7 +873,7 @@ test_pr_check_does_not_refresh_stale_pr_head() {
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
@@ -879,7 +910,7 @@ test_pr_check_records_remote_head_when_local_lags() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
@@ -943,7 +974,7 @@ test_dirty_worktree_refuses() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   land_on_origin_main "$case_dir" feature.txt hello
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
   printf '%s\n' "uncommitted edit" > "$case_dir/wt/feature.txt"
 
   set +e
@@ -2091,7 +2122,7 @@ test_parked_own_run_is_aborted_before_teardown() {
     "parked-run-abort: no-mistakes axi abort was never invoked for the task's own parked run"
   assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
     "parked-run-abort: no-mistakes axi abort did not target the verified run id"
-  assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
+  assert_grep "has no outcome yet; aborting" "$case_dir/stderr" \
     "parked-run-abort: teardown did not report aborting the parked run before removing the worker"
   pass "a task's own parked no-mistakes run is aborted, not orphaned, before the worker is removed"
 }
@@ -2170,7 +2201,7 @@ test_parked_own_run_refuses_when_abort_is_unconfirmed() {
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
   expect_code 1 "$rc" "parked-run-abort-unconfirmed: teardown should refuse"
-  assert_grep "REFUSED: no-mistakes run for task-x1 is still parked after axi abort" "$case_dir/stderr" \
+  assert_grep "REFUSED: no-mistakes run for task-x1 is still unfinished after axi abort" "$case_dir/stderr" \
     "parked-run-abort-unconfirmed: teardown did not explain the parked-run refusal"
   assert_present "$case_dir/wt" \
     "parked-run-abort-unconfirmed: teardown removed the worktree after refusing"
@@ -2205,9 +2236,11 @@ test_another_branchs_parked_run_is_never_touched() {
   pass "a parked run on another branch is never aborted by this task's teardown (ownership is precise)"
 }
 
-test_own_autonomous_run_is_left_alone() {
+# A task-owned run still RUNNING at teardown time (Fix 1 in bin/fm-teardown.sh's
+# header). An aborted run stands in for "no later forge write".
+test_own_autonomous_run_is_aborted() {
   local case_dir rc head
-  case_dir=$(make_case autonomous-run-left-alone)
+  case_dir=$(make_case autonomous-run-stopped)
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
@@ -2217,12 +2250,109 @@ test_own_autonomous_run_is_left_alone() {
   FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
-  expect_code 0 "$rc" "autonomous-run-left-alone: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "autonomous-run-left-alone: teardown aborted a task-owned autonomous run"
-  assert_not_contains "$(cat "$case_dir/stderr")" "aborting" \
-    "autonomous-run-left-alone: teardown reported aborting an autonomous run"
-  pass "a task-owned autonomous running step is left alone rather than aborted"
+  expect_code 0 "$rc" "autonomous-run-stopped: teardown should still succeed"
+  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
+    "autonomous-run-stopped: teardown left a task-owned running pipeline alive"
+  pass "a task-owned running pipeline is aborted before teardown returns"
+}
+
+# The other half of that incident: the pane close was never confirmed, yet an
+# unpatched teardown printed "complete" and erased the records that make the
+# still-live worker findable.
+test_unclosed_endpoint_refuses_completion() {
+  local case_dir rc
+  case_dir=$(make_case endpoint-still-open)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  # The recorded window is still listed after the kill, with a live agent as its
+  # current command.
+  cat > "$case_dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) printf '%s\n' 'fm-task-x1' ;;
+  display-message) [ "${*: -1}" != '#{pane_current_command}' ] || printf '%s\n' 'claude' ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "endpoint-still-open: teardown should refuse an unconfirmed close"
+  assert_grep "is not confirmed closed" "$case_dir/stderr" \
+    "endpoint-still-open: teardown did not explain the unconfirmed close"
+  assert_not_contains "$(cat "$case_dir/stdout")" "complete" \
+    "endpoint-still-open: teardown reported completion over a live endpoint"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "endpoint-still-open: teardown erased the task record for a live endpoint"
+  pass "an unconfirmed pane close refuses loudly instead of reporting completion"
+}
+
+# The same two guarantees on the forced secondmate child path: a child ship
+# task's own still-running pipeline is aborted before that child's records and
+# worktree are removed.
+test_forced_secondmate_child_run_is_aborted() {
+  local case_dir rc child_head
+  case_dir=$(make_case secondmate-child-run-abort)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+  child_head=$(git -C "$case_dir/child-a-wt" rev-parse HEAD)
+
+  rc=0
+  FM_FAKE_AXI_STATUS="$(running_axi_status_toon fm/child-a "$child_head" 01CHILDRUN)" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "secondmate-child-run-abort: forced teardown should still succeed"
+  assert_present "$case_dir/nm-abort.log" \
+    "secondmate-child-run-abort: forced cleanup left the child's running pipeline alive"
+  assert_grep "abort --run 01CHILDRUN" "$case_dir/nm-abort.log" \
+    "secondmate-child-run-abort: the abort did not target the child's verified run id"
+  [ "$(wc -l < "$case_dir/nm-abort.log")" -eq 1 ] \
+    || fail "secondmate-child-run-abort: forced cleanup aborted a run it does not own"
+  pass "forced secondmate teardown aborts a child ship task's still-running pipeline"
+}
+
+# ...and a child endpoint still alive after its kill stops the forced cleanup
+# with every durable record intact.
+test_forced_secondmate_child_live_endpoint_stops_cleanup() {
+  local case_dir home rc
+  case_dir=$(make_case secondmate-child-endpoint-open)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+  home="$case_dir/secondmate-home"
+  # The child's recorded window is still listed after the kill, with a live
+  # agent as its current command.
+  cat > "$case_dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) printf '%s\n' 'fm-child-a' ;;
+  display-message) [ "${*: -1}" != '#{pane_current_command}' ] || printf '%s\n' 'claude' ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "secondmate-child-endpoint-open: forced cleanup should stop on a live child endpoint"
+  assert_grep "is not confirmed closed" "$case_dir/stderr" \
+    "secondmate-child-endpoint-open: teardown did not explain the unconfirmed child close"
+  assert_grep "retaining that child's durable identity records" "$case_dir/stderr" \
+    "secondmate-child-endpoint-open: refusal did not explain child record retention"
+  assert_present "$home/state/child-a.meta" \
+    "secondmate-child-endpoint-open: forced cleanup erased the live child's record"
+  [ -d "$case_dir/child-a-wt" ] \
+    || fail "secondmate-child-endpoint-open: forced cleanup removed the live child's worktree"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "secondmate-child-endpoint-open: the stopped cleanup erased the parent record"
+  [ -d "$home" ] \
+    || fail "secondmate-child-endpoint-open: the stopped cleanup removed the secondmate home"
+  assert_not_contains "$(cat "$case_dir/stdout")" "complete" \
+    "secondmate-child-endpoint-open: teardown reported completion over a live child endpoint"
+  pass "a live child endpoint after the kill stops forced cleanup with records intact"
 }
 
 # Record a SECOND task in the same home holding the SAME checkout - the
@@ -2951,6 +3081,8 @@ test_herdr_projection_teardown_surfaces_restore_failure_without_blocking_cleanup
 test_squash_merged_branch_deleted_allows
 test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
+run_unmerged_pr_refusal_case OPEN
+run_unmerged_pr_refusal_case CLOSED
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_merged_pr_with_later_local_commit_refuses
 test_pr_check_does_not_refresh_stale_pr_head
@@ -2975,7 +3107,10 @@ test_mismatched_run_after_abort_refuses_unconfirmed
 test_empty_status_after_abort_refuses_unconfirmed
 test_not_found_status_after_abort_confirms_completion
 test_another_branchs_parked_run_is_never_touched
-test_own_autonomous_run_is_left_alone
+test_own_autonomous_run_is_aborted
+test_unclosed_endpoint_refuses_completion
+test_forced_secondmate_child_run_is_aborted
+test_forced_secondmate_child_live_endpoint_stops_cleanup
 test_cotenant_process_survives_teardown
 test_unattributable_shared_worktree_process_refuses_teardown
 test_leaked_worktree_process_is_reaped
