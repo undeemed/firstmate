@@ -46,7 +46,8 @@
 # mode's own delivery point (the PR body for the PR modes, the branch handoff for
 # local-only), and no scaffold states a size number because the gate replaced the
 # line cap. Scouts and charters never carry it.
-# LEAN_GATE below owns the invocation and the exit codes for all three modes.
+# LEAN_GATE below owns the invocation, the exit codes, and the three-round bound
+# for all three modes.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns merge decisions, so yolo is
@@ -87,6 +88,9 @@
 # line folds under the shared "default" bucket and cannot be answered by its own
 # key; bin/fm-classify-lib.sh owns that grammar and the drain warning that
 # catches a misplaced one.
+# Every worker scaffold's rules also forbid waiting on a forge by polling it in a
+# shell loop and point at firstmate's armed merge poll (bin/fm-pr-check.sh)
+# instead; FORGE_POLL_RULE below owns that text and the measured reason for it.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -298,6 +302,19 @@ If you intend to finish but have not finished, the line is `working:`, or `block
 EOF
 STATUS_HONESTY=${STATUS_HONESTY%$'\n'}
 
+# Forge-poll prohibition, byte-identical in every worker scaffold, quoted for the
+# same backtick reason as the two blocks above. A hand-written wait loop re-reads
+# the PR through GraphQL on every iteration: `gh-axi pr view` costs 2 points, so a
+# 45-second loop spends 160 of the fleet's shared 5,000 points per hour per PR
+# waited on. The armed merge poll bin/fm-pr-check.sh spends none of that budget.
+IFS= read -r -d '' FORGE_POLL_RULE <<'EOF' || true
+   Never wait on a forge by polling it in a shell loop - no `while ...; do gh pr view ...; sleep ...; done`
+   and no `gh pr checks` variant of it. Every iteration spends the fleet's shared GraphQL budget, and one
+   hour of waiting can empty it for every other task. Report the PR URL and stop instead: firstmate arms
+   the merge poll (`bin/fm-pr-check.sh`), which watches the PR on the supervision sweep at no GraphQL cost.
+EOF
+FORGE_POLL_RULE=${FORGE_POLL_RULE%$'\n'}
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -443,6 +460,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 1. Never push to any remote and never open a PR.
 2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+$FORGE_POLL_RULE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
@@ -493,7 +511,9 @@ fi
 # every ship delivery point has, the bare form reviews an empty diff and exits 1.
 # shellcheck disable=SC2016  # single quotes are deliberate: these backticks are literal brief text
 LEAN_GATE='run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
-Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.'
+Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+The loop is bounded at THREE rounds because the gate does not always converge, so never run a fourth round, and never obey a finding that reverses what an earlier round ruled on the same code - record that contradiction and leave the earlier ruling standing.
+When the third round still exits 2, its remaining findings and every contradiction you recorded belong in the verdict you report below as named keeps, not in another round of cutting.'
 
 # Ship task: shape Setup / Rule 1 / Definition of done by this task's explicit
 # delivery mode, validated above. The generated DOD opens with the fixed
@@ -596,6 +616,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 $RULE1
 2. Stay inside this worktree; modify nothing outside it.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+$FORGE_POLL_RULE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.

@@ -368,6 +368,9 @@ The pipeline composes the published body itself, so body content a brief merely 
 Tell the captain the PR's full URL, always the complete `https://...` link rather than a bare `#number`, a concise outcome summary, and the no-mistakes risk level when applicable.
 There is no line cap: before opening a PR, run the harness-agnostic `ponytail-review` wrapper on the diff (`ponytail-review` for uncommitted work, `ponytail-review <base>` such as `origin/main`, or `git diff main... | ponytail-review --stdin`), cut everything it names, and re-run it until it exits 0 with `Lean already. Ship.`
 Exit 2 means findings remain and must be cut, while exit 1 means the review could not run at all and must be reported rather than treated as a pass.
+Bound that loop at three rounds, because the gate does not always converge: one unchanged diff answered exit 0 and then exit 2 minutes apart, and a later round asked to delete what an earlier round asked to create.
+Never obey a finding that reverses what an earlier round ruled on the same code - record the contradiction and leave the earlier ruling standing.
+When the third round still exits 2, record its remaining findings in the PR body as named keeps with the reason each earns its place and let the work proceed, rather than running a fourth round.
 Never hold or reject an otherwise green PR on size alone.
 Split only on genuinely independent seams, never because a total looked big, and a split that leaves an intermediate PR broken is not a split.
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine merge authority.
