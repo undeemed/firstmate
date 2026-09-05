@@ -69,9 +69,6 @@ FLEET="$SCRIPT_DIR/fm-fleet-snapshot.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
-# shellcheck source=bin/fm-pr-lib.sh
-# shellcheck disable=SC1091
-. "$SCRIPT_DIR/fm-pr-lib.sh"
 
 # Bounds (overridable for tests / large fleets).
 FM_BEARINGS_LANDED=${FM_BEARINGS_LANDED:-6}
@@ -211,7 +208,7 @@ if [ "$INCLUDE_PRS" = 1 ]; then
     repos=""
     while IFS= read -r u; do
       [ -n "$u" ] || continue
-      s=$(fm_pr_github_slug "$u"); [ -n "$s" ] || continue
+      s=$("$SCRIPT_DIR/fm-github-slug.sh" "$u"); [ -n "$s" ] || continue
       case " $repos " in *" $s "*) : ;; *) repos="$repos $s" ;; esac
     done <<EOF
 $(printf '%s' "$SNAP" | jq -r '.tasks[].pr.url // empty')
@@ -220,7 +217,7 @@ EOF
       [ -n "$wt" ] || continue
       [ -d "$wt" ] || continue
       u=$(git -C "$wt" remote get-url origin 2>/dev/null) || continue
-      s=$(fm_pr_github_slug "$u"); [ -n "$s" ] || continue
+      s=$("$SCRIPT_DIR/fm-github-slug.sh" "$u"); [ -n "$s" ] || continue
       case " $repos " in *" $s "*) : ;; *) repos="$repos $s" ;; esac
     done <<EOF
 $(printf '%s' "$SNAP" | jq -r '.tasks[] | select(.kind != "secondmate") | .paths.worktree.path // empty')

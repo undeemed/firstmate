@@ -1169,7 +1169,7 @@ pr_is_merged() {
 	else
 		# No recorded URL: the repository is the worktree's own origin remote.
 		slug=$(git -C "$WT" remote get-url origin 2>/dev/null) || return 1
-		slug=$(fm_pr_github_slug "$slug")
+		slug=$("$SCRIPT_DIR/fm-github-slug.sh" "$slug")
 		[ -n "$slug" ] || return 1
 		number=$(pr_number_from_branch "$branch" "$slug") || return 1
 	fi
