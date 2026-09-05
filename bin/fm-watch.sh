@@ -715,8 +715,13 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
-      date +%s > "$since_file"
+      # Drop the finished chain BEFORE starting the new timer: the numeric
+      # timer is the observable commit point of the new idle window, so the
+      # window must never coexist with the old chain - neither for a reader
+      # polling between the two writes, nor after a crash between them (a
+      # numeric timer would stop this branch from ever re-running the drop).
       clear_defer_tracking "$(window_key "$win")"
+      date +%s > "$since_file"
       triage_log "absorbed $label timer reset: $win"
       ;;
     *)
