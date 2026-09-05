@@ -1,0 +1,44 @@
+ok - raw-byte parser accepts canonical URLs and rejects the complete adversarial matrix
+ok - GitLab merge requests are followed on any instance and never wake falsely
+ok - an armed merge poll survives later metadata writes and names real ambiguity distinctly
+ok - validated merged polls notify once and retire before the next watcher cycle
+ok - merged poll retirement preserves every persistent secondmate lifecycle artifact
+ok - queue, receipt, and every fixed-path removal crash point recover without loss or repeated execution
+ok - open/red, closed-unmerged, malformed, and forge errors remain armed until an exact merged transition
+ok - replacement, nonterminal, tampered, and custom results receive no deletion authority
+ok - queue failure and untrusted receipts preserve canonical poll evidence
+ok - GitHub and GitLab exact merged results share one retirement path
+ok - PR and teardown entrypoints reject invalid arguments before every side effect
+ok - valid direct and merge flows record exact metadata and reject multiline head metadata
+ok - rejected metacharacter bytes remain inert at generation and watcher time
+ok - static poll is silent except for one merged line and remains watcher-bounded
+ok - interrupted atomic preparation cleans private temporaries and publishes nothing
+ok - concurrent watchers observe only complete private poll publications
+ok - post-rename poll validation faults revoke both names and allow a clean retry
+ok - migration creates and validates private state before watcher exclusion
+ok - migration pauses older watchers and acquires exclusion before its first scan or marker
+ok - poll, marker, diagnostic, and quarantine paths refuse symlinks and directories
+ok - marker and diagnostic rename errors and signals fail closed and recover durably on retry
+ok - post-rename marker, diagnostic, and obligation faults are revoked and reconstructed on retry
+ok - quarantine type and mode faults fail closed and recover only when a retry can validate them
+ok - canonical and ambiguous failure obligations block every retry until all task artifacts are repaired
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ok - ambiguous migration recovery accepts an explicitly validated replacement poll
+ok - ambiguous repair rejects copied, metadata- or task-mismatched, forged, and partial poll publications
+ok - all live, marker, diagnostic, X, custom-check, obligation, and teardown boundaries require single-link files
+ok - canonical publication failure remains incomplete until a later clean retry rebuilds the poll
+ok - legacy reserved obligations and delimiter-bearing task IDs retry without ambiguity
+ok - migration never executes legacy checks, preserves X mode, quarantines ambiguity, and is idempotent
+ok - historical X shims migrate only from the exact single-link mode-0755 identity
+ok - direct registration refreshes authenticated v1 X shims across marker states
+ok - bootstrap runs the non-executing migration at the locked session boundary
+ok - bootstrap isolates incomplete poll migration from unrelated recovery sweeps
+ok - watcher signals promptly stop custom checks and clean private state
+ok - returned custom check descendants are drained on installed and fallback timeout paths
+ok - teardown removes safe poll artifacts and refuses quarantine-directory symlinks without traversal

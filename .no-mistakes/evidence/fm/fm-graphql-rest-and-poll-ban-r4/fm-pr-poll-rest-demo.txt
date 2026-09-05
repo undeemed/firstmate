@@ -1,0 +1,13 @@
+=== bin/fm-pr-poll.sh end-to-end: one fake `gh` on PATH answering the REST PR resource ===
+
+merged PR #41            -> stdout: merged   (exit 0)
+open PR #52              -> stdout: <empty>  (exit 0)
+closed-without-merge PR #63 -> stdout: <empty>  (exit 0)
+
+--- every forge call the poll made (fake gh argv log) ---
+gh api --hostname github.com repos/octo/widgets/pulls/41 --jq .merged
+gh api --hostname github.com repos/octo/widgets/pulls/52 --jq .merged
+gh api --hostname github.com repos/octo/widgets/pulls/63 --jq .merged
+
+--- GraphQL calls made ---
+0

@@ -1,0 +1,25 @@
+=== bin/fm-brief.sh: generated brief text for all four worker scaffolds ===
+
+--- poll-a1 (--mode no-mistakes) -> /tmp/fm-brief-demo.1wuuBZ/data/poll-a1/brief.md ---
+25:   Never wait on a forge by polling it in a shell loop - no `while ...; do gh pr view ...; sleep ...; done`
+26-   and no `gh pr checks` variant of it. Every iteration spends the fleet's shared GraphQL budget, and one
+27-   hour of waiting can empty it for every other task. Report the PR URL and stop instead: firstmate arms
+28-   the merge poll (`bin/fm-pr-check.sh`), which watches the PR on the supervision sweep at no GraphQL cost.
+
+--- poll-a2 (--mode direct-PR) -> /tmp/fm-brief-demo.1wuuBZ/data/poll-a2/brief.md ---
+24:   Never wait on a forge by polling it in a shell loop - no `while ...; do gh pr view ...; sleep ...; done`
+25-   and no `gh pr checks` variant of it. Every iteration spends the fleet's shared GraphQL budget, and one
+26-   hour of waiting can empty it for every other task. Report the PR URL and stop instead: firstmate arms
+27-   the merge poll (`bin/fm-pr-check.sh`), which watches the PR on the supervision sweep at no GraphQL cost.
+
+--- poll-a3 (--mode local-only) -> /tmp/fm-brief-demo.1wuuBZ/data/poll-a3/brief.md ---
+24:   Never wait on a forge by polling it in a shell loop - no `while ...; do gh pr view ...; sleep ...; done`
+25-   and no `gh pr checks` variant of it. Every iteration spends the fleet's shared GraphQL budget, and one
+26-   hour of waiting can empty it for every other task. Report the PR URL and stop instead: firstmate arms
+27-   the merge poll (`bin/fm-pr-check.sh`), which watches the PR on the supervision sweep at no GraphQL cost.
+
+--- poll-a4 (--scout) -> /tmp/fm-brief-demo.1wuuBZ/data/poll-a4/brief.md ---
+21:   Never wait on a forge by polling it in a shell loop - no `while ...; do gh pr view ...; sleep ...; done`
+22-   and no `gh pr checks` variant of it. Every iteration spends the fleet's shared GraphQL budget, and one
+23-   hour of waiting can empty it for every other task. Report the PR URL and stop instead: firstmate arms
+24-   the merge poll (`bin/fm-pr-check.sh`), which watches the PR on the supervision sweep at no GraphQL cost.
