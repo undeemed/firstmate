@@ -193,11 +193,6 @@ PR_REPOS_SHOWN=0
 PR_ROWS_CAPPED=0
 PR_ROWS_MIN_TOTAL=0
 
-# Parse owner/repo from an https or ssh GitHub remote/PR URL; empty if not GitHub.
-repo_slug() {  # <url>
-  printf '%s' "$1" | sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\)#\1#p' | sed 's#\.git$##; s#/pull/.*$##; s#/$##'
-}
-
 # Bounded gh call; prints stdout, non-zero on timeout/failure. gh only.
 # bin/fm-timeout-lib.sh owns the bound itself.
 gh_bounded() {  # <args...>
@@ -213,7 +208,7 @@ if [ "$INCLUDE_PRS" = 1 ]; then
     repos=""
     while IFS= read -r u; do
       [ -n "$u" ] || continue
-      s=$(repo_slug "$u"); [ -n "$s" ] || continue
+      s=$("$SCRIPT_DIR/fm-github-slug.sh" "$u"); [ -n "$s" ] || continue
       case " $repos " in *" $s "*) : ;; *) repos="$repos $s" ;; esac
     done <<EOF
 $(printf '%s' "$SNAP" | jq -r '.tasks[].pr.url // empty')
@@ -222,7 +217,7 @@ EOF
       [ -n "$wt" ] || continue
       [ -d "$wt" ] || continue
       u=$(git -C "$wt" remote get-url origin 2>/dev/null) || continue
-      s=$(repo_slug "$u"); [ -n "$s" ] || continue
+      s=$("$SCRIPT_DIR/fm-github-slug.sh" "$u"); [ -n "$s" ] || continue
       case " $repos " in *" $s "*) : ;; *) repos="$repos $s" ;; esac
     done <<EOF
 $(printf '%s' "$SNAP" | jq -r '.tasks[] | select(.kind != "secondmate") | .paths.worktree.path // empty')
@@ -234,6 +229,9 @@ EOF
     for repo in $repos; do
       if [ "$ALL_PR_REPOS" != 1 ] && [ "$nrepos" -ge "$FM_BEARINGS_PR_REPOS" ]; then break; fi
       nrepos=$((nrepos + 1))
+      # Deliberately GraphQL: one point per repository returns the review
+      # decision, mergeability and check rollup for every open PR at once, and
+      # REST has no batch equal - matching it would cost three calls per PR.
       out=$(gh_bounded pr list --repo "$repo" --state open --limit "$pr_fetch_limit" \
         --json number,title,url,headRefName,reviewDecision,mergeable,statusCheckRollup 2>/dev/null) \
         || { nwarn=$((nwarn + 1)); continue; }
