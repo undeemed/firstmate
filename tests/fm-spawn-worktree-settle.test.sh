@@ -77,7 +77,14 @@ make_settle_case() {
   fm_git_worktree "$proj" "$wt" "wt-$name"
   fm_git_init_commit "$stale"
   mkdir -p "$home/data/$id"
-  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  cat > "$home/data/$id/brief.md" <<EOF
+# Task
+## Captain's intent
+Exercise settled-worktree detection for $id.
+
+## Firstmate spec
+Record only the pane's stable worktree.
+EOF
   touch "$home/state/.last-watcher-beat"
   printf '%s\n' "$case_dir|$home|$proj|$wt|$stale|$fakebin|$countfile|$stale_reads"
 }
@@ -124,20 +131,23 @@ test_single_stale_first_read_is_not_accepted() {
 # costs the loop's existing one-second inter-poll sleep to confirm - not an
 # extra full cycle on top of that.
 test_already_settled_pane_costs_one_confirm_sleep() {
-  local rec id out status start end elapsed
+  local rec id out status reads
   id=settle-already-settled-z2
   rec=$(make_settle_case settle-already-settled "$id" 0)
   read_settle_record "$rec"
 
-  start=$(date +%s)
   out=$(run_settle_spawn "$id")
   status=$?
-  end=$(date +%s)
-  elapsed=$((end - start))
   expect_code 0 "$status" "spawn should succeed when the pane is already settled"
   assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$id.meta" \
     "meta did not record the already-settled worktree"
-  [ "$elapsed" -le 5 ] || fail "already-settled pane took ${elapsed}s to confirm - expected close to the single inter-poll sleep"
+  # Count the pane reads, not the wall clock: the contract is that a settled
+  # pane costs one read plus one confirming re-read and never an extra full
+  # cycle, while a loaded runner's scheduling latency is not part of it and
+  # made a five-second bound flake.
+  reads=$(cat "$COUNTFILE")
+  [ "$reads" -eq 2 ] \
+    || fail "already-settled pane took $reads pane reads to confirm - expected one read plus one confirm"
   pass "an already-settled pane confirms via the existing inter-poll sleep, not an extra full cycle"
 }
 

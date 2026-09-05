@@ -8,20 +8,21 @@
 # It provides the boilerplate every test file used to re-roll: ok/not-ok
 # reporters, a self-cleaning temp root, fakebin/PATH-shim helpers, deterministic
 # git identity and fixture builders, state/<id>.meta writers, and the common
-# string/exit-code/file assertions. It deliberately does NOT bundle the
-# behavior-specific fake tmux/treehouse/no-mistakes mocks: those encode terminal
-# and lifecycle assumptions that differ per suite and belong with the tests that
-# own them.
+# string/exit-code/file assertions. Shared fake-toolchain and spawn-world
+# builders live in tests/fixtures.sh; wake-queue mocks in wake-helpers.sh;
+# secondmate-lifecycle mocks in secondmate-helpers.sh. Suite-specific fakes
+# that encode a single test's terminal or lifecycle assumptions still belong
+# with the tests that own them.
 #
 # ROOT is exported as the firstmate repo root (this file lives in tests/), so a
 # sourcing test can use "$ROOT/bin/..." without recomputing it.
 
 # Idempotent guard: behavior-area helper files (secondmate-helpers.sh,
-# spawn-helpers.sh, wake-helpers.sh) source this library for ROOT/fail/pass,
-# and the test that includes them may also source it directly. Re-sourcing
-# must not wipe the registered-cleanup array or reset state.
+# wake-helpers.sh, fixtures.sh) source this library for
+# ROOT/fail/pass, and the test that includes them may also source it directly.
+# Re-sourcing must not wipe the registered-cleanup array or reset state.
 if [ -n "${FM_TEST_LIB_SOURCED:-}" ]; then
-  return 0
+	return 0
 fi
 FM_TEST_LIB_SOURCED=1
 
@@ -34,6 +35,14 @@ FM_TEST_LIB_SOURCED=1
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
+# Fixture homes are built with the ambient umask, and the private-state
+# validation in bin/fm-procevent-lib.sh refuses a group- or other-writable
+# state root. On a box with umask 002 every fixture state directory lands 0775
+# and suites that arm a real process-event source fail for the developer's
+# umask rather than for their own behavior, so pin the umask the same way CI
+# runs. Production code still sets its own stricter umask where it needs one.
+umask 022
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
@@ -42,12 +51,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # --- reporters --------------------------------------------------------------
 
 fail() {
-  printf 'not ok - %s\n' "$1" >&2
-  exit 1
+	printf 'not ok - %s\n' "$1" >&2
+	exit 1
 }
 
 pass() {
-  printf 'ok - %s\n' "$1"
+	printf 'ok - %s\n' "$1"
 }
 
 # --- self-cleaning temp root ------------------------------------------------
@@ -72,27 +81,27 @@ FM_TEST_CLEANUP_DIRS=()
 FM_TEST_CLEANUP_REGISTRY=$(mktemp "${TMPDIR:-/tmp}/.fm-test-cleanup.$$.XXXXXX") || return 1
 
 fm_test_pid_identity() {
-  local pid=$1
-  FM_STATE_OVERRIDE="${TMPDIR:-/tmp}" bash -c \
-    '. "$1"; fm_pid_identity "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$pid"
+	local pid=$1
+	FM_STATE_OVERRIDE="${TMPDIR:-/tmp}" bash -c \
+		'. "$1"; fm_pid_identity "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$pid"
 }
 
 FM_TEST_OWNER_IDENTITY=$(fm_test_pid_identity "$$") || {
-  rm -f "$FM_TEST_CLEANUP_REGISTRY"
-  return 1
+	rm -f "$FM_TEST_CLEANUP_REGISTRY"
+	return 1
 }
 
 fm_test_cleanup() {
-  local d
-  for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"; do
-    [ -n "$d" ] && rm -rf "$d"
-  done
-  if [ -f "$FM_TEST_CLEANUP_REGISTRY" ]; then
-    while IFS= read -r d; do
-      [ -n "$d" ] && rm -rf "$d"
-    done < "$FM_TEST_CLEANUP_REGISTRY"
-    rm -f "$FM_TEST_CLEANUP_REGISTRY"
-  fi
+	local d
+	for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"; do
+		[ -n "$d" ] && rm -rf "$d"
+	done
+	if [ -f "$FM_TEST_CLEANUP_REGISTRY" ]; then
+		while IFS= read -r d; do
+			[ -n "$d" ] && rm -rf "$d"
+		done <"$FM_TEST_CLEANUP_REGISTRY"
+		rm -f "$FM_TEST_CLEANUP_REGISTRY"
+	fi
 }
 
 # A caller reads this through a command substitution, so a plain non-zero return
@@ -104,15 +113,21 @@ fm_test_cleanup() {
 # the substitution's own subshell: signal the test process, whose EXIT and TERM
 # traps clean up and report, and keep the return for a caller that checks it.
 fm_test_tmproot_fatal() {
-  printf 'not ok - %s\n' "$1" >&2
-  kill -TERM $$ 2>/dev/null || true
-  return 1
+	printf 'not ok - %s\n' "$1" >&2
+	kill -TERM $$ 2>/dev/null || true
+	return 1
 }
 
 fm_test_tmproot() {
-  local prefix=${1:-fm-test} root
-  if ! root=$(mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX") || [ -z "$root" ]; then
-    fm_test_tmproot_fatal "could not create a fixture root under TMPDIR=${TMPDIR:-/tmp} (full filesystem or quota?)"
+  local prefix=${1:-fm-test} root tmp_base
+  tmp_base=${TMPDIR:-/tmp}
+  tmp_base=${tmp_base%/}
+  if ! root=$(mktemp -d "$tmp_base/${prefix}.XXXXXX") || [ -z "$root" ]; then
+    fm_test_tmproot_fatal "could not create a fixture root under TMPDIR=$tmp_base (full filesystem or quota?)"
+    return 1
+  fi
+  if ! root=$(cd -P -- "$root" && pwd -P) || [ -z "$root" ]; then
+    fm_test_tmproot_fatal "could not resolve the fixture root under TMPDIR=$tmp_base"
     return 1
   fi
   if ! printf '%s\n%s\n' "$$" "$FM_TEST_OWNER_IDENTITY" > "$root/.fm-test-fixture" ||
@@ -134,8 +149,8 @@ trap 'fm_test_cleanup; exit 143' TERM
 # a self-cleaning fixture root instead. A caller that pinned FM_TASKTMP_ROOT
 # deliberately keeps its own choice.
 if [ -z "${FM_TASKTMP_ROOT:-}" ]; then
-  FM_TASKTMP_ROOT=$(fm_test_tmproot fm-tasktmp) || return 1
-  export FM_TASKTMP_ROOT
+	FM_TASKTMP_ROOT=$(fm_test_tmproot fm-tasktmp) || return 1
+	export FM_TASKTMP_ROOT
 fi
 
 # fm_test_reap_orphans: best-effort sweep for fixture roots left behind by a
@@ -148,54 +163,100 @@ fi
 FM_TEST_ORPHAN_MAX_AGE_SECONDS=${FM_TEST_ORPHAN_MAX_AGE_SECONDS:-3600}
 
 fm_test_reap_orphans() {
-  local marker dir mtime now owner_pid owner_identity current_identity
-  now=$(date +%s)
-  for marker in "${TMPDIR:-/tmp}"/fm-*/.fm-test-fixture; do
-    [ -e "$marker" ] || continue
-    owner_pid=$(sed -n '1p' "$marker" 2>/dev/null) || owner_pid=
-    owner_identity=$(sed -n '2,$p' "$marker" 2>/dev/null) || owner_identity=
-    case "$owner_pid" in
-      '' | *[!0-9]*) ;;
-      *)
-        current_identity=$(fm_test_pid_identity "$owner_pid" 2>/dev/null) || current_identity=
-        if [ -n "$owner_identity" ] && [ "$current_identity" = "$owner_identity" ]; then
-          continue
-        fi
-        ;;
-    esac
-    mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null) || continue
-    [ $((now - mtime)) -ge "$FM_TEST_ORPHAN_MAX_AGE_SECONDS" ] || continue
-    dir=$(dirname "$marker")
-    rm -rf "$dir"
-  done
+	local marker dir mtime now owner_pid owner_identity current_identity
+	now=$(date +%s)
+	for marker in "${TMPDIR:-/tmp}"/fm-*/.fm-test-fixture; do
+		[ -e "$marker" ] || continue
+		owner_pid=$(sed -n '1p' "$marker" 2>/dev/null) || owner_pid=
+		owner_identity=$(sed -n '2,$p' "$marker" 2>/dev/null) || owner_identity=
+		case "$owner_pid" in
+		'' | *[!0-9]*) ;;
+		*)
+			current_identity=$(fm_test_pid_identity "$owner_pid" 2>/dev/null) || current_identity=
+			if [ -n "$owner_identity" ] && [ "$current_identity" = "$owner_identity" ]; then
+				continue
+			fi
+			;;
+		esac
+		mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null) || continue
+		[ $((now - mtime)) -ge "$FM_TEST_ORPHAN_MAX_AGE_SECONDS" ] || continue
+		dir=$(dirname "$marker")
+		if [ -d "$dir" ] && [ ! -L "$dir" ]; then
+			find "$dir" -type d -exec chmod u+rwx {} + 2>/dev/null || true
+		fi
+		rm -rf "$dir"
+	done
 }
 
-fm_test_reap_orphans
+# A parent coordinator can reap once before it starts isolated child sections.
+# Those children use their own EXIT cleanup and must not spend their bounded
+# execution window repeating the same global stale-fixture scan.
+if [ "${FM_TEST_SKIP_ORPHAN_REAP:-0}" != 1 ]; then
+	fm_test_reap_orphans
+fi
 
 # --- fakebin / PATH shims ---------------------------------------------------
 #
 # fm_fakebin <dir> creates <dir>/fakebin and echoes it; prepend it to PATH to
 # shadow real tools with stubs. fm_fake_exit0 drops trivial exit-0 stubs for the
-# named tools into a fakebin dir. fm_fake_version_tool drops a stub for a tool
-# whose installed version bootstrap gates, so a fixture cannot be reported as an
-# unparseable build simply for answering `--version` with nothing.
+# named tools into a fakebin dir. fm_fake_crash_injector drops the shim a fake
+# uses to crash the process under test deterministically. fm_fake_version_tool
+# drops a stub for a tool whose installed version bootstrap gates, so a fixture
+# cannot be reported as an unparseable build simply for answering `--version`
+# with nothing.
 
 fm_fakebin() {
-  local dir=$1 fakebin="$1/fakebin"
-  mkdir -p "$fakebin"
-  printf '%s\n' "$fakebin"
+	local dir=$1 fakebin="$1/fakebin"
+	mkdir -p "$fakebin"
+	printf '%s\n' "$fakebin"
 }
 
 fm_fake_exit0() {
-  local fakebin=$1 tool
-  shift
-  for tool in "$@"; do
-    cat > "$fakebin/$tool" <<'SH'
+	local fakebin=$1 tool
+	shift
+	for tool in "$@"; do
+		cat >"$fakebin/$tool" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
-    chmod +x "$fakebin/$tool"
-  done
+		chmod +x "$fakebin/$tool"
+	done
+}
+
+# fm_fake_crash_injector <fakebin>
+# Drops an `fm-crash-inject <pid>` shim that a PATH fake calls to simulate a
+# hard crash of the process under test. It SIGKILLs <pid> and then returns only
+# once that process is observably gone, so the fake never resumes work while its
+# victim could still be running. Sleeping a fixed interval instead makes the
+# injection a wall-clock bet that a loaded host loses: the fake wakes up and
+# completes the very operation the case needs left unfinished. Exits non-zero
+# with a diagnostic if the target outlives the signal, so a broken injection
+# fails loudly rather than silently changing what the case measures.
+fm_fake_crash_injector() {
+  local fakebin=$1
+  cat > "$fakebin/fm-crash-inject" <<'SH'
+#!/usr/bin/env bash
+set -u
+target=${1:?fm-crash-inject: <pid> required}
+case "$target" in
+  ''|*[!0-9]*)
+    echo "fm-crash-inject: '$target' is not a pid" >&2
+    exit 1
+    ;;
+esac
+kill -KILL "$target" 2>/dev/null || true
+waited=0
+while [ "$waited" -lt 600 ]; do
+  case "$(ps -o state= -p "$target" 2>/dev/null | tr -d '[:space:]')" in
+    ''|Z*) exit 0 ;;
+  esac
+  waited=$((waited + 1))
+  sleep 0.05
+done
+echo "fm-crash-inject: pid $target still running 30s after SIGKILL" >&2
+exit 1
+SH
+  chmod +x "$fakebin/fm-crash-inject"
 }
 
 # fm_fake_version_tool <fakebin> <tool> <override-env-var> <default-version>
@@ -203,8 +264,8 @@ SH
 # and non-empty, and with <default-version> otherwise; every other invocation
 # exits 0. A case that needs to drive a version floor exports the variable.
 fm_fake_version_tool() {
-  local fakebin=$1 tool=$2 override=$3 default=$4
-  cat > "$fakebin/$tool" <<SH
+	local fakebin=$1 tool=$2 override=$3 default=$4
+	cat >"$fakebin/$tool" <<SH
 #!/usr/bin/env bash
 if [ "\${1:-}" = --version ]; then
   printf '%s\n' "\${$override:-$default}"
@@ -212,7 +273,7 @@ if [ "\${1:-}" = --version ]; then
 fi
 exit 0
 SH
-  chmod +x "$fakebin/$tool"
+	chmod +x "$fakebin/$tool"
 }
 
 # --- deterministic git identity and fixtures --------------------------------
@@ -220,38 +281,38 @@ SH
 # fm_git_identity [name] [email]: export a fixed author/committer identity so
 # fixture commits never depend on the host git config.
 fm_git_identity() {
-  export GIT_AUTHOR_NAME=${1:-fmtest} GIT_AUTHOR_EMAIL=${2:-fmtest@example.invalid}
-  export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
+	export GIT_AUTHOR_NAME=${1:-fmtest} GIT_AUTHOR_EMAIL=${2:-fmtest@example.invalid}
+	export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
 }
 
 # fm_git_init_commit <dir>: create a git repo at <dir> with a README and one
 # commit. Uses an inline identity so it works whether or not fm_git_identity was
 # called.
 fm_git_init_commit() {
-  local dir=$1
-  mkdir -p "$dir"
-  git -C "$dir" init -q
-  printf '# %s\n' "$(basename "$dir")" > "$dir/README.md"
-  git -C "$dir" add README.md
-  git -C "$dir" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
+	local dir=$1
+	mkdir -p "$dir"
+	git -C "$dir" init -q
+	printf '# %s\n' "$(basename "$dir")" >"$dir/README.md"
+	git -C "$dir" add README.md
+	git -C "$dir" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
 }
 
 # fm_git_add_origin <repo> <bare>: clone <repo> bare into <bare> and register it
 # as <repo>'s origin via a file:// URL (so later clones resolve an absolute path).
 fm_git_add_origin() {
-  local repo=$1 remote=$2 remote_abs
-  git clone --quiet --bare "$repo" "$remote"
-  remote_abs=$(cd "$remote" && pwd)
-  git -C "$repo" remote add origin "file://$remote_abs"
+	local repo=$1 remote=$2 remote_abs
+	git clone --quiet --bare "$repo" "$remote"
+	remote_abs=$(cd "$remote" && pwd)
+	git -C "$repo" remote add origin "file://$remote_abs"
 }
 
 # fm_git_worktree <repo> <worktree> <branch>: initialize <repo> with one commit
 # and a local bare origin, then add a worktree on a fresh branch.
 fm_git_worktree() {
-  local repo=$1 worktree=$2 branch=$3
-  fm_git_init_commit "$repo"
-  fm_git_add_origin "$repo" "$repo.origin.git"
-  git -C "$repo" worktree add --quiet -b "$branch" "$worktree"
+	local repo=$1 worktree=$2 branch=$3
+	fm_git_init_commit "$repo"
+	fm_git_add_origin "$repo" "$repo.origin.git"
+	git -C "$repo" worktree add --quiet -b "$branch" "$worktree"
 }
 
 # --- state/<id>.meta writers ------------------------------------------------
@@ -259,12 +320,12 @@ fm_git_worktree() {
 # fm_write_meta <file> <key=val> ...: write the given key=val lines to a meta
 # file (truncating any prior content).
 fm_write_meta() {
-  local file=$1 kv
-  shift
-  : > "$file"
-  for kv in "$@"; do
-    printf '%s\n' "$kv" >> "$file"
-  done
+	local file=$1 kv
+	shift
+	: >"$file"
+	for kv in "$@"; do
+		printf '%s\n' "$kv" >>"$file"
+	done
 }
 
 # fm_write_secondmate_meta <file> <home> [window] [projects] [harness]: write the
@@ -272,30 +333,30 @@ fm_write_meta() {
 # defaults to firstmate:fm-<id>, projects defaults to alpha, and harness defaults
 # to echo to match the common case.
 fm_write_secondmate_meta() {
-  local file=$1 home=$2 id window projects=${4:-alpha} harness=${5:-echo}
-  id=$(basename "$file" .meta)
-  window=${3:-firstmate:fm-$id}
-  fm_write_meta "$file" \
-    "window=$window" \
-    "endpoint_task_id=$id" \
-    "worktree=$home" \
-    "project=$home" \
-    "harness=$harness" \
-    "kind=secondmate" \
-    "mode=secondmate" \
-    "yolo=off" \
-    "home=$home" \
-    "projects=$projects"
+	local file=$1 home=$2 id window projects=${4:-alpha} harness=${5:-echo}
+	id=$(basename "$file" .meta)
+	window=${3:-firstmate:fm-$id}
+	fm_write_meta "$file" \
+		"window=$window" \
+		"endpoint_task_id=$id" \
+		"worktree=$home" \
+		"project=$home" \
+		"harness=$harness" \
+		"kind=secondmate" \
+		"mode=secondmate" \
+		"yolo=off" \
+		"home=$home" \
+		"projects=$projects"
 }
 
 # fm_make_secondmate_home <id> <home>: a valid, empty registered secondmate home
 # (marker, AGENTS.md, and the three canonical backlog sections).
 fm_make_secondmate_home() {
-  local id=$1 home=$2
-  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects" "$home/bin"
-  printf '# Firstmate fixture\n' > "$home/AGENTS.md"
-  printf '%s\n' "$id" > "$home/.fm-secondmate-home"
-  cat > "$home/data/backlog.md" <<'EOF'
+	local id=$1 home=$2
+	mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects" "$home/bin"
+	printf '# Firstmate fixture\n' >"$home/AGENTS.md"
+	printf '%s\n' "$id" >"$home/.fm-secondmate-home"
+	cat >"$home/data/backlog.md" <<'EOF'
 ## In flight
 
 ## Queued
@@ -307,58 +368,58 @@ EOF
 # fm_append_secondmate_registry <parent> <id> <home>: register that home in the
 # parent's data/secondmates.md.
 fm_append_secondmate_registry() {
-  printf -- '- %s - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-07-13)\n' \
-    "$2" "$3" >> "$1/data/secondmates.md"
+	printf -- '- %s - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-07-13)\n' \
+		"$2" "$3" >>"$1/data/secondmates.md"
 }
 
 # fm_write_parent_secondmate_event <parent> <id> <home> <note>: the parent-side
 # meta plus one keyed status event for that secondmate.
 fm_write_parent_secondmate_event() {
-  fm_write_secondmate_meta "$1/state/$2.meta" "$3" "firstmate:fm-$2" sample
-  printf 'working [key=%s]: %s\n' "$2" "$4" > "$1/state/$2.status"
+	fm_write_secondmate_meta "$1/state/$2.meta" "$3" "firstmate:fm-$2" sample
+	printf 'working [key=%s]: %s\n' "$2" "$4" >"$1/state/$2.status"
 }
 
 # --- common assertions ------------------------------------------------------
 
 # assert_contains <haystack> <needle> <msg>
 assert_contains() {
-  case "$1" in
-    *"$2"*) : ;;
-    *) fail "$3 (missing: '$2')"$'\n'"--- output ---"$'\n'"$1" ;;
-  esac
+	case "$1" in
+	*"$2"*) : ;;
+	*) fail "$3 (missing: '$2')"$'\n'"--- output ---"$'\n'"$1" ;;
+	esac
 }
 
 # assert_not_contains <haystack> <needle> <msg>
 assert_not_contains() {
-  case "$1" in
-    *"$2"*) fail "$3 (unexpected: '$2')"$'\n'"--- output ---"$'\n'"$1" ;;
-    *) : ;;
-  esac
+	case "$1" in
+	*"$2"*) fail "$3 (unexpected: '$2')"$'\n'"--- output ---"$'\n'"$1" ;;
+	*) : ;;
+	esac
 }
 
 # expect_code <expected> <actual> <label>
 expect_code() {
-  local expected=$1 actual=$2 label=$3
-  [ "$actual" = "$expected" ] || fail "$label: expected exit $expected, got $actual"
+	local expected=$1 actual=$2 label=$3
+	[ "$actual" = "$expected" ] || fail "$label: expected exit $expected, got $actual"
 }
 
 # assert_grep <pattern> <file> <msg>: fixed-string grep must match in <file>.
 # `--` guards patterns that begin with '-' (e.g. backlog/registry lines).
 assert_grep() {
-  grep -F -- "$1" "$2" >/dev/null || fail "$3"
+	grep -F -- "$1" "$2" >/dev/null || fail "$3"
 }
 
 # assert_no_grep <pattern> <file> <msg>: fixed-string grep must NOT match.
 assert_no_grep() {
-  ! grep -F -- "$1" "$2" >/dev/null || fail "$3"
+	! grep -F -- "$1" "$2" >/dev/null || fail "$3"
 }
 
 # assert_absent <path> <msg>: path must not exist.
 assert_absent() {
-  [ ! -e "$1" ] || fail "$2"
+	[ ! -e "$1" ] || fail "$2"
 }
 
 # assert_present <path> <msg>: path must exist.
 assert_present() {
-  [ -e "$1" ] || fail "$2"
+	[ -e "$1" ] || fail "$2"
 }
