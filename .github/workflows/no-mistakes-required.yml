@@ -41,20 +41,14 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -eu
-          if ! pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '{body: (.body // ""), head: .head.sha}'); then
-            echo "::error::Could not fetch the current state of PR #${PR_NUMBER} from the GitHub API; re-run this check." >&2
-            exit 1
-          fi
           # A PR body is attacker-controlled text, so a fixed heredoc delimiter is
-          # an output-injection hole: a body containing that literal line would
-          # end the value early and let the rest be read as further outputs.
+          # an output-injection hole: a body containing that literal line would end
+          # the value early and let the rest be read as further outputs.
           delimiter="PR_BODY_$(openssl rand -hex 24)"
-          {
-            echo "head-sha=$(printf '%s' "$pr" | jq -r '.head')"
-            echo "body<<$delimiter"
-            printf '%s' "$pr" | jq -r '.body'
-            echo "$delimiter"
-          } >> "$GITHUB_OUTPUT"
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+            --jq "\"head-sha=\" + .head.sha, \"body<<$delimiter\", (.body // \"\"), \"$delimiter\"" \
+            >> "$GITHUB_OUTPUT" \
+            || { echo "::error::Could not fetch the current state of PR #${PR_NUMBER} from the GitHub API; re-run this check." >&2; exit 1; }
       - name: Verify no-mistakes signature and pipeline attestation
         uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6 # post-v1.57.1, untagged (action added in #819)
         with:
