@@ -135,6 +135,7 @@ state/               runtime records and signals; gitignored
   .retired-tasks     bounded tombstones of retired tasks and their pane targets, so a wake naming a retired worker is never delivered; written by teardown through bin/fm-retire-lib.sh, safe to delete
   .watch-triage.log  watcher and drain absorbed-wake debug log (size-capped); never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
+  .orphan-sweep-last epoch of this home's last scheduled bin/fm-orphan-sweep.sh run, which is what keeps that sweep to once an hour; safe to delete (forces one sweep)
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
 .no-mistakes/        local validation state and evidence; gitignored
 ```

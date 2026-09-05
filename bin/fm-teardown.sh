@@ -795,6 +795,12 @@ PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
 # never re-derived, so a task spawned when the root was on the temporary filesystem
 # is still removed from its old location instead of leaking.
 TASK_TMP=$(grep '^tasktmp=' "$META" | cut -d= -f2- || true)
+# The per-task review desktop lives outside the worktree under a directory
+# named for the task, so the path itself proves ownership. Empty for a task
+# that never asked for a desktop; reap_task_desktop is a no-op then.
+DESKTOP_ROOT="${FM_DESKTOP_ROOT:-$HOME/.fm-desktops}"
+DESKTOP_DIR=
+[ ! -d "$DESKTOP_ROOT/$ID" ] || DESKTOP_DIR="$DESKTOP_ROOT/$ID"
 BUSY_GEN=$(fm_meta_get "$META" busy_gen)
 if [ -z "$BUSY_GEN" ]; then
 	BUSY_GEN=$(cat "$STATE/$ID.busy-gen" 2>/dev/null || true)
@@ -1114,7 +1120,7 @@ remove_pr_poll_artifacts() {
 # REST for the shared-budget reason bin/fm-pr-check.sh states. --hostname pins
 # the read to github.com - the only host the caller's slug parse accepts - so
 # an ambient GH_HOST cannot redirect it at another forge.
-pr_number_from_branch() {  # <branch> <owner/repo>
+pr_number_from_branch() { # <branch> <owner/repo>
 	local branch=$1 slug=$2 owner n
 	[ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
 	owner=${slug%%/*}
@@ -1869,6 +1875,90 @@ reap_task_build_cache() { # <task-id>
 		reason="removing it failed"
 	fi
 	echo "warning: build cache left behind for $id: $recorded ($reason)" >&2
+}
+
+# TERM, then KILL anything still alive whose identity still matches, exactly as
+# the worktree reap does. Never fails the teardown.
+reap_desktop_pids() { # <label> <pid>...
+	local label=$1 pid identity i
+	local -a pids=() identities=()
+	shift
+	for pid in "$@"; do
+		identity=$(task_process_identity "$pid") || continue
+		pids+=("$pid")
+		identities+=("$identity")
+	done
+	[ "${#pids[@]}" -gt 0 ] || return 0
+	echo "teardown: stopping $label process(es) for $ID: ${pids[*]}" >&2
+	for pid in "${pids[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
+	sleep 1
+	for i in "${!pids[@]}"; do
+		task_process_identity_matches "${pids[$i]}" "${identities[$i]}" || continue
+		kill -KILL "${pids[$i]}" 2>/dev/null || true
+	done
+}
+
+# Stop the X display this task's own registry line records, and the noVNC
+# bridge in front of it. The bridge is identified by the RFB port that display
+# number maps to, never by process name.
+stop_task_desktop_display() { # <display-number>
+	local display=$1 socket_dir pid
+	local -a bridge_pids=()
+	socket_dir=${FM_DESKTOP_X_SOCKET_DIR:-/tmp/.X11-unix}
+	while IFS= read -r pid; do
+		[ -n "$pid" ] && bridge_pids+=("$pid")
+	done < <(pgrep -u "$(id -u)" -f "localhost:$((5900 + display))\$" 2>/dev/null || true)
+	reap_desktop_pids "desktop bridge" ${bridge_pids[@]+"${bridge_pids[@]}"}
+	[ -e "$socket_dir/X$display" ] || return 0
+	command -v tigervncserver >/dev/null 2>&1 || {
+		echo "warning: display :$display for $ID is still up and tigervncserver is unavailable to stop it" >&2
+		return 0
+	}
+	tigervncserver -kill ":$display" >/dev/null 2>&1 ||
+		echo "warning: display :$display for $ID could not be stopped" >&2
+}
+
+# The per-task review desktop is the third thing a task creates outside its
+# worktree, next to the temp root and the build cache, and nothing removed it:
+# four dead desktops holding ~560 MB were found on 2026-09-05 with no task left
+# to own them, each still holding a display number the allocator could not hand
+# out again. Both records prove ownership by themselves - the directory is
+# named for the task, and the display number comes from that task's own
+# registry line - so nothing here matches a process by name.
+# Never fails the teardown: what it cannot remove is reported, and
+# bin/fm-orphan-sweep.sh is the backstop for anything left behind.
+reap_task_desktop() { # <task-id>
+	local id=$1 registry display size dir=$DESKTOP_DIR tmp
+	local -a profile_pids=()
+	registry="${FM_DESKTOP_LEGACY_REGISTRY:-$DESKTOP_ROOT/registry}"
+	display=$(awk -F'\t' -v a="$id" '$1 == a { print $2; exit }' "$registry" 2>/dev/null) || display=
+	case "$display" in *[!0-9]*) display= ;; esac
+	[ -n "$dir" ] || [ -n "$display" ] || return 0
+	# A browser on a review desktop keeps its working directory at $HOME, so
+	# the cwd reap above cannot see it. The profile path names the owner
+	# instead, and that path is per-task, so a match is proof rather than a
+	# name pattern.
+	if [ -n "$dir" ]; then
+		while IFS= read -r tmp; do
+			[ -n "$tmp" ] && profile_pids+=("$tmp")
+		done < <(pgrep -u "$(id -u)" -f -- "--user-data-dir=$dir(/|\$)" 2>/dev/null || true)
+		reap_desktop_pids "desktop browser" ${profile_pids[@]+"${profile_pids[@]}"}
+	fi
+	[ -z "$display" ] || stop_task_desktop_display "$display"
+	if [ -n "$dir" ] && [ -d "$dir" ]; then
+		size=$(du -sh "$dir" 2>/dev/null | cut -f1) || true
+		if rm -rf -- "$dir"; then
+			echo "reaped desktop for $id: $dir (${size:-unknown} reclaimed)"
+		else
+			echo "warning: desktop left behind for $id: $dir (removing it failed)" >&2
+		fi
+	fi
+	if FM_DESKTOP_LEGACY_REGISTRY="$registry" \
+		"$SCRIPT_DIR/fm-desktop.sh" retire "$id" >/dev/null 2>&1; then
+		[ -z "$display" ] || echo "released display :$display for $id"
+	else
+		echo "warning: desktop records for $id remain (registry $registry)" >&2
+	fi
 }
 
 reap_task_worktree_processes() { # <label> <dir>...
@@ -2873,7 +2963,7 @@ teardown_resolve_worktree_cotenants
 if [ "$KIND" != secondmate ]; then
 	# A run matching a shared checkout's branch cannot be attributed to $ID.
 	[ "${#COTENANT_IDS[@]}" -gt 0 ] || conclude_task_no_mistakes_run "$ID" "$KIND" "$WT"
-	reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
+	reap_task_worktree_processes worktree "$WT" "$TASK_TMP" "$DESKTOP_DIR"
 fi
 
 # Fix 3 (see script header): sweep remote job workers abandoned by an already
@@ -3054,6 +3144,7 @@ fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # landed-work refusal above has passed and the task's processes are already
 # reaped, so a refused teardown never reaps.
 reap_task_build_cache "$ID"
+reap_task_desktop "$ID"
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 status_retire_presentation_task "$STATE" "$ID" || exit 1

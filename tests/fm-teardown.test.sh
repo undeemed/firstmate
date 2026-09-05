@@ -3061,6 +3061,108 @@ test_live_build_keeps_build_cache() {
   pass "a build cache with a live process in it is never reaped, and the reason is reported"
 }
 
+# --- desktop reaping (fm-teardown.sh's reap_task_desktop) --------------------
+# A task's review desktop is the third thing it owns outside the worktree, next
+# to the temp root and the build cache. Nothing removed it, so four dead
+# desktops holding ~560 MB outlived their tasks. The directory is named for the
+# task and the display number comes from the task's own registry line, so both
+# records prove ownership by themselves.
+
+# The desktop a task allocated: a seeded browser profile and the registry line
+# that reserves its display number.
+seed_task_desktop() {  # <case-dir> [task-id]
+  local case_dir=$1 id=${2:-task-x1}
+  mkdir -p "$case_dir/desktops/$id/chrome-profile"
+  printf 'session state\n' > "$case_dir/desktops/$id/chrome-profile/Cookies"
+  printf '%s\t31\n' "$id" > "$case_dir/desktops/registry"
+}
+
+run_teardown_with_desktop() {  # <case-dir> [teardown args...]
+  local case_dir=$1; shift
+  FM_DESKTOP_ROOT="$case_dir/desktops" \
+  FM_DESKTOP_LEGACY_REGISTRY="$case_dir/desktops/registry" \
+  FM_DESKTOP_X_SOCKET_DIR="$case_dir/x-sockets" \
+    run_teardown "$case_dir" "$@"
+}
+
+test_task_desktop_is_reaped_on_success() {
+  local case_dir rc
+  case_dir=$(make_case desktop-reaped)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  seed_task_desktop "$case_dir"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown_with_desktop "$case_dir" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "desktop-reaped: teardown should succeed"
+  [ ! -d "$case_dir/desktops/task-x1" ] \
+    || fail "desktop-reaped: the task's own desktop survived teardown"
+  assert_grep "reaped desktop for task-x1" "$case_dir/stdout" \
+    "desktop-reaped: teardown did not report reaping the desktop"
+  assert_grep "released display :31 for task-x1" "$case_dir/stdout" \
+    "desktop-reaped: teardown did not report releasing the display"
+  assert_no_grep "task-x1" "$case_dir/desktops/registry" \
+    "desktop-reaped: the registry still reserves the retired task's display"
+  pass "a task's desktop is removed with its worktree and its display number is released"
+}
+
+test_task_desktop_survives_refused_teardown() {
+  local case_dir rc
+  case_dir=$(make_case desktop-refused)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "unlanded work"
+  seed_task_desktop "$case_dir"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown_with_desktop "$case_dir" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  [ "$rc" -ne 0 ] || fail "desktop-refused: teardown should refuse unlanded work"
+  [ -f "$case_dir/desktops/task-x1/chrome-profile/Cookies" ] \
+    || fail "desktop-refused: desktop cleanup ran on a refused teardown"
+  assert_grep "task-x1" "$case_dir/desktops/registry" \
+    "desktop-refused: a refused teardown released the display anyway"
+  pass "a refused teardown never reaps the desktop, so the landed-work safety is unchanged"
+}
+
+# A browser on a review desktop keeps its working directory at $HOME, so the
+# cwd reap cannot see it. Its profile path is what names the owner.
+test_desktop_browser_is_stopped_by_its_profile_path() {
+  local case_dir rc pid
+  case_dir=$(make_case desktop-browser)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  seed_task_desktop "$case_dir"
+
+  # `bash -c '<one command>'` execs that command and loses these arguments, so
+  # the body is a list: the fixture has to keep the profile path in its cmdline.
+  ( cd / && exec -a chrome bash -c 'sleep 300; exit 0' chrome \
+      "--user-data-dir=$case_dir/desktops/task-x1/chrome-profile" ) &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "desktop-browser: setup browser did not start"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown_with_desktop "$case_dir" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  sleep 0.5
+  local survived=no
+  kill -0 "$pid" 2>/dev/null && survived=yes
+  kill -KILL "$pid" 2>/dev/null || true
+
+  expect_code 0 "$rc" "desktop-browser: teardown should succeed"
+  [ "$survived" = no ] \
+    || fail "desktop-browser: the browser holding the task's profile survived teardown"
+  assert_grep "stopping desktop browser process(es) for task-x1" "$case_dir/stderr" \
+    "desktop-browser: teardown did not report stopping the browser"
+  [ ! -d "$case_dir/desktops/task-x1" ] \
+    || fail "desktop-browser: the desktop survived after its browser was stopped"
+  pass "a browser is stopped by the profile path that names its task, never by process name"
+}
+
 test_teardown_reaps_supervision_records_for_the_retired_task
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
@@ -3132,3 +3234,6 @@ test_build_cache_survives_refused_teardown
 test_cache_this_home_does_not_own_is_reported_not_reaped
 test_secondmate_teardown_leaves_shared_project_cache
 test_live_build_keeps_build_cache
+test_task_desktop_is_reaped_on_success
+test_task_desktop_survives_refused_teardown
+test_desktop_browser_is_stopped_by_its_profile_path
