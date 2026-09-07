@@ -1649,6 +1649,23 @@ fm_wake_queued_keys_locked() {
     "$FM_WAKE_QUEUE" 2>/dev/null || true
 }
 
+fm_wake_secondmate_progress_marker_write() { # <task> <observed-at> <oldest-row-key>
+  local task=$1 observed_at=$2 oldest_row_key=$3 marker tmp
+  case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$observed_at" in ''|*[!0-9]*) return 1 ;; esac
+  case "$oldest_row_key" in ''|*[!0-9-]*) return 1 ;; esac
+  marker="$STATE/.secondmate-wake-progress-$task"
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  fi
+  tmp=$(mktemp "$STATE/.secondmate-wake-progress.XXXXXX") || return 1
+  if ! printf '%s\t%s\n' "$observed_at" "$oldest_row_key" > "$tmp" || ! chmod 0600 "$tmp" \
+    || ! _fm_atomic_replace "$tmp" "$marker"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
 fm_wake_secondmate_stall_marker_write() { # <task> <row-key>
   local task=$1 row_key=$2 marker tmp
   case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
