@@ -751,10 +751,10 @@ if [ "$PRIMARY_HARNESS" = omp ]; then
   OMP_WATCH_MARKER="$STATE/.omp-watch-extension-loaded"
   OMP_TURNEND_MARKER="$STATE/.omp-turnend-extension-loaded"
   OMP_LOCK="$STATE/.lock"
-  OMP_WATCH_VERSION=$(hash_file "$OMP_EXT" || printf '')
-  OMP_TURNEND_VERSION=$(hash_file "$OMP_TURNEND_EXT" || printf '')
-  if ! pi_extension_loaded "$OMP_WATCH_MARKER" "$OMP_WATCH_VERSION" "$OMP_LOCK" \
-    || ! pi_extension_loaded "$OMP_TURNEND_MARKER" "$OMP_TURNEND_VERSION" "$OMP_LOCK"; then
+  OMP_WATCH_VERSION=$(fm_pi_extension_version "$OMP_EXT" || printf '')
+  OMP_TURNEND_VERSION=$(fm_pi_extension_version "$OMP_TURNEND_EXT" || printf '')
+  if ! fm_pi_extension_loaded "$OMP_WATCH_MARKER" "$OMP_WATCH_VERSION" "$OMP_LOCK" \
+    || ! fm_pi_extension_loaded "$OMP_TURNEND_MARKER" "$OMP_TURNEND_VERSION" "$OMP_LOCK"; then
     printf 'OMP_WATCH_EXTENSION: not loaded - approve omp project trust once per clone, then restart omp so %s and %s auto-load for turn-end guard and background wake coverage; use -e %s -e %s only if project hooks are not trusted\n' "$OMP_TURNEND_EXT" "$OMP_EXT" "$OMP_TURNEND_EXT" "$OMP_EXT"
   fi
 fi
