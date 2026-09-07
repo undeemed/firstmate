@@ -156,8 +156,10 @@ WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-300}}
 # appended to that garbage. Arithmetic under `set -u` then aborts on the stray
 # token (e.g. the word "File" read as an unset variable), which silently kills the
 # watcher mid-cycle. Detect the platform once and pick the right form.
+# On Darwin, call /usr/bin/stat rather than PATH-resolved stat so GNU coreutils
+# cannot shadow the BSD `-f` syntax.
 if [ "$(uname)" = Darwin ]; then
-  stat_mtime() { stat -f %m "$1" 2>/dev/null; }        # epoch seconds of mtime
+  stat_mtime() { /usr/bin/stat -f %m "$1" 2>/dev/null; }        # epoch seconds of mtime
 else
   stat_mtime() { stat -c %Y "$1" 2>/dev/null; }
 fi
