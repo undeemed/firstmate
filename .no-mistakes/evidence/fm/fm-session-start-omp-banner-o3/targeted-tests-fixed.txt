@@ -1,0 +1,6 @@
+ok - session start rejects stale Pi loaded markers
+ok - session start accepts current Pi markers written before lock acquisition
+ok - session start rejects Pi sessions missing the turn-end guard marker
+ok - session start rejects Pi loaded markers from previous sessions
+ok - session start accepts current omp markers with no undefined-helper errors
+ok - session start rejects stale omp loaded markers

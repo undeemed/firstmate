@@ -1,0 +1,33 @@
+### AFTER FIX (commit 9dc4b59) ###
+=== marker files (sha256 + lock-holder pid 2964524) ===
+--- state/.omp-watch-extension-loaded:
+sha256:bf2660fb4305ede97df9f7082680967c742c7c1409b730b6ff2e0b65c644c828
+2964524
+--- state/.omp-turnend-extension-loaded:
+sha256:623a4ce32fad6345c3f83d9ad45cad2edb951c902de95bd06c76441f7fbb7c33
+2964524
+=== detected harness line ===
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: omp
+=== banner lines (grep OMP_WATCH_EXTENSION) ===
+(no banner)
+=== stderr bytes: 0 ===
+=== stderr content ===
+(empty)
+
+### BEFORE FIX (base dbbf43e, bin/fm-session-start.sh reverted) ###
+=== marker files (sha256 + lock-holder pid 2973453) ===
+--- state/.omp-watch-extension-loaded:
+sha256:bf2660fb4305ede97df9f7082680967c742c7c1409b730b6ff2e0b65c644c828
+2973453
+--- state/.omp-turnend-extension-loaded:
+sha256:623a4ce32fad6345c3f83d9ad45cad2edb951c902de95bd06c76441f7fbb7c33
+2973453
+=== detected harness line ===
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: omp
+=== banner lines (grep OMP_WATCH_EXTENSION) ===
+OMP_WATCH_EXTENSION: not loaded - approve omp project trust once per clone, then restart omp so /tmp/fm-session-start-tests.W1ywB0/omp-e2e-manual/root/.omp/extensions/fm-primary-turnend-guard.ts and /tmp/fm-session-start-tests.W1ywB0/omp-e2e-manual/root/.omp/extensions/fm-primary-omp-watch.ts auto-load for turn-end guard and background wake coverage; use -e /tmp/fm-session-start-tests.W1ywB0/omp-e2e-manual/root/.omp/extensions/fm-primary-turnend-guard.ts -e /tmp/fm-session-start-tests.W1ywB0/omp-e2e-manual/root/.omp/extensions/fm-primary-omp-watch.ts only if project hooks are not trusted
+=== stderr bytes: 430 ===
+=== stderr content ===
+/home/ubuntu/.no-mistakes/worktrees/5d83c95b53c3/01M219FF7ZQYSGA1B4763X9MMX/bin/fm-session-start.sh: line 754: hash_file: command not found
+/home/ubuntu/.no-mistakes/worktrees/5d83c95b53c3/01M219FF7ZQYSGA1B4763X9MMX/bin/fm-session-start.sh: line 755: hash_file: command not found
+/home/ubuntu/.no-mistakes/worktrees/5d83c95b53c3/01M219FF7ZQYSGA1B4763X9MMX/bin/fm-session-start.sh: line 756: pi_extension_loaded: command not found
