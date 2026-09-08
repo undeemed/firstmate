@@ -21,7 +21,8 @@
 # pipeline composed.
 # The refusal is loud and total: declared content that cannot be published
 # records no pr=, arms no merge poll, and stops the merge in
-# bin/fm-pr-merge.sh, which runs this script before it merges.
+# bin/fm-pr-merge.sh, which runs this script before it merges. The audience
+# contract below refuses the same way on the same read-back.
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -174,6 +175,55 @@ if [ -e "$REQUIRED_FILE" ] || [ -L "$REQUIRED_FILE" ]; then
       esac
       ;;
   esac
+fi
+
+# --- published body audience contract ---------------------------------------
+# A published body carrying fleet-internal vocabulary tells everyone who can
+# read the repository how the captain's fleet works, and that disclosure is
+# irreversible the moment a private repository is made public. The body is
+# therefore checked before the task records its PR, so a refusal stops the
+# merge for the same reason a missing declaration does.
+#
+# The list holds only terms that name the fleet itself. `no-mistakes`,
+# `worktree`, `brief` and `ruling` are deliberately ABSENT: the pipeline puts
+# its own product name in every body's footer, attestation and commit
+# subjects, `<validation worktree>` is its own path redaction, and the rest is
+# ordinary English, so banning them would refuse nearly every pull request the
+# fleet opens. Matching is plain and case-insensitive because none of these is
+# a prefix of an unrelated word.
+# docs/documentation-audiences.md records why this repository does not
+# keyword-lint prose in general; this list earns its exception by naming the
+# fleet rather than judging prose style.
+AUDIENCE_TERMS='firstmate|crewmate|secondmate|captain|ponytail|treehouse|fm-[a-z0-9-]*\.sh'
+
+# The firstmate repository is exempt: this vocabulary is its subject matter, so
+# its own pull requests describe it rather than leak it. The .git test stops
+# the lookup walking up into an unrelated enclosing repository.
+audience_repo_is_firstmate() {
+  [ -e "$FM_ROOT/.git" ] || return 1
+  case "$(git -C "$FM_ROOT" remote get-url origin 2>/dev/null)" in
+    *[/:]"$OWNER/$REPO"|*[/:]"$OWNER/$REPO".git) return 0 ;;
+  esac
+  return 1
+}
+
+audience_refuse() {  # <reason>
+  printf 'error: task %s did not record %s: %s\n' "$ID" "$URL" "$1" >&2
+  exit 1
+}
+
+# A GitLab merge request is not checked, for the reason pr_head is not recorded
+# for one: plain glab exposes the body only inside JSON output, which would
+# need a JSON processor firstmate does not require.
+if [ "$PROVIDER" = github ] && ! audience_repo_is_firstmate; then
+  # Reuse the declared contract's final read-back when it made one.
+  [ -n "${PUBLISHED+x}" ] || PUBLISHED=$(body_read_published) \
+    || audience_refuse "its published body could not be read back over REST to check it for fleet-internal vocabulary"
+  AUDIENCE_HITS=$(printf '%s\n' "$PUBLISHED" \
+    | LC_ALL=C grep -oiE "$AUDIENCE_TERMS" \
+    | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sort -u | paste -sd, -)
+  [ -z "$AUDIENCE_HITS" ] \
+    || audience_refuse "its published body carries fleet-internal vocabulary that must be rewritten in the project's own words first: $AUDIENCE_HITS"
 fi
 
 META_TMP=

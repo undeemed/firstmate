@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# Regression tests for the declared pull request body contract: content a brief
-# declares as required reaches the PUBLISHED body, verified by reading that body
-# back from the forge over REST, and a declaration that cannot be published
-# refuses loudly instead of shipping a quietly incomplete body.
-# The body update is an outbound forge write, so it is also audited through
-# bin/fm-forge-audit-lib.sh.
+# Regression tests for the two contracts bin/fm-pr-check.sh enforces on the
+# PUBLISHED pull request body, both decided by reading that body back from the
+# forge over REST rather than by trusting what was sent.
+#
+# 1. The declared body contract: content a brief declares as required reaches
+#    the published body, and a declaration that cannot be published refuses
+#    loudly instead of shipping a quietly incomplete body. The body update is
+#    an outbound forge write, so it is also audited through
+#    bin/fm-forge-audit-lib.sh.
+# 2. The audience contract: a published body carrying fleet-internal vocabulary
+#    refuses instead of recording the PR. Its fixtures pin BOTH sides of the
+#    term list, so it cannot widen silently; bin/fm-pr-check.sh explains which
+#    bodies the list was measured on and why the near misses are excluded.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -24,6 +31,19 @@ Adds the thing.
 
 - review: passed
 - tests: passed'
+
+# The shapes measured as false positives, reproduced from the real bodies:
+# the pipeline's footer link and attestation comment, its own
+# `<validation worktree>` redaction, a quoted `no-mistakes(...)` commit
+# subject, and the ordinary word `brief`. None may refuse a pull request.
+IFS= read -r -d '' MEASURED_SAFE_BODY <<'BODY' || true
+The standing ruling is that oversize PRs are split rather than waived, and the
+brief forbids weakening the gate. The branch carries 51af623
+'no-mistakes(review): stop recording unusable delivery ids in Ingest::admit'.
+   Compiling seer-app v0.1.0 (<validation worktree>) -- worktree clean
+Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)
+<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"e4fa1e7"} -->
+BODY
 
 # A home with a fake forge whose published body is a real file, so every
 # assertion below reads what the forge would serve rather than what was sent.
@@ -104,7 +124,8 @@ test_declared_content_is_published_as_the_last_line() {
     || fail "the declared sentence is not the published body's last line: $(cat "$dir/published-body")"
   assert_grep 'Quality report' "$dir/published-body" "the pipeline's own body was lost"
   [ "$(patch_calls "$dir")" = 1 ] || fail "expected exactly one published body update"
-  # One read before the update and one after it: the second is the evidence.
+  # One read before the update and one after it: the second is the evidence,
+  # and the audience contract reuses it rather than reading a third time.
   [ "$(body_reads "$dir")" = 2 ] || fail "the published body was not read back after the update"
   assert_grep 'action=pr-body-append' "$dir/home/state/forge-write-audit.log" \
     "the body update was not recorded in the forge write audit log"
@@ -124,7 +145,9 @@ test_nothing_declared_leaves_the_published_body_untouched() {
   after=$(shasum -a 256 "$dir/published-body" | awk '{print $1}')
   [ "$before" = "$after" ] || fail "an undeclared task's published body changed"
   [ "$(patch_calls "$dir")" = 0 ] || fail "an undeclared task updated the published body"
-  [ "$(body_reads "$dir")" = 0 ] || fail "an undeclared task read the published body"
+  # One read, and only one: the audience contract checks every published body,
+  # but a task that declares nothing must still never rewrite one.
+  [ "$(body_reads "$dir")" = 1 ] || fail "an undeclared task did not read the published body exactly once"
   pass "a task that declares nothing leaves the published body byte-identical"
 }
 
@@ -292,6 +315,77 @@ test_an_empty_declaration_flag_is_refused() {
   pass "an explicitly empty --pr-body-required value is refused loudly"
 }
 
+test_the_measured_false_positive_shapes_are_recorded_without_complaint() {
+  local dir
+  dir=$(make_case audience-false-positives)
+  printf '%s' "$MEASURED_SAFE_BODY" > "$dir/published-body"
+
+  run_task_check "$dir" \
+    || fail "the measured false-positive shapes were refused: $(cat "$dir/check.err")"
+
+  assert_grep 'pr=https://github.com/o/r/pull/10' "$dir/home/state/task-a.meta" \
+    "a body carrying only measured false positives did not record its PR"
+  [ -f "$dir/home/state/task-a.check.sh" ] || fail "the merge poll was not armed"
+  [ "$(patch_calls "$dir")" = 0 ] || fail "the audience check rewrote a body it should have passed"
+  pass "the pipeline's own footer, attestation, worktree redaction and quoted commit subject all publish"
+}
+
+test_every_banned_term_refuses_and_the_near_misses_do_not() {
+  local dir err
+  dir=$(make_case audience-all-terms)
+  # The real leak measured in seer #25 is the "captain rulings" sentence: the
+  # banned term must be reported and the ordinary word beside it must not.
+  cat > "$dir/published-body" <<'BODY'
+## Intent
+
+Two standing captain rulings bound the wider design, so firstmate briefed a
+crewmate and the secondmate reviewed it after ponytail.
+Run bin/fm-pr-check.sh from /home/ubuntu/.treehouse/firstmate-4e604a/10/firstmate.
+BODY
+
+  run_task_check "$dir" && fail "a body carrying every banned term was recorded anyway"
+
+  err="$dir/check.err"
+  assert_grep 'fleet-internal vocabulary' "$err" "the refusal did not say why the body was refused"
+  assert_grep 'captain,crewmate,firstmate,fm-pr-check.sh,ponytail,secondmate,treehouse' "$err" \
+    "the refusal did not name every banned term it found"
+  assert_no_grep 'ruling' "$err" "the refusal widened to the ordinary word ruling"
+  assert_no_grep 'pr=' "$dir/home/state/task-a.meta" "a refused body recorded a PR anyway"
+  [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "a refused body armed a merge poll anyway"
+  pass "every banned term and a fleet scratch path refuse, and the words beside them do not"
+}
+
+test_the_firstmate_repository_describes_its_own_vocabulary_freely() {
+  local dir
+  dir=$(make_case audience-firstmate-repo)
+  printf '%s\n\nTeach the captain'"'"'s crewmate brief about bin/fm-brief.sh.\n' \
+    "$PIPELINE_BODY" > "$dir/published-body"
+  # FM_ROOT is a clone of the pull request's own repository.
+  git init -q "$dir/root" 2>/dev/null
+  git -C "$dir/root" remote add origin https://github.com/o/r 2>/dev/null
+
+  run_task_check "$dir" \
+    || fail "the firstmate repository was refused its own vocabulary: $(cat "$dir/check.err")"
+
+  assert_grep 'pr=https://github.com/o/r/pull/10' "$dir/home/state/task-a.meta" \
+    "the exempt repository did not record its PR"
+  pass "the repository that defines the vocabulary may describe it in its own pull requests"
+}
+
+test_an_unreadable_body_is_not_assumed_audience_safe() {
+  local dir
+  dir=$(make_case audience-unreadable)
+
+  FM_TEST_GH_GET_FAIL=1 run_task_check "$dir" \
+    && fail "an unreadable body was assumed free of fleet-internal vocabulary"
+
+  assert_grep 'could not be read back over REST' "$dir/check.err" \
+    "the refusal did not come from the failed read-back"
+  assert_no_grep 'pr=' "$dir/home/state/task-a.meta" "an unreadable body recorded a PR anyway"
+  [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "an unreadable body armed a merge poll anyway"
+  pass "a published body that cannot be read is never assumed audience-safe"
+}
+
 test_declared_content_is_published_as_the_last_line
 test_nothing_declared_leaves_the_published_body_untouched
 test_content_already_last_is_not_appended_twice
@@ -304,3 +398,7 @@ test_a_hard_linked_declaration_is_refused_unread
 test_the_brief_declares_the_content_and_tells_the_worker_to_leave_it_alone
 test_a_declaration_is_refused_where_no_body_is_published
 test_an_empty_declaration_flag_is_refused
+test_the_measured_false_positive_shapes_are_recorded_without_complaint
+test_every_banned_term_refuses_and_the_near_misses_do_not
+test_the_firstmate_repository_describes_its_own_vocabulary_freely
+test_an_unreadable_body_is_not_assumed_audience_safe
