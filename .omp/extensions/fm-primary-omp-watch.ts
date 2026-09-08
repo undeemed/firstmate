@@ -26,8 +26,20 @@
 // queued input, so a burst of distinct actionable lines queues one follow-up,
 // not one per cycle. The durable wake queue carries every underlying event.
 // The ledger is cleared when a run starts consuming queued input (agent_start)
-// and at generation activation and retirement; anything it cannot answer is
-// delivered.
+// and at generation activation and retirement, the claim is released when a run
+// ends without consuming it (agent_end), and a claim older than
+// FM_WATCH_WAKE_COALESCE_TTL_MS always expires; anything the ledger cannot
+// answer is delivered, because a duplicate wake is cheaper than a lost one.
+//
+// Delivery mode: omp queues an explicit deliverAs without starting a turn in
+// either state, and its idle-path auto-continue for a queued follow-up is gated
+// on the transcript tail being assistant/toolResult and on no prior user
+// interrupt (agent-session.ts #canAutoContinueForFollowUp), so a follow-up
+// queued into an idle session can sit unread indefinitely behind an advisor
+// card or an aborted turn. Omitting deliverAs starts the turn when the session
+// is idle and still queues as a steer if a stream began in the meantime, so an
+// idle wake is delivered without deliverAs and only a streaming wake keeps
+// followUp.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -82,11 +94,18 @@ interface OmpCommandSpec {
   ) => void | Promise<void>;
 }
 
+interface OmpAgentEndEvent {
+  // Set when the session has already scheduled its own continuation, so the run
+  // that just ended is not a settled idle boundary.
+  willContinue?: boolean;
+}
+
 interface OmpExtensionApi {
   on(event: "session_start" | "session_shutdown" | "agent_start", handler: () => void): void;
+  on(event: "agent_end", handler: (event: OmpAgentEndEvent) => void): void;
   registerCommand(name: string, spec: OmpCommandSpec): void;
   registerTool(spec: OmpToolSpec): void;
-  sendUserMessage(content: string, options: { deliverAs: "followUp" }): Promise<void>;
+  sendUserMessage(content: string, options?: { deliverAs: "followUp" }): Promise<void>;
 }
 
 const extensionFile = fileURLToPath(import.meta.url);
@@ -118,9 +137,10 @@ const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 
 let nextGenerationId = 0;
 let activeGeneration: SessionGeneration | null = null;
-// Set the first time omp reports that a run began consuming queued input. Until
-// then the coalesce TTL is the fail-open bound; after it the ledger is trusted.
-let consumptionBoundaryObserved = false;
+// True between agent_start and the agent_end that settles it. A wake raised
+// while this is false is delivered as a turn rather than queued behind omp's
+// idle-path auto-continue gate.
+let harnessStreaming = false;
 const armReadiness = new WeakMap<ChildProcess, Promise<boolean>>();
 const armClose = new WeakMap<ChildProcess, Promise<void>>();
 
@@ -226,11 +246,12 @@ function clearWakeLedger(generation: SessionGeneration): void {
 }
 
 // True when this pending watcher wake must be delivered. False only when one is
-// already queued and unconsumed. Every uncertain case delivers, because losing a
-// wake is worse than repeating one: no usable ledger, a clock that moved
-// backwards, a ledger already at its bound, or - while this session has never
-// once reported a consumption boundary - an entry older than the coalesce TTL,
-// which is the fail-open bound for a harness that never reports one.
+// already queued, unconsumed, and younger than the coalesce TTL. Every uncertain
+// case delivers, because losing a wake is worse than repeating one: no usable
+// ledger, a clock that moved backwards, a ledger already at its bound, or an
+// entry older than the coalesce TTL. The TTL is unconditional: a claimed entry
+// whose follow-up was dropped (omp clears queued messages when a turn aborts)
+// would otherwise suppress every later wake for the life of the session.
 function claimWakeDelivery(generation: SessionGeneration, message: string): boolean {
   const ledger = generation.deliveredWakes;
   if (!(ledger instanceof Map)) return true;
@@ -238,8 +259,7 @@ function claimWakeDelivery(generation: SessionGeneration, message: string): bool
   const pendingSince = ledger.get(message);
   if (pendingSince !== undefined) {
     const age = now - pendingSince;
-    const expired = !consumptionBoundaryObserved && age >= wakeCoalesceTtlMs;
-    if (age >= 0 && !expired) return false;
+    if (age >= 0 && age < wakeCoalesceTtlMs) return false;
   }
   // Only a genuinely new key grows the ledger. Refreshing an existing expired
   // entry must not evict a different message's record, because that record is
@@ -284,7 +304,7 @@ export default function (pi: OmpExtensionApi) {
         "watcher",
         `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.`,
       );
-      await pi.sendUserMessage(content, { deliverAs: "followUp" });
+      await pi.sendUserMessage(content, harnessStreaming ? { deliverAs: "followUp" } : undefined);
     } catch (error) {
       // Nothing was queued, so the ledger must not claim a pending copy.
       releaseWakeDelivery(owner, pendingWakeKey);
@@ -500,12 +520,21 @@ export default function (pi: OmpExtensionApi) {
   }
 
   pi.on?.("agent_start", () => {
+    harnessStreaming = true;
     clearWakeLedger(generation);
-    consumptionBoundaryObserved = true;
+  });
+  // A run that ends without consuming the queued wake leaves a claim nothing
+  // will ever clear, which is how one dropped follow-up silenced a whole
+  // session. Releasing it here costs at most one duplicate wake.
+  pi.on?.("agent_end", (event: OmpAgentEndEvent) => {
+    if (event?.willContinue) return;
+    harnessStreaming = false;
+    releaseWakeDelivery(generation, pendingWakeKey);
   });
   pi.on?.("session_start", () => {
     if (generation.stopping) generation = createGeneration();
     activeGeneration = generation;
+    harnessStreaming = false;
     clearWakeLedger(generation);
     markLoaded();
   });
