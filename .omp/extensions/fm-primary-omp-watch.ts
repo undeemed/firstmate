@@ -25,11 +25,11 @@
 // each generation keeps one pending watcher wake until the run starts consuming
 // queued input, so a burst of distinct actionable lines queues one follow-up,
 // not one per cycle. The durable wake queue carries every underlying event.
-// The ledger is cleared when a run starts consuming queued input (agent_start)
-// and at generation activation and retirement, the claim is released when a run
-// ends without consuming it (agent_end), and a claim older than
-// FM_WATCH_WAKE_COALESCE_TTL_MS always expires; anything the ledger cannot
-// answer is delivered, because a duplicate wake is cheaper than a lost one.
+// The pending wake is released when a run starts consuming queued input
+// (agent_start), when a run settles without consuming it (agent_end), at
+// generation activation and retirement, and once it is older than
+// FM_WATCH_WAKE_COALESCE_TTL_MS; every uncertain case delivers, because a
+// duplicate wake is cheaper than a lost one.
 //
 // Delivery mode: omp queues an explicit deliverAs without starting a turn in
 // either state, and its idle-path auto-continue for a queued follow-up is gated
@@ -67,7 +67,8 @@ type SessionGeneration = {
   retryFailures: number;
   restoring: boolean;
   seq: number;
-  deliveredWakes: Map<string, number>;
+  // When this generation queued a watcher wake the run has not read yet.
+  pendingWakeAt: number | null;
 };
 
 interface OmpToolSpec {
@@ -94,15 +95,11 @@ interface OmpCommandSpec {
   ) => void | Promise<void>;
 }
 
-interface OmpAgentEndEvent {
-  // Set when the session has already scheduled its own continuation, so the run
-  // that just ended is not a settled idle boundary.
-  willContinue?: boolean;
-}
-
 interface OmpExtensionApi {
   on(event: "session_start" | "session_shutdown" | "agent_start", handler: () => void): void;
-  on(event: "agent_end", handler: (event: OmpAgentEndEvent) => void): void;
+  // willContinue marks a run the session will continue by itself, so it is not
+  // a settled idle boundary.
+  on(event: "agent_end", handler: (event: { willContinue?: boolean }) => void): void;
   registerCommand(name: string, spec: OmpCommandSpec): void;
   registerTool(spec: OmpToolSpec): void;
   sendUserMessage(content: string, options?: { deliverAs: "followUp" }): Promise<void>;
@@ -130,8 +127,6 @@ const armReadyTimeoutMs = positiveInteger(
 );
 const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
 const wakeCoalesceTtlMs = positiveInteger("FM_WATCH_WAKE_COALESCE_TTL_MS", 300000);
-const wakeLedgerLimit = 64;
-const pendingWakeKey = "watcher-wake-pending";
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 
@@ -233,7 +228,7 @@ function createGeneration(): SessionGeneration {
     retryFailures: 0,
     restoring: false,
     seq: 0,
-    deliveredWakes: new Map(),
+    pendingWakeAt: null,
   };
 }
 
@@ -241,39 +236,24 @@ function generationIsLive(generation: SessionGeneration): boolean {
   return activeGeneration === generation && !generation.stopping;
 }
 
-function clearWakeLedger(generation: SessionGeneration): void {
-  if (generation.deliveredWakes instanceof Map) generation.deliveredWakes.clear();
+function releasePendingWake(generation: SessionGeneration): void {
+  generation.pendingWakeAt = null;
 }
 
-// True when this pending watcher wake must be delivered. False only when one is
-// already queued, unconsumed, and younger than the coalesce TTL. Every uncertain
-// case delivers, because losing a wake is worse than repeating one: no usable
-// ledger, a clock that moved backwards, a ledger already at its bound, or an
-// entry older than the coalesce TTL. The TTL is unconditional: a claimed entry
-// whose follow-up was dropped (omp clears queued messages when a turn aborts)
-// would otherwise suppress every later wake for the life of the session.
-function claimWakeDelivery(generation: SessionGeneration, message: string): boolean {
-  const ledger = generation.deliveredWakes;
-  if (!(ledger instanceof Map)) return true;
+// True when this watcher wake must be delivered. False only while one is already
+// queued, unread, and younger than the coalesce TTL. That TTL is unconditional:
+// omp clears queued messages when a turn aborts, so a claim kept for a
+// follow-up nobody will ever read would otherwise suppress every later wake for
+// the life of the session. A clock that moved backwards also delivers.
+function claimPendingWake(generation: SessionGeneration): boolean {
   const now = Date.now();
-  const pendingSince = ledger.get(message);
-  if (pendingSince !== undefined) {
+  const pendingSince = generation.pendingWakeAt;
+  if (pendingSince !== null) {
     const age = now - pendingSince;
     if (age >= 0 && age < wakeCoalesceTtlMs) return false;
   }
-  // Only a genuinely new key grows the ledger. Refreshing an existing expired
-  // entry must not evict a different message's record, because that record is
-  // the only thing keeping that other message from being delivered twice.
-  if (pendingSince === undefined && ledger.size >= wakeLedgerLimit) {
-    const oldest = ledger.keys().next();
-    if (!oldest.done) ledger.delete(oldest.value);
-  }
-  ledger.set(message, now);
+  generation.pendingWakeAt = now;
   return true;
-}
-
-function releaseWakeDelivery(generation: SessionGeneration, message: string): void {
-  if (generation.deliveredWakes instanceof Map) generation.deliveredWakes.delete(message);
 }
 
 function stopGeneration(generation: SessionGeneration): void {
@@ -283,7 +263,7 @@ function stopGeneration(generation: SessionGeneration): void {
     generation.retryTimer = null;
   }
   if (generation.child) generation.child.kill("SIGTERM");
-  clearWakeLedger(generation);
+  releasePendingWake(generation);
   generation.child = null;
 }
 
@@ -298,7 +278,7 @@ export default function (pi: OmpExtensionApi) {
 
   async function sendWake(owner: SessionGeneration, message: string): Promise<void> {
     if (!generationIsLive(owner)) return;
-    if (!claimWakeDelivery(owner, pendingWakeKey)) return;
+    if (!claimPendingWake(owner)) return;
     try {
       const content = encodeFirstmateOperationalInput(
         "watcher",
@@ -306,8 +286,8 @@ export default function (pi: OmpExtensionApi) {
       );
       await pi.sendUserMessage(content, harnessStreaming ? { deliverAs: "followUp" } : undefined);
     } catch (error) {
-      // Nothing was queued, so the ledger must not claim a pending copy.
-      releaseWakeDelivery(owner, pendingWakeKey);
+      // Nothing was queued, so no wake is pending.
+      releasePendingWake(owner);
       throw error;
     }
   }
@@ -521,21 +501,21 @@ export default function (pi: OmpExtensionApi) {
 
   pi.on?.("agent_start", () => {
     harnessStreaming = true;
-    clearWakeLedger(generation);
+    releasePendingWake(generation);
   });
-  // A run that ends without consuming the queued wake leaves a claim nothing
-  // will ever clear, which is how one dropped follow-up silenced a whole
-  // session. Releasing it here costs at most one duplicate wake.
-  pi.on?.("agent_end", (event: OmpAgentEndEvent) => {
+  // A run that ends without reading the queued wake leaves a claim nothing will
+  // ever clear, which is how one dropped follow-up silenced a whole session.
+  // Releasing it here costs at most one duplicate wake.
+  pi.on?.("agent_end", (event) => {
     if (event?.willContinue) return;
     harnessStreaming = false;
-    releaseWakeDelivery(generation, pendingWakeKey);
+    releasePendingWake(generation);
   });
   pi.on?.("session_start", () => {
     if (generation.stopping) generation = createGeneration();
     activeGeneration = generation;
     harnessStreaming = false;
-    clearWakeLedger(generation);
+    releasePendingWake(generation);
     markLoaded();
   });
   pi.on?.("session_shutdown", () => {
