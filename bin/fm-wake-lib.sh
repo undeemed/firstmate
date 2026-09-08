@@ -171,14 +171,19 @@ fm_supervision_model() {
 # Pi primary supervision evidence. The Pi extensions record, in their state
 # markers, the exact build they loaded and the session process that loaded it, so
 # "a live Pi session owns supervision" is provable from durable state without a
-# watcher process and without reading any vendor-rendered surface.
+# watcher process and without reading any vendor-rendered surface. The ported omp
+# extensions write the same marker shape, so the omp branch of
+# bin/fm-session-start.sh checks them with these same two helpers.
 #
 # fm_pi_extension_version <file>
-# Print the marker version string the Pi extensions record for <file>. Must stay
-# byte-identical to the "sha256:<hex>" digest .pi/extensions/fm-primary-pi-watch.ts
-# and .pi/extensions/fm-primary-turnend-guard.ts compute for themselves; a host
-# with no SHA-256 tool falls back to a form no marker can match, which keeps every
-# consumer loud rather than silently satisfied.
+# Print the marker version string the Pi-family extensions record for <file>.
+# Must stay byte-identical to the "sha256:<hex>" digest the tracked extensions
+# compute for themselves - .pi/extensions/fm-primary-pi-watch.ts and
+# .pi/extensions/fm-primary-turnend-guard.ts, plus their omp ports
+# .omp/extensions/fm-primary-omp-watch.ts and
+# .omp/extensions/fm-primary-turnend-guard.ts; a host with no SHA-256 tool falls
+# back to a form no marker can match, which keeps every consumer loud rather
+# than silently satisfied.
 fm_pi_extension_version() {
   local file=$1
   [ -f "$file" ] || return 1
