@@ -1,0 +1,18 @@
+ok - (m) --dry-run reports every orphan and removes nothing
+ok - (a) a desktop no live mate records, with its display down, is removed
+ok - (b) the dead desktop's registry line is dropped, returning its display number
+ok - (c) a desktop a live mate records in its own state is never swept
+ok - (d) a desktop whose display is still up is never swept
+ok - (e) a pool whose worktrees have no source repository left is removed
+ok - (g) a pool whose source repository still exists is never swept
+ok - (f) a pool with a worktree pointer that cannot be read is left alone: unreadable is not proof
+ok - (h) a pool treehouse still records a lease in is never swept
+ok - (q) a relative worktree pointer is resolved against its own directory, so a live pool is spared
+ok - (r) a relative pointer resolving to a gone source repository still proves an orphan
+ok - (i) a tmp entry older than the window, with nothing using it, is removed
+ok - (j) recency is judged by the newest file anywhere inside, not by the top-level mtime
+ok - (k) an allowlisted tmp entry is never swept
+ok - (l) a tmp entry a live process is working in is never swept
+ok - (n) a tmp entry this user owns but cannot write to is left exactly as its owner set it
+ok - (o) a disowned process whose cwd and profile are gone is stopped, inside the fence
+ok - (p) the fence keeps the evidence gate and never touches the real process table

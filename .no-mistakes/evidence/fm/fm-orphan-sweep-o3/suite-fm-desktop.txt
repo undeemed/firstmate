@@ -1,0 +1,7 @@
+ok - register records the display and its ownership
+ok - unsafe desktop names are refused
+ok - allocation avoids live and legacy-registered displays
+ok - retire removes the record and never stops a display
+ok - retire releases exactly one owner's reserved display number, idempotently
+ok - the wall enumerates the registry, routes tokens, floors the interval, gates on viewers and keys snapshots on capture time
+ok - the heartbeat clamps bad lengths and drops non-string names

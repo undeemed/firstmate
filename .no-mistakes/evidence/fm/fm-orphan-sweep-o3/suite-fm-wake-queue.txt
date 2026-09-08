@@ -1,0 +1,59 @@
+ok - an abandoned same-process lock hold is reclaimed; a parent's live hold is not
+ok - foreign secondmate queue stalls notify once, remain byte-stable, and stay quiet when empty or healthy
+ok - a home with live children reports unattended child work, not a stalled loop
+ok - a mid-turn mate is not reported as a stalled wake loop until it is measurably behind
+ok - a mate holding a deep, hours-old backlog reports its depth and keeps reporting on a bounded interval
+ok - secondmate stall markers reject symlinks without touching their targets
+ok - stall publication acknowledgement closes the pre-marker crash window
+ok - empty prefix mate cleanup preserves another mate's stall receipt
+ok - self-announced appends suppress only their own bytes and fail toward waking
+ok - historical annotations replay nothing already announced and keep everything new
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 5 --recovery-generation 1679161.1788909944.BRucgw
+ok - concurrent append plus drain preserves durable records through acknowledgement
+ok - signal written while no watcher runs is caught on next run
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1724684.1788909983.D1oAd9
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+ok - stale wake is queued before suppressor state is advanced
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1726144.1788909986.v12lYL
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+ok - a not-provably-working stale wake is queued before its suppressor is advanced
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1727685.1788909989.dpMcmV
+ok - registered custom check output is queued before cadence suppression
+ok - concurrent drains replay until one post-handling acknowledgement consumes records
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 4 --recovery-generation 1731224.1788909993.rJpf3r
+ok - drain collapses obvious duplicate heartbeat and signal records
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 1732347.1788909994.3PQATs
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 6 --recovery-generation 1732347.1788909994.3PQATs
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 8 --recovery-generation 1732347.1788909994.3PQATs
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  After draining queued wakes, watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 9 --recovery-generation 1732347.1788909994.3PQATs
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+ok - the drain drops a retired worker's records and never a live worker's
+ok - the orphan sweep reaps both stale marker classes and spares live and recent markers
+ok - the delivery-ledger purge takes whole reason tokens and spares prefix siblings
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1736676.1788909999.tNBmwD
+ok - a tombstoned id never suppresses a pane that merely ends in it
+ok - retirement purges a dotted id's seen markers under the watcher's own names
+ok - drain asserts watcher liveness: warns on a lapse, stays silent for a live watcher with a fresh beacon
+ok - the orphan sweep runs at most once per window, and reports on stderr only
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 8 --recovery-generation 1739621.1788910003.GESA9B
+ok - structural signal enrichment is separate, deduped, home-local, and tier-zero for other wakes
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 13 --recovery-generation 1741661.1788910006.oauBB8
+ok - every readable unread status line is annotated in full while invalid status files preserve their raw wakes
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1746706.1788910010.J8ttIS
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 1746706.1788910010.J8ttIS
+ok - slow annotation releases the append lock and a deleted status file fails open
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation existing
+ok - wake append publishes atomic recovery evidence before durable rows
+ok - wake drain: generation-less legacy wakes are adopted and acknowledged
+ok - wake drain: a stale acknowledgement cannot retire or consume a newer recovery episode
+ok - wake drain: recovery acknowledgement failures are explicit and retryable
+ok - interruptions preserve durable rows until post-handling acknowledgement
