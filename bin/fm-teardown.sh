@@ -1898,6 +1898,16 @@ reap_desktop_pids() { # <label> <pid>...
 	done
 }
 
+reap_profile_processes() { # <label> <dir>
+	local label=$1 dir=$2 pid
+	local -a pids=()
+	[ -n "$dir" ] || return 0
+	while IFS= read -r pid; do
+		[ -n "$pid" ] && pids+=("$pid")
+	done < <(pgrep -u "$(id -u)" -f -- "--user-data-dir=$dir(/|[[:space:]]|\$)" 2>/dev/null || true)
+	reap_desktop_pids "$label" ${pids[@]+"${pids[@]}"}
+}
+
 # Stop the X display this task's own registry line records, and the noVNC
 # bridge in front of it. The bridge is identified by the RFB port that display
 # number maps to, never by process name.
@@ -1907,7 +1917,7 @@ stop_task_desktop_display() { # <display-number>
 	socket_dir=${FM_DESKTOP_X_SOCKET_DIR:-/tmp/.X11-unix}
 	while IFS= read -r pid; do
 		[ -n "$pid" ] && bridge_pids+=("$pid")
-	done < <(pgrep -u "$(id -u)" -f "localhost:$((5900 + display))\$" 2>/dev/null || true)
+	done < <(pgrep -u "$(id -u)" -f "localhost:$((5900 + display))([[:space:]]|\$)" 2>/dev/null || true)
 	reap_desktop_pids "desktop bridge" ${bridge_pids[@]+"${bridge_pids[@]}"}
 	[ -e "$socket_dir/X$display" ] || return 0
 	command -v tigervncserver >/dev/null 2>&1 || {
@@ -1928,8 +1938,7 @@ stop_task_desktop_display() { # <display-number>
 # Never fails the teardown: what it cannot remove is reported, and
 # bin/fm-orphan-sweep.sh is the backstop for anything left behind.
 reap_task_desktop() { # <task-id>
-	local id=$1 registry display size dir=$DESKTOP_DIR tmp
-	local -a profile_pids=()
+	local id=$1 registry display size dir=$DESKTOP_DIR
 	registry="${FM_DESKTOP_LEGACY_REGISTRY:-$DESKTOP_ROOT/registry}"
 	display=$(awk -F'\t' -v a="$id" '$1 == a { print $2; exit }' "$registry" 2>/dev/null) || display=
 	case "$display" in *[!0-9]*) display= ;; esac
@@ -1938,12 +1947,7 @@ reap_task_desktop() { # <task-id>
 	# the cwd reap above cannot see it. The profile path names the owner
 	# instead, and that path is per-task, so a match is proof rather than a
 	# name pattern.
-	if [ -n "$dir" ]; then
-		while IFS= read -r tmp; do
-			[ -n "$tmp" ] && profile_pids+=("$tmp")
-		done < <(pgrep -u "$(id -u)" -f -- "--user-data-dir=$dir(/|\$)" 2>/dev/null || true)
-		reap_desktop_pids "desktop browser" ${profile_pids[@]+"${profile_pids[@]}"}
-	fi
+	[ -z "$dir" ] || reap_profile_processes "desktop browser" "$dir"
 	[ -z "$display" ] || stop_task_desktop_display "$display"
 	if [ -n "$dir" ] && [ -d "$dir" ]; then
 		size=$(du -sh "$dir" 2>/dev/null | cut -f1) || true
@@ -2964,6 +2968,7 @@ if [ "$KIND" != secondmate ]; then
 	# A run matching a shared checkout's branch cannot be attributed to $ID.
 	[ "${#COTENANT_IDS[@]}" -gt 0 ] || conclude_task_no_mistakes_run "$ID" "$KIND" "$WT"
 	reap_task_worktree_processes worktree "$WT" "$TASK_TMP" "$DESKTOP_DIR"
+	[ "${#COTENANT_IDS[@]}" -gt 0 ] || reap_profile_processes "worktree browser" "$WT"
 fi
 
 # Fix 3 (see script header): sweep remote job workers abandoned by an already

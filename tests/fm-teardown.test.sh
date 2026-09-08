@@ -3163,6 +3163,38 @@ test_desktop_browser_is_stopped_by_its_profile_path() {
   pass "a browser is stopped by the profile path that names its task, never by process name"
 }
 
+# A browser can keep its profile inside the task's worktree while its working
+# directory sits elsewhere, so only the profile path in its cmdline names the
+# owner - here pointing at the worktree itself, and not as the last argument.
+test_worktree_profile_browser_is_stopped_before_worktree_removal() {
+  local case_dir rc pid
+  case_dir=$(make_case worktree-profile-browser)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+
+  ( cd / && exec -a chrome bash -c 'sleep 300; exit 0' chrome \
+      "--user-data-dir=$case_dir/wt" --no-first-run ) &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "worktree-profile: setup browser did not start"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown_with_desktop "$case_dir" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  sleep 0.5
+  local survived=no
+  kill -0 "$pid" 2>/dev/null && survived=yes
+  kill -KILL "$pid" 2>/dev/null || true
+
+  expect_code 0 "$rc" "worktree-profile: teardown should succeed"
+  [ "$survived" = no ] \
+    || fail "worktree-profile: the browser holding a profile inside the worktree survived teardown"
+  assert_grep "stopping worktree browser process(es) for task-x1" "$case_dir/stderr" \
+    "worktree-profile: teardown did not report stopping the browser"
+  pass "a browser profiled inside the worktree is stopped before the worktree is removed"
+}
+
 test_teardown_reaps_supervision_records_for_the_retired_task
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
@@ -3237,3 +3269,4 @@ test_live_build_keeps_build_cache
 test_task_desktop_is_reaped_on_success
 test_task_desktop_survives_refused_teardown
 test_desktop_browser_is_stopped_by_its_profile_path
+test_worktree_profile_browser_is_stopped_before_worktree_removal

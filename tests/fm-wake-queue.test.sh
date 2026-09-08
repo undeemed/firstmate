@@ -1344,7 +1344,7 @@ test_orphan_sweep_runs_once_per_window_on_stderr() {
   desktops="$dir/desktops"
   registry="$desktops/registry"
   marker="$state/.orphan-sweep-last"
-  mkdir -p "$desktops/dead-mate" "$dir/pools" "$dir/tmp"
+  mkdir -p "$desktops/dead-mate" "$dir/pools" "$dir/tmp" "$dir/proc"
   printf 'profile\n' > "$desktops/dead-mate/Cookies"
   printf 'dead-mate\t44\n' > "$registry"
   find "$desktops" -exec touch -h -d '10 days ago' {} + 2>/dev/null || true
@@ -1358,6 +1358,7 @@ test_orphan_sweep_runs_once_per_window_on_stderr() {
     FM_DESKTOP_X_SOCKET_DIR="$dir/x-sockets" \
     FM_ORPHAN_SWEEP_TREEHOUSE_ROOT="$dir/pools" \
     FM_ORPHAN_SWEEP_TMP_DIR="$dir/tmp" \
+    FM_ORPHAN_SWEEP_PROC_ROOT="$dir/proc" \
       "$DRAIN" > "$1" 2> "$2"
   }
 
