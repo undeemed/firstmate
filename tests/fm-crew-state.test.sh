@@ -1161,6 +1161,64 @@ test_torn_down_worktree() {
   pass "torn-down worktree is handled gracefully"
 }
 
+# --- a secondmate is a SUPERVISOR: its home's live work is part of its state -
+# Regression for the incident bin/fm-secondmate-home-lib.sh records. The shapes
+# pinned here: an empty home still reads from the mate's own log, a home with
+# live children never reads idle or done, and a home that is also not consuming
+# its own queue reads `unattended`.
+test_secondmate_live_children_are_part_of_its_state() {
+  reset_fakes
+  local d out gen
+  d=$(new_case unattended-home)
+  mkdir -p "$d/wt" "$d/mate/state"
+  make_fakebin "$d" >/dev/null
+  printf 'mate\n' > "$d/mate/.fm-secondmate-home"
+  fm_write_meta "$d/state/mate.meta" "window=fm:fm-mate" "worktree=$d/wt" \
+    "kind=secondmate" "harness=pi" "backend=tmux" "home=$d/mate"
+  printf 'done: last item shipped, PR https://example.invalid/pr/9 checks green\n' \
+    > "$d/state/mate.status"
+
+  # Control: a home holding no live child work still reads from the mate's log.
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: done" "an empty secondmate home still reads the mate's own terminal event"
+
+  # One live child record in the mate's own home, queue drained: it is
+  # supervising, and its own terminal event no longer answers for the tree.
+  fm_write_meta "$d/mate/state/p3.meta" "window=fm:fm-p3" \
+    "worktree=$d/mate/wt-p3" "kind=ship" "harness=pi" "backend=tmux"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: working" "a mate with a live child must not read done"
+  assert_contains "$out" "source: secondmate-home" "the live-child verdict names its own source"
+  assert_contains "$out" "supervising 1 live child task record(s)" "the verdict counts the live child work"
+
+  # ... and its own wake queue left unconsumed past the shared bound is the
+  # incident itself: live work, nobody consuming its events.
+  printf '%s\t7\tsignal\tp3\tsignal: state/p3.status\n' "$(( $(date +%s) - 600 ))" \
+    > "$d/mate/state/.wake-queue"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: unattended" "an unconsumed queue with live children reads unattended"
+  assert_contains "$out" "1 live child task record(s)" "the unattended verdict names the live child work"
+  assert_not_contains "$out" "state: done" "an unattended home is never reported done"
+
+  # A mate that is provably mid-turn cannot reach its own queue yet, so those
+  # rows are not evidence that nobody is watching them.
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" mate) || fail "could not arm the mate busy record"
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" mate busy --gen "$gen" \
+    --source pi-ext --event agent-start >/dev/null || fail "could not record the mate as mid-turn"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: working" "a mid-turn mate is not reported unattended"
+  assert_not_contains "$out" "state: unattended" "a mid-turn mate is not reported unattended"
+
+  # A registered secondmate of that home is not child work: it is idle by default
+  # and its own parent routes to it.
+  rm "$d/mate/state/p3.meta"
+  fm_write_meta "$d/mate/state/nested.meta" "window=fm:fm-nested" \
+    "worktree=$d/mate/wt-nested" "kind=secondmate" "harness=pi" "backend=tmux"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: done" "a nested secondmate record is not live child work"
+  pass "a secondmate with live children is never read as idle or done"
+}
+
 # --- remote secondmate arm ---------------------------------------------------
 # A meta recording remote_host= must never be read through the local worktree
 # probe or a local backend adapter: the recorded worktree and pane live on the
@@ -1657,6 +1715,7 @@ test_no_run_idle_pane_uses_keyed_log
 test_no_run_idle_pane_paused
 test_no_run_idle_pane_custom_paused_verb
 test_no_run_idle_secondmate_resolved_event_not_state
+test_secondmate_live_children_are_part_of_its_state
 test_dead_window_ignores_stale_status_log
 test_dead_window_still_reports_terminal_run_step
 test_dead_window_still_reports_active_run_step
