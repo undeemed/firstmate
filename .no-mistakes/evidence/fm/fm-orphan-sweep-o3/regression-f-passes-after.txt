@@ -1,0 +1,6 @@
+ok - (a) a suite acquiring a real worktree lands it under its own fixture root
+ok - (b) $HOME/.treehouse is byte-for-byte unchanged by a suite that acquires worktrees
+ok - (c) the fixture pool root is removed by the suite's own trap
+ok - (d) the fixture repo's git status is as clean as it was
+ok - (e) a treehouse call from a real checkout leaves that checkout's own configuration alone
+ok - (f) a real-checkout call's pool state lands in the suite's scratch HOME, never the developer's pool root

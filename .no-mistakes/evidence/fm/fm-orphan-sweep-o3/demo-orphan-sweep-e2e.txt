@@ -1,0 +1,39 @@
+=== fm-orphan-sweep end-to-end demo (sandboxed roots, no real state touched) ===
+fixture root: /tmp/fm-orphan-sweep-demo.Ox2Cdr
+
+--- building the same litter measured on the box, plus live counterparts ---
+
+--- state before ---
+desktops:        am-gooey-g4 live-mate registry 
+registry:        am-gooey-g4:21 live-mate:22 
+pools:           leaked-pool real-pool 
+proc fixture:    5551234 5551235 
+tmp:             fresh-work old-scratch 
+
+$ fm-orphan-sweep.sh --dry-run
+orphan sweep: would have removed desktop /tmp/fm-orphan-sweep-demo.Ox2Cdr/desktops/am-gooey-g4 (4.0K, no live mate records it, display down)
+orphan sweep: would have dropped the desktop registry line for am-gooey-g4 (display :21 returned to the allocator)
+orphan sweep: would have removed treehouse pool /tmp/fm-orphan-sweep-demo.Ox2Cdr/pools/leaked-pool (8.0K, no worktree of it has a source repository left)
+orphan sweep: would have stopped disowned chromium (pid 5551234, its working directory or profile is gone)
+orphan sweep: would have removed tmp entry /tmp/fm-orphan-sweep-demo.Ox2Cdr/tmp/old-scratch (4.0K, older than 2 days, nothing is using it)
+orphan sweep: 5 orphan(s) in total
+
+(after dry run) desktops: am-gooey-g4 live-mate registry  | pools: leaked-pool real-pool  | tmp: fresh-work old-scratch   <- nothing removed
+
+$ fm-orphan-sweep.sh
+orphan sweep: removed desktop /tmp/fm-orphan-sweep-demo.Ox2Cdr/desktops/am-gooey-g4 (4.0K, no live mate records it, display down)
+orphan sweep: dropped the desktop registry line for am-gooey-g4 (display :21 returned to the allocator)
+orphan sweep: removed treehouse pool /tmp/fm-orphan-sweep-demo.Ox2Cdr/pools/leaked-pool (8.0K, no worktree of it has a source repository left)
+orphan sweep: stopped disowned chromium (pid 5551234, its working directory or profile is gone)
+orphan sweep: removed tmp entry /tmp/fm-orphan-sweep-demo.Ox2Cdr/tmp/old-scratch (4.0K, older than 2 days, nothing is using it)
+orphan sweep: 5 orphan(s) in total
+
+--- state after ---
+desktops:        live-mate registry 
+registry:        live-mate:22    <- display 21 released, live-mate:22 kept
+pools:           real-pool 
+proc fixture:    5551235    <- 5551234 stopped (fixture entry removed), live caddy 5551235 kept
+tmp:             fresh-work 
+
+$ fm-orphan-sweep.sh   (second run: nothing left to reclaim)
+(printed nothing, exit 0)

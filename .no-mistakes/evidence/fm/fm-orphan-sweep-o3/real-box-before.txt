@@ -1,0 +1,35 @@
+== 2026-09-08T23:14:25Z BEFORE test run ==
+-- ~/.treehouse entries (17) --
+AA-Demo-4cf3e9
+AA-Demo-ce2a60
+abstract-mono-e40f3f
+cursive-86e9a4
+dorm-fa30ae
+dulwich-fa09bf
+firstmate-4e604a
+foodie-35abec
+highlight.js-2ca212
+lark-402063
+seer-6962a7
+subliminal-app-6dda39
+swarm-7747ea
+swarms-platform-bcc5ea
+turso-e34fc1
+update-check.json
+watchdog-e4137f
+-- ~/.fm-desktops --
+RULES.md
+dorm-mate-d9
+main-firstmate
+registry
+seer-mate-e3
+subliminal-mate-b8
+swarm-mate-s6
+-- desktop registry --
+dorm-mate-d9	11
+seer-mate-e3	14
+subliminal-mate-b8	15
+main-firstmate	16
+swarm-mate-s6	19
+-- ppid-1 chrome/caddy/ssh-agent/websockify count --
+26

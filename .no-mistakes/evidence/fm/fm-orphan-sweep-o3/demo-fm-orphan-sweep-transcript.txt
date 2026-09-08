@@ -1,0 +1,64 @@
+===== fm-orphan-sweep demo: a fixture box with orphans and live work side by side =====
+
+--- BEFORE: desktop registry (display reservations) ---
+am-gooey-g4	41
+owned-mate	42
+up-mate	43
+
+--- BEFORE: desktops / pools / tmp / disowned processes ---
+am-gooey-g4
+owned-mate
+up-mate
+
+live-pool
+proj-dead-pool
+
+.X11-unix
+fresh-inside
+old-scratch
+
+proc fixture: chromium pid 4249001, ppid 1, --user-data-dir and cwd both deleted
+
+===== 1) fm-orphan-sweep.sh --dry-run =====
+orphan sweep: would have removed desktop /tmp/fm-orphan-sweep-demo.9l2OLR/desktops/am-gooey-g4 (4.0K, no live mate records it, display down)
+orphan sweep: would have dropped the desktop registry line for am-gooey-g4 (display :41 returned to the allocator)
+orphan sweep: would have removed treehouse pool /tmp/fm-orphan-sweep-demo.9l2OLR/pools/proj-dead-pool (8.0K, no worktree of it has a source repository left)
+orphan sweep: would have stopped disowned chromium (pid 4249001, its working directory or profile is gone)
+orphan sweep: would have removed tmp entry /tmp/fm-orphan-sweep-demo.9l2OLR/tmp/old-scratch (4.0K, older than 2 days, nothing is using it)
+orphan sweep: 5 orphan(s) in total
+(dry-run exit: 0)
+
+--- after dry-run: nothing was removed ---
+am-gooey-g4
+owned-mate
+up-mate
+live-pool
+proj-dead-pool
+
+===== 2) fm-orphan-sweep.sh (real run) =====
+orphan sweep: removed desktop /tmp/fm-orphan-sweep-demo.9l2OLR/desktops/am-gooey-g4 (4.0K, no live mate records it, display down)
+orphan sweep: dropped the desktop registry line for am-gooey-g4 (display :41 returned to the allocator)
+orphan sweep: removed treehouse pool /tmp/fm-orphan-sweep-demo.9l2OLR/pools/proj-dead-pool (8.0K, no worktree of it has a source repository left)
+orphan sweep: stopped disowned chromium (pid 4249001, its working directory or profile is gone)
+orphan sweep: removed tmp entry /tmp/fm-orphan-sweep-demo.9l2OLR/tmp/old-scratch (4.0K, older than 2 days, nothing is using it)
+orphan sweep: 5 orphan(s) in total
+(sweep exit: 0)
+
+--- AFTER: registry (dead desktop line dropped -> display 41 released; owned/live kept) ---
+owned-mate	42
+up-mate	43
+
+--- AFTER: what survived ---
+desktops:
+owned-mate
+up-mate
+pools:
+live-pool
+tmp:
+.X11-unix
+fresh-inside
+proc fixture entries left:
+
+===== 3) run again: a quiet box prints NOTHING (schedule-safe) =====
+output: []
+(exit: 0)
