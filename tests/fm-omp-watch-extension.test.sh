@@ -394,15 +394,16 @@ EOF
   pass "omp watcher coalesces distinct pending wakes until agent consumption"
 }
 
-# A claimed follow-up that omp never delivers (it clears queued messages when a
-# turn aborts) must not silence the session: measured on 2026-09-08, one mate sat
-# 26h with four unread durable rows and an idle pane because the claim was taken
-# once and never expired after the session's first consumption boundary. The TTL
-# is the unconditional backstop.
-test_omp_watch_expires_a_claim_whose_follow_up_was_lost() {
-  local repo home out status
-  repo="$TMP_ROOT/ttl-root"
-  home="$TMP_ROOT/ttl-home"
+# Shared driver for the wake-lifecycle cases below: one fixture whose every arm
+# cycle closes on the same actionable line, plus the node preamble that mounts
+# the extension against a fake omp and records what each wake was delivered as.
+# The caller supplies extra environment on the command line and its assertions
+# on stdin.
+run_omp_watch_lifecycle() {  # <name> <env-assignment>...
+  local name=$1 repo home
+  shift
+  repo="$TMP_ROOT/$name-root"
+  home="$TMP_ROOT/$name-home"
   mkdir -p "$repo/bin" "$home/state" "$home/config"
   install_omp_watch_fixture "$repo"
   cat >"$repo/bin/fm-watch-arm.sh" <<'SH'
@@ -411,16 +412,14 @@ echo "stale: default:w9S:p3"
 exit 0
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(
-    PLUGIN="$repo/.omp/extensions/fm-primary-omp-watch.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
-      FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 \
-      FM_WATCH_WAKE_COALESCE_TTL_MS=400 node --input-type=module 2>&1 <<'EOF'
+  cat >"$repo/preamble.mjs" <<'JS'
 import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const handlers = {};
 let armHandler = null;
 const delivered = [];
+const modes = [];
 const pi = {
   on(name, fn) {
     handlers[name] = fn;
@@ -429,38 +428,49 @@ const pi = {
     if (name === "fm-watch-arm-omp") armHandler = options.handler;
   },
   registerTool() {},
-  sendUserMessage: async (content) => {
+  sendUserMessage: async (content, options) => {
     delivered.push(content);
+    modes.push(options === undefined ? "turn" : options.deliverAs);
   },
+};
+const die = (message) => {
+  console.error(message);
+  process.exit(1);
+};
+const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Resolves as soon as `target` wakes have been delivered, or after ~18s.
+const waitForCount = async (target) => {
+  for (let i = 0; i < 900 && delivered.length < target; i += 1) await settle(20);
+  return delivered.length;
 };
 writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
 const mod = await import(pathToFileURL(process.env.PLUGIN).href);
 mod.default(pi);
 await armHandler("", { ui: { notify() {} } });
-
-const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitForCount = async (target) => {
-  for (let i = 0; i < 900 && delivered.length < target; i += 1) await settle(20);
-  return delivered.length;
-};
-
-if ((await waitForCount(1)) < 1) {
-  console.error("no first wake was delivered");
-  process.exit(1);
+JS
+  cat "$repo/preamble.mjs" - | env PLUGIN="$repo/.omp/extensions/fm-primary-omp-watch.ts" \
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
+    FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 \
+    "$@" node --input-type=module 2>&1
 }
+
+# A claimed follow-up that omp never delivers (it clears queued messages when a
+# turn aborts) must not silence the session: measured on 2026-09-08, one mate sat
+# 26h with ten undelivered durable rows and an idle pane because the claim was
+# taken once and never expired after the session's first consumption boundary.
+# The TTL is the unconditional backstop.
+test_omp_watch_expires_a_claim_whose_follow_up_was_lost() {
+  local out status
+  out=$(run_omp_watch_lifecycle ttl FM_WATCH_WAKE_COALESCE_TTL_MS=400 <<'EOF'
+if ((await waitForCount(1)) < 1) die("no first wake was delivered");
 // One real consumption boundary, exactly as a healthy session reports it.
 handlers.agent_start();
-if ((await waitForCount(2)) < 2) {
-  console.error("a repeat after the queue was read must deliver again");
-  process.exit(1);
-}
+if ((await waitForCount(2)) < 2) die("a repeat after the queue was read must deliver again");
+// From here the follow-up is LOST: nothing ever consumes it. Past the TTL the
+// next cycle must still reach the session.
 const claimed = delivered.length;
-// From here the follow-up is LOST: no agent_start ever consumes it. Past the
-// TTL the next cycle must still reach the session.
-for (let i = 0; i < 900 && delivered.length === claimed; i += 1) await settle(20);
-if (delivered.length <= claimed) {
-  console.error(`a claim whose follow-up was lost never expired; still ${delivered.length}`);
-  process.exit(1);
+if ((await waitForCount(claimed + 1)) <= claimed) {
+  die(`a claim whose follow-up was lost never expired; still ${delivered.length}`);
 }
 process.exit(0);
 EOF
@@ -472,149 +482,44 @@ EOF
   pass "omp watch expires a claimed wake whose follow-up was lost, after the coalesce TTL"
 }
 
-# A run that ends without consuming the queued wake settles the session at idle,
-# so the claim is stale immediately and the next wake must not wait out the TTL.
-test_omp_watch_releases_claim_when_a_run_ends_unconsumed() {
-  local repo home out status
-  repo="$TMP_ROOT/agent-end-root"
-  home="$TMP_ROOT/agent-end-home"
-  mkdir -p "$repo/bin" "$home/state" "$home/config"
-  install_omp_watch_fixture "$repo"
-  cat >"$repo/bin/fm-watch-arm.sh" <<'SH'
-#!/usr/bin/env bash
-echo "stale: default:w9S:p3"
-exit 0
-SH
-  chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(
-    PLUGIN="$repo/.omp/extensions/fm-primary-omp-watch.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
-      FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 \
-      FM_WATCH_WAKE_COALESCE_TTL_MS=600000 node --input-type=module 2>&1 <<'EOF'
-import { writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-
-const handlers = {};
-let armHandler = null;
-const delivered = [];
-const pi = {
-  on(name, fn) {
-    handlers[name] = fn;
-  },
-  registerCommand(name, options) {
-    if (name === "fm-watch-arm-omp") armHandler = options.handler;
-  },
-  registerTool() {},
-  sendUserMessage: async (content) => {
-    delivered.push(content);
-  },
-};
-writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
-const mod = await import(pathToFileURL(process.env.PLUGIN).href);
-mod.default(pi);
-await armHandler("", { ui: { notify() {} } });
-
-const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-for (let i = 0; i < 900 && delivered.length === 0; i += 1) await settle(20);
-if (delivered.length === 0) {
-  console.error("no first wake was delivered");
-  process.exit(1);
-}
-if (typeof handlers.agent_end !== "function") {
-  console.error("omp watch did not register an agent_end handler");
-  process.exit(1);
-}
+# Delivery mode and claim lifetime are one contract. An explicit deliverAs queues
+# without starting a turn, and omp's idle-path auto-continue for a queued
+# follow-up is gated on the transcript tail and on no prior interrupt, so an idle
+# wake must be delivered as a turn and only a streaming wake may queue. A run
+# that settles without reading the queued wake releases the claim at once,
+# without waiting out the TTL this case sets to ten minutes.
+test_omp_watch_wake_delivery_lifecycle() {
+  local out status
+  out=$(run_omp_watch_lifecycle lifecycle FM_WATCH_WAKE_COALESCE_TTL_MS=600000 <<'EOF'
+if ((await waitForCount(1)) < 1) die("no first wake was delivered");
+if (modes[0] !== "turn") die(`an idle wake must start a turn, got ${String(modes[0])}`);
+if (typeof handlers.agent_end !== "function") die("omp watch did not register an agent_end handler");
+// The run reads the queue and is now streaming, so the next wake queues behind
+// it instead of racing it.
+handlers.agent_start();
+if ((await waitForCount(2)) < 2) die("a wake after the queue was read must deliver again");
+if (modes[1] !== "followUp") die(`a streaming wake must queue as a follow-up, got ${String(modes[1])}`);
 const claimed = delivered.length;
 // A scheduled continuation is not an idle boundary: the queued wake may still
 // be read, so the claim stands.
 handlers.agent_end({ willContinue: true });
 await settle(300);
-if (delivered.length !== claimed) {
-  console.error(`a continuing run must not release the claim; got ${delivered.length}`);
-  process.exit(1);
-}
-// A settled run did not read the queue, so the claim is released well inside
-// the ten-minute TTL this test configures.
+if (delivered.length !== claimed) die(`a continuing run must not release the claim; got ${delivered.length}`);
+// A settled run did not read the queue, so the claim is released and the next
+// wake runs as a turn.
 handlers.agent_end({});
-for (let i = 0; i < 900 && delivered.length === claimed; i += 1) await settle(20);
-if (delivered.length <= claimed) {
-  console.error(`a settled run left the claim held; still ${delivered.length}`);
-  process.exit(1);
+if ((await waitForCount(claimed + 1)) <= claimed) die(`a settled run left the claim held; still ${delivered.length}`);
+if (modes[modes.length - 1] !== "turn") {
+  die(`a wake after the run settled must start a turn, got ${String(modes[modes.length - 1])}`);
 }
 process.exit(0);
 EOF
   )
   status=$?
   [ "$status" = 0 ] || printf 'DIAG: %s\n' "$out"
-  expect_code 0 "$status" "omp watch must release an unconsumed claim when a run settles"
-  [ -z "$out" ] || fail "omp agent_end test printed output: $out"
-  pass "omp watch releases an unconsumed wake claim when a run settles, and keeps it while one continues"
-}
-
-# omp's idle-path auto-continue for a queued follow-up is gated on the transcript
-# tail and on no prior interrupt, so a follow-up queued into an idle session can
-# sit unread (measured: a wake stranded behind a trailing advisor card). Omitting
-# deliverAs runs the wake now when idle; only a streaming wake keeps followUp.
-test_omp_watch_delivers_an_idle_wake_as_a_turn() {
-  local repo home out status
-  repo="$TMP_ROOT/delivery-root"
-  home="$TMP_ROOT/delivery-home"
-  mkdir -p "$repo/bin" "$home/state" "$home/config"
-  install_omp_watch_fixture "$repo"
-  cat >"$repo/bin/fm-watch-arm.sh" <<'SH'
-#!/usr/bin/env bash
-echo "stale: default:w9S:p3"
-exit 0
-SH
-  chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(
-    PLUGIN="$repo/.omp/extensions/fm-primary-omp-watch.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
-      FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 \
-      FM_WATCH_WAKE_COALESCE_TTL_MS=600000 node --input-type=module 2>&1 <<'EOF'
-import { writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-
-const handlers = {};
-let armHandler = null;
-const modes = [];
-const pi = {
-  on(name, fn) {
-    handlers[name] = fn;
-  },
-  registerCommand(name, options) {
-    if (name === "fm-watch-arm-omp") armHandler = options.handler;
-  },
-  registerTool() {},
-  sendUserMessage: async (_content, options) => {
-    modes.push(options === undefined ? "turn" : options.deliverAs);
-  },
-};
-writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
-const mod = await import(pathToFileURL(process.env.PLUGIN).href);
-mod.default(pi);
-await armHandler("", { ui: { notify() {} } });
-
-const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-for (let i = 0; i < 900 && modes.length === 0; i += 1) await settle(20);
-if (modes[0] !== "turn") {
-  console.error(`an idle wake must start a turn, got ${String(modes[0])}`);
-  process.exit(1);
-}
-// The session is now streaming, so the wake queues behind the live run instead
-// of racing it.
-handlers.agent_start();
-for (let i = 0; i < 900 && modes.length < 2; i += 1) await settle(20);
-if (modes[1] !== "followUp") {
-  console.error(`a streaming wake must queue as a follow-up, got ${String(modes[1])}`);
-  process.exit(1);
-}
-process.exit(0);
-EOF
-  )
-  status=$?
-  [ "$status" = 0 ] || printf 'DIAG: %s\n' "$out"
-  expect_code 0 "$status" "omp watch must deliver an idle wake as a turn and a streaming wake as a follow-up"
-  [ -z "$out" ] || fail "omp delivery-mode test printed output: $out"
-  pass "omp watch runs an idle wake as a turn and queues a streaming wake as a follow-up"
+  expect_code 0 "$status" "omp watch must run an idle wake, queue a streaming one, and release a settled claim"
+  [ -z "$out" ] || fail "omp wake-lifecycle test printed output: $out"
+  pass "omp watch runs an idle wake as a turn, queues a streaming wake, and releases the claim when a run settles"
 }
 
 test_omp_watch_registers_named_tool_and_command
@@ -623,5 +528,4 @@ test_omp_watch_retires_generation_on_shutdown
 test_omp_watch_coalesces_unread_duplicate_wakes
 test_omp_watch_coalesces_distinct_pending_wakes
 test_omp_watch_expires_a_claim_whose_follow_up_was_lost
-test_omp_watch_releases_claim_when_a_run_ends_unconsumed
-test_omp_watch_delivers_an_idle_wake_as_a_turn
+test_omp_watch_wake_delivery_lifecycle
