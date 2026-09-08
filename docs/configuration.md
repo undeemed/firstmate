@@ -746,6 +746,7 @@ FM_WATCH_TRIAGE_LOG_MAX_BYTES=262144   # size cap for the watcher and drain abso
 FM_RETIRE_LEDGER_MAX_AGE=604800    # seconds a retirement tombstone stays in state/.retired-tasks; every write prunes older lines
 FM_RETIRE_LEDGER_MAX_LINES=200     # newest tombstone lines kept when the retirement ledger is pruned
 FM_RETIRE_ORPHAN_MARKER_MAX_AGE=604800   # minimum marker age before teardown's orphan sweep may reap a supervision marker that also matches no live pane or task; both conditions are required
+FM_ORPHAN_SWEEP=on      # set off to skip fm-wake-drain.sh's at-most-hourly bin/fm-orphan-sweep.sh pass over per-task litter whose owner is gone (dead desktops, unowned treehouse pools, disowned processes, stale /tmp)
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=     # optional seconds allowed for bootstrap's best-effort clone refresh; unset/blank defaults to max(20, 5 + 3 * origin-backed-project-count)
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
 FM_STALE_WORKTREE_LOCK_AGE_SECS=30       # min mtime age before fm-teardown.sh treats a leftover worktree git index.lock as provably stale

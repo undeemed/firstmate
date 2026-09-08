@@ -96,6 +96,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor for the bootstrap diagnostic                  |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `fm-wake-drain.sh`       | Present durable watcher wakes, drop records naming a retired worker, unread informational status lines, OPEN DECISIONS, stated decision keys written off the documented before-colon form, and captain-call RECORD DIVERGENCE, consume acknowledged rows through their sequence, retire only the matching recovery generation, then assert supervision health |
+| `fm-orphan-sweep.sh`     | Reclaim per-task litter that outlived its records - dead review desktops, unowned treehouse pools, disowned ppid-1 processes, stale `/tmp` entries - refusing any removal without positive proof the owner is gone; run at most hourly by fm-wake-drain.sh |
 | `fm-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `fm-retire-lib.sh`       | Single owner of retirement finality: purge, tombstone, and drop-at-delivery for a retired task's supervision records |
 | `fm-classify-lib.sh`     | Shared wake-classification vocabulary, durable keyed-decision folds and scans, stated-key syntax diagnosis, and unread informational status-line selection |
