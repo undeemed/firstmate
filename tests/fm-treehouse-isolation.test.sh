@@ -16,6 +16,8 @@
 #   (c) the fixture root is gone once the suite's traps have run
 #   (d) the fixture repo's `git status` is as clean as it was
 #   (e) a real checkout outside the fixture area keeps its own configuration
+#   (f) a real-checkout call's pool state lands in a scratch HOME, never in
+#       the developer's real ~/.treehouse
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -86,6 +88,37 @@ pass "(d) the fixture repo's git status is as clean as it was"
 # The dangerous near miss: a suite calling treehouse from a real checkout must
 # not have that checkout's pool repointed at a fixture root that is about to be
 # deleted.
-(cd "$ROOT" && treehouse status >/dev/null 2>&1) || true
+#
+# treehouse initializes pool state on ANY command, so this real-checkout call
+# runs under a scratch HOME: without that, every run seeded one permanent
+# <checkout-name>-<hash> entry in the developer's real pool root - an entry
+# the orphan sweep can never reclaim, because an empty pool offers no
+# source-repository evidence.
+home_e="$TMP_ROOT/home-e"
+mkdir -p "$home_e"
+marker_glob="$HOME_POOL/$(basename "$ROOT")-"
+marker_before=false
+for existing in "$marker_glob"*; do
+	[ -e "$existing" ] || continue
+	marker_before=true
+	break
+done
+(cd "$ROOT" && HOME="$home_e" treehouse status >/dev/null 2>&1) || true
 [ ! -e "$ROOT/treehouse.toml" ] || fail "(e) the redirect wrote a pool configuration into the real checkout $ROOT"
 pass "(e) a treehouse call from a real checkout leaves that checkout's own configuration alone"
+
+if [ "$marker_before" = false ]; then
+	for leaked in "$marker_glob"*; do
+		[ -e "$leaked" ] || continue
+		fail "(f) the real-checkout call seeded $leaked in the developer's own pool root"
+	done
+fi
+found_state=false
+for state in "$home_e/.treehouse/$(basename "$ROOT")-"*/treehouse-state.json; do
+	[ -e "$state" ] || continue
+	found_state=true
+	break
+done
+[ "$found_state" = true ] ||
+	fail "(f) the real-checkout call left no pool state in the scratch HOME - did treehouse run at all?"
+pass "(f) a real-checkout call's pool state lands in the suite's scratch HOME, never the developer's pool root"
