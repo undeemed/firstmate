@@ -111,6 +111,14 @@ if [ "\${1:-}" = api ]; then
       printf '%s\n' '$head'
       exit 0
       ;;
+    *" --jq .body"*)
+      # The audience read bin/fm-pr-check.sh makes on every published body is
+      # deliberately NOT gated on gh-api-fails: that marker exists to make the
+      # COUNT unreadable, and a case about the squash guard must still get past
+      # the audience contract to reach it.
+      cat "$case_dir/pr-body"
+      exit 0
+      ;;
   esac
   case "\${2:-}" in
     */pulls/*)
@@ -124,6 +132,7 @@ exit 0
 SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
   : > "$case_dir/gh.log"
+  printf '%s\n' 'Adds the thing, described for the repository that receives it.' > "$case_dir/pr-body"
   write_pull_json "$case_dir"
 }
 
