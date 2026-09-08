@@ -254,6 +254,10 @@ pool_is_orphaned() { # <pool>
 		[ -f "$pointer" ] || continue
 		gitdir=$(sed -n 's/^gitdir: //p' "$pointer" 2>/dev/null) || return 1
 		[ -n "$gitdir" ] || return 1
+		case "$gitdir" in
+		/*) ;;
+		*) gitdir="$(dirname "$pointer")/$gitdir" ;;
+		esac
 		found=0
 		[ -e "$gitdir" ] && return 1
 	done

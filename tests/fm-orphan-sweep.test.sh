@@ -24,6 +24,8 @@
 #   (n) a /tmp entry this user owns but cannot write to            -> KEPT, silently
 #   (o) a fenced process whose cwd and profile are gone           -> STOPPED
 #   (p) a fenced process with live evidence, and the real table   -> KEPT, untouched
+#   (q) a pool with a relative pointer to a live source repo      -> KEPT
+#   (r) a pool whose relative pointer resolves to a gone repo     -> REMOVED
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -79,6 +81,13 @@ printf 'gitdir: %s/.git/worktrees/repo\n' "$TMP_ROOT/repo-that-is-gone" \
 	>"$POOLS/half-read-pool/2/repo/.git"
 mkdir -p "$TMP_ROOT/live-source/.git/worktrees/repo"
 seed_pool "$POOLS/live-pool" "$TMP_ROOT/live-source"
+mkdir -p "$TMP_ROOT/rel-live-source/.git/worktrees/repo"
+seed_pool "$POOLS/rel-live-pool" "$TMP_ROOT/rel-live-source"
+printf 'gitdir: ../../../../rel-live-source/.git/worktrees/repo\n' \
+	>"$POOLS/rel-live-pool/1/repo/.git"
+seed_pool "$POOLS/rel-dead-pool" "$TMP_ROOT/rel-gone-source"
+printf 'gitdir: ../../../../rel-gone-source/.git/worktrees/repo\n' \
+	>"$POOLS/rel-dead-pool/1/repo/.git"
 
 mkdir -p "$TMP_SWEPT/old-junk" "$TMP_SWEPT/fresh-inside/nested" \
 	"$TMP_SWEPT/.dotfile-scratch" "$TMP_SWEPT/held-dir"
@@ -184,6 +193,13 @@ pass "(f) a pool with a worktree pointer that cannot be read is left alone: unre
 
 [ -f "$POOLS/leased-pool/treehouse-state.json" ] || fail "(h) a leased pool was removed"
 pass "(h) a pool treehouse still records a lease in is never swept"
+
+[ -f "$POOLS/rel-live-pool/1/repo/.git" ] ||
+	fail "(q) a pool with a relative pointer to a live source repository was removed"
+pass "(q) a relative worktree pointer is resolved against its own directory, so a live pool is spared"
+
+[ ! -d "$POOLS/rel-dead-pool" ] || fail "(r) a pool whose relative pointer resolves to a gone repository survived"
+pass "(r) a relative pointer resolving to a gone source repository still proves an orphan"
 
 [ ! -d "$TMP_SWEPT/old-junk" ] || fail "(i) an aged tmp entry survived"
 pass "(i) a tmp entry older than the window, with nothing using it, is removed"
