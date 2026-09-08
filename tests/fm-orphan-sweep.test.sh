@@ -13,6 +13,7 @@
 #   (c) a desktop a live mate records in its state                -> KEPT
 #   (d) a desktop whose display is still up                       -> KEPT
 #   (e) a pool whose worktrees' source repository is gone         -> REMOVED
+#   (f) a pool with a worktree pointer that cannot be read       -> KEPT
 #   (g) a pool whose source repository still exists               -> KEPT
 #   (h) a pool treehouse still records a lease in                 -> KEPT
 #   (i) a /tmp entry older than the window                        -> REMOVED
@@ -21,6 +22,8 @@
 #   (l) a /tmp entry a live process is working in                 -> KEPT
 #   (m) --dry-run                                                 -> reports, removes nothing
 #   (n) a /tmp entry this user owns but cannot write to            -> KEPT, silently
+#   (o) a fenced process whose cwd and profile are gone           -> STOPPED
+#   (p) a fenced process with live evidence, and the real table   -> KEPT, untouched
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -70,6 +73,10 @@ seed_pool "$POOLS/dead-pool" "$TMP_ROOT/repo-that-is-gone"
 seed_pool "$POOLS/leased-pool" "$TMP_ROOT/repo-that-is-gone"
 printf '{"worktrees":[{"name":"1","path":"x","leased": true,"lease_holder":"mate"}]}\n' \
 	>"$POOLS/leased-pool/treehouse-state.json"
+seed_pool "$POOLS/half-read-pool" "$TMP_ROOT/repo-that-is-gone"
+mkdir -p "$POOLS/half-read-pool/2/repo"
+printf 'gitdir: %s/.git/worktrees/repo\n' "$TMP_ROOT/repo-that-is-gone" \
+	>"$POOLS/half-read-pool/2/repo/.git"
 mkdir -p "$TMP_ROOT/live-source/.git/worktrees/repo"
 seed_pool "$POOLS/live-pool" "$TMP_ROOT/live-source"
 
@@ -87,9 +94,22 @@ age "$POOLS"
 age "$TMP_SWEPT"
 # Its owner made it unwritable on purpose; emptying it would mean changing that.
 chmod 500 "$TMP_SWEPT/sealed-dir"
+chmod 000 "$POOLS/half-read-pool/2/repo/.git"
 # The hole a top-level mtime check would leave open: an old directory whose
 # work is still going on somewhere inside it.
 touch "$TMP_SWEPT/fresh-inside/nested/log.txt"
+
+PROC_FIXTURE="$TMP_ROOT/proc"
+mkdir -p "$PROC_FIXTURE/4242424" "$PROC_FIXTURE/4242425"
+printf 'chromium' >"$PROC_FIXTURE/4242424/comm"
+printf '1' >"$PROC_FIXTURE/4242424/ppid"
+printf 'chromium\0--user-data-dir=%s\0' "$TMP_ROOT/profile-that-is-gone" \
+	>"$PROC_FIXTURE/4242424/cmdline"
+ln -s "$TMP_ROOT/cwd-that-is-gone (deleted)" "$PROC_FIXTURE/4242424/cwd"
+printf 'caddy' >"$PROC_FIXTURE/4242425/comm"
+printf '1' >"$PROC_FIXTURE/4242425/ppid"
+printf 'caddy\0' >"$PROC_FIXTURE/4242425/cmdline"
+ln -s "$TMP_ROOT" "$PROC_FIXTURE/4242425/cwd"
 
 (cd "$TMP_SWEPT/held-dir" && exec sleep 300) &
 HOLDER_PID=$!
@@ -112,6 +132,7 @@ run_sweep() {
 		FM_DESKTOP_X_SOCKET_DIR="$X_SOCKETS" \
 		FM_ORPHAN_SWEEP_TREEHOUSE_ROOT="$POOLS" \
 		FM_ORPHAN_SWEEP_TMP_DIR="$TMP_SWEPT" \
+		FM_ORPHAN_SWEEP_PROC_ROOT="$PROC_FIXTURE" \
 		"$SWEEP" "$@"
 }
 
@@ -123,10 +144,15 @@ assert_contains "$dry" "would have removed desktop $DESKTOPS/dead-mate" \
 [ -d "$DESKTOPS/dead-mate" ] || fail "(m) the dry run removed the dead desktop anyway"
 [ -d "$POOLS/dead-pool" ] || fail "(m) the dry run removed a pool anyway"
 [ -d "$TMP_SWEPT/old-junk" ] || fail "(m) the dry run removed a tmp entry anyway"
+assert_contains "$dry" "would have stopped disowned chromium (pid 4242424" \
+	"(m) the dry run did not report the fenced orphan process"
+[ -d "$PROC_FIXTURE/4242424" ] || fail "(m) the dry run stopped the fenced process anyway"
 assert_contains "$dry" "orphan(s) in total" "(m) the dry run printed no summary"
 pass "(m) --dry-run reports every orphan and removes nothing"
 
 # --- the real sweep ---------------------------------------------------------
+
+real_pids=$(pgrep -u "$(id -u)" -P 1 -x 'chrome|chromium|caddy|ssh-agent|websockify' 2>/dev/null || true)
 
 out=$(run_sweep) || fail "(sweep) the sweep failed: $out"
 
@@ -153,6 +179,9 @@ pass "(e) a pool whose worktrees have no source repository left is removed"
 [ -f "$POOLS/live-pool/1/repo/.git" ] || fail "(g) a pool with a live source repository was removed"
 pass "(g) a pool whose source repository still exists is never swept"
 
+[ -d "$POOLS/half-read-pool" ] || fail "(f) a pool with an unreadable worktree pointer was removed"
+pass "(f) a pool with a worktree pointer that cannot be read is left alone: unreadable is not proof"
+
 [ -f "$POOLS/leased-pool/treehouse-state.json" ] || fail "(h) a leased pool was removed"
 pass "(h) a pool treehouse still records a lease in is never swept"
 
@@ -173,3 +202,16 @@ pass "(l) a tmp entry a live process is working in is never swept"
 assert_not_contains "$out" "sealed-dir" \
   "(n) the sweep complained about a directory it deliberately leaves alone"
 pass "(n) a tmp entry this user owns but cannot write to is left exactly as its owner set it"
+
+[ ! -d "$PROC_FIXTURE/4242424" ] || fail "(o) a fenced process with its cwd and profile gone was not stopped"
+assert_contains "$out" "stopped disowned chromium (pid 4242424" \
+	"(o) the sweep did not report the process it stopped"
+pass "(o) a disowned process whose cwd and profile are gone is stopped, inside the fence"
+
+[ -d "$PROC_FIXTURE/4242425" ] || fail "(p) a fenced process with a live working directory was stopped"
+assert_not_contains "$out" "4242425" "(p) the sweep reported a process it must keep"
+for pid in $real_pids; do
+	kill -0 "$pid" 2>/dev/null ||
+		fail "(p) the fenced sweep reached the real process table (pid $pid is gone)"
+done
+pass "(p) the fence keeps the evidence gate and never touches the real process table"

@@ -72,6 +72,12 @@
 #   FM_DESKTOP_LEGACY_REGISTRY       TSV registry (default <root>/registry)
 #   FM_ORPHAN_SWEEP_TREEHOUSE_ROOT   pool root (default $HOME/.treehouse)
 #   FM_ORPHAN_SWEEP_TMP_DIR          scratch root (default /tmp)
+#   FM_ORPHAN_SWEEP_PROC_ROOT        process table (default /proc). Any other
+#                                    root is a fixture: candidates are read
+#                                    from its <pid>/comm, ppid, cmdline and
+#                                    cwd entries and stopped by removing the
+#                                    entry, so a run against a fixture root
+#                                    never signals a real pid.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,6 +89,7 @@ DESKTOP_REGISTRY="${FM_DESKTOP_LEGACY_REGISTRY:-$DESKTOP_ROOT/registry}"
 X_SOCKET_DIR="${FM_DESKTOP_X_SOCKET_DIR:-/tmp/.X11-unix}"
 TREEHOUSE_ROOT="${FM_ORPHAN_SWEEP_TREEHOUSE_ROOT:-$HOME/.treehouse}"
 TMP_DIR="${FM_ORPHAN_SWEEP_TMP_DIR:-/tmp}"
+PROC_ROOT="${FM_ORPHAN_SWEEP_PROC_ROOT:-/proc}"
 DESKTOP_AGE_DAYS=3
 TREEHOUSE_AGE_DAYS=1
 TMP_AGE_DAYS=2
@@ -245,8 +252,8 @@ pool_is_orphaned() { # <pool>
 	local pointer gitdir found=1
 	for pointer in "$1"/*/*/.git; do
 		[ -f "$pointer" ] || continue
-		gitdir=$(sed -n 's/^gitdir: //p' "$pointer") || continue
-		[ -n "$gitdir" ] || continue
+		gitdir=$(sed -n 's/^gitdir: //p' "$pointer" 2>/dev/null) || return 1
+		[ -n "$gitdir" ] || return 1
 		found=0
 		[ -e "$gitdir" ] && return 1
 	done
@@ -288,13 +295,13 @@ sweep_treehouse_pools() {
 
 process_data_dir_missing() { # <pid>
 	local dir
-	dir=$(tr '\0' '\n' <"/proc/$1/cmdline" 2>/dev/null | sed -n 's/^--user-data-dir=//p' | head -1)
+	dir=$(tr '\0' '\n' <"$PROC_ROOT/$1/cmdline" 2>/dev/null | sed -n 's/^--user-data-dir=//p' | head -1)
 	[ -n "$dir" ] && [ ! -e "$dir" ]
 }
 
 process_cwd_deleted() { # <pid>
 	local cwd
-	cwd=$(readlink "/proc/$1/cwd" 2>/dev/null) || return 1
+	cwd=$(readlink "$PROC_ROOT/$1/cwd" 2>/dev/null) || return 1
 	case "$cwd" in
 	*' (deleted)') return 0 ;;
 	esac
@@ -303,17 +310,42 @@ process_cwd_deleted() { # <pid>
 
 # Signal one proven pid at a time, on evidence read from that pid's own /proc
 # entry rather than from its name.
+orphan_process_candidates() {
+	local entry pid name ppid
+	if [ "$PROC_ROOT" = /proc ]; then
+		pgrep -l -u "$(id -u)" -P 1 -x "$ORPHAN_PROCESS_NAMES" 2>/dev/null
+		return 0
+	fi
+	for entry in "$PROC_ROOT"/[0-9]*; do
+		[ -d "$entry" ] || continue
+		pid=${entry##*/}
+		name=$(cat "$entry/comm" 2>/dev/null) || continue
+		ppid=$(cat "$entry/ppid" 2>/dev/null) || continue
+		[ "$ppid" = 1 ] || continue
+		printf '%s\n' "$name" | grep -qEx "$ORPHAN_PROCESS_NAMES" || continue
+		printf '%s %s\n' "$pid" "$name"
+	done
+}
+
+stop_orphan_process() { # <pid>
+	if [ "$PROC_ROOT" = /proc ]; then
+		kill -TERM "$1" 2>/dev/null
+	else
+		rm -rf -- "${PROC_ROOT:?}/$1"
+	fi
+}
+
 sweep_orphan_processes() {
 	local pid name
-	[ -d /proc ] || return 0
+	[ -d "$PROC_ROOT" ] || return 0
 	while read -r pid name; do
 		[ -n "$pid" ] || continue
 		process_cwd_deleted "$pid" || process_data_dir_missing "$pid" || continue
 		if [ "$DRY_RUN" != true ]; then
-			kill -TERM "$pid" 2>/dev/null || continue
+			stop_orphan_process "$pid" || continue
 		fi
 		report "stopped disowned $name (pid $pid, its working directory or profile is gone)"
-	done < <(pgrep -l -u "$(id -u)" -P 1 -x "$ORPHAN_PROCESS_NAMES" 2>/dev/null)
+	done < <(orphan_process_candidates)
 }
 
 # --- /tmp -------------------------------------------------------------------
