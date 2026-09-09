@@ -6,17 +6,14 @@
 # block at tool-execution time, which no stub or fake agent can confirm.
 set -u
 
-if [ "${FM_CODEGRAPH_LIVE_E2E:-0}" != 1 ]; then
-  echo "skip: set FM_CODEGRAPH_LIVE_E2E=1 to run the live CodeGraph seatbelt enforcement guard"
-  exit 0
-fi
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  printf 'not ok - %s\n' "$1" >&2
-  exit 1
-}
+# One shared opt-in gate for every live guard, so FM_LIVE=0 and a missing tool
+# both report the same way (tests/fm-live-gate.test.sh asserts it).
+fm_live_gate opt-in FM_CODEGRAPH_LIVE_E2E node
 
 unset FM_ALLOW_RAW_SEARCH FM_CODEGRAPH_CHECKER NO_MISTAKES_GATE
 
