@@ -6,9 +6,10 @@
 # so the fleet a screen shows is asserted from behavior and never from source.
 set -u
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$ROOT/tests/lib.sh"
 
 PROBE="$ROOT/bin/fm-fleet-probe.sh"
 READER="$ROOT/bin/fm_fleet_read.py"
@@ -111,37 +112,44 @@ export FM_FLEET_TREEHOUSE_ROOT="$POOL"
 
 # --- discovery --------------------------------------------------------------
 
-HOMES=$(FM_HOME="$MAIN" "$PROBE" --homes)
-assert_contains "$HOMES" "main	$MAIN	main" "the main home is discovered as itself"
-assert_contains "$HOMES" "pool-mate-p9	$POOL/9/firstmate	registry" "a registered home comes from the registry"
-assert_contains "$HOMES" "orphan-mate-o8	$POOL/8/firstmate	marker" "an unregistered home is still discovered by its marker"
-assert_contains "$HOMES" "remote-mate-r1	/Users/cap/fm/home	remote:mac.local" "a remote home is listed with its host"
-pass "discovery finds the main home, the registry, and unregistered pool homes"
+check_discovery() {  # every home from the registry and the pool markers
+  HOMES=$(FM_HOME="$MAIN" "$PROBE" --homes)
+  assert_contains "$HOMES" "main	$MAIN	main" "the main home is discovered as itself"
+  assert_contains "$HOMES" "pool-mate-p9	$POOL/9/firstmate	registry" "a registered home comes from the registry"
+  assert_contains "$HOMES" "orphan-mate-o8	$POOL/8/firstmate	marker" "an unregistered home is still discovered by its marker"
+  assert_contains "$HOMES" "remote-mate-r1	/Users/cap/fm/home	remote:mac.local" "a remote home is listed with its host"
+  pass "discovery finds the main home, the registry, and unregistered pool homes"
+}
 
 # --- one home ---------------------------------------------------------------
 
-PROBED=$(FM_HOME="$MAIN" "$PROBE" --home)
-assert_contains "$PROBED" "sup	2	" "the wake-queue depth is read from the home's own queue"
-assert_contains "$PROBED" "	free" "an unlocked home reports its session lock as free"
-assert_contains "$PROBED" "task	ship-live	ship	no-mistakes	claude	tmux	alive	idle" \
-  "a live endpoint and its recorded idle turn are read from their own owners"
-assert_contains "$PROBED" "https://github.com/o/r/pull/42" "a pull request reported in the status log is recovered"
-assert_contains "$PROBED" "task	ship-gone	ship	direct-PR	claude	tmux	dead" "a missing endpoint reads as dead"
-assert_contains "$PROBED" "task	mate-remote	secondmate	secondmate	claude	tmux	unknown	unknown	not-probed" \
-  "a remote endpoint is never guessed from here"
-assert_contains "$PROBED" "event	ship-gone	" "the status log's last line is emitted as an event record"
-assert_contains "$PROBED" "blocked" "the event record keeps the verb the worker wrote"
-pass "one home probes its supervision header, endpoints, busy verdicts, and events"
+check_probe_home() {  # one home read through the record owners
+  PROBED=$(FM_HOME="$MAIN" "$PROBE" --home)
+  assert_contains "$PROBED" "sup	2	" "the wake-queue depth is read from the home's own queue"
+  assert_contains "$PROBED" "	free" "an unlocked home reports its session lock as free"
+  assert_contains "$PROBED" "task	ship-live	ship	no-mistakes	claude	tmux	alive	idle" \
+    "a live endpoint and its recorded idle turn are read from their own owners"
+  assert_contains "$PROBED" "https://github.com/o/r/pull/42" "a pull request reported in the status log is recovered"
+  assert_contains "$PROBED" "task	ship-gone	ship	direct-PR	claude	tmux	dead" "a missing endpoint reads as dead"
+  assert_contains "$PROBED" "task	mate-remote	secondmate	secondmate	claude	tmux	unknown	unknown	not-probed" \
+    "a remote endpoint is never guessed from here"
+  assert_contains "$PROBED" "event	ship-gone	" "the status log's last line is emitted as an event record"
+  assert_contains "$PROBED" "blocked" "the event record keeps the verb the worker wrote"
+  pass "one home probes its supervision header, endpoints, busy verdicts, and events"
+}
 
-STATELESS=$(FM_HOME="$POOL/7/firstmate" "$PROBE" --home)
-assert_contains "$STATELESS" "error	no state directory" "a home with no records says so"
-[ ! -d "$POOL/7/firstmate/state" ] || fail "the probe created a state directory in a home it only reads"
-pass "probing a home without records reports it and writes nothing"
+check_stateless_home() {  # a probe writes nothing into a home it reads
+  STATELESS=$(FM_HOME="$POOL/7/firstmate" "$PROBE" --home)
+  assert_contains "$STATELESS" "error	no state directory" "a home with no records says so"
+  [ ! -d "$POOL/7/firstmate/state" ] || fail "the probe created a state directory in a home it only reads"
+  pass "probing a home without records reports it and writes nothing"
+}
 
 # --- the read layer --------------------------------------------------------
 
-FLEET=$(FM_HOME="$MAIN" python3 "$READER")
-python3 - "$FLEET" <<'PY' || fail "the read layer did not shape the fleet as expected"
+check_read_layer() {  # the shared read layer shapes the whole fleet
+  FLEET=$(FM_HOME="$MAIN" python3 "$READER")
+  python3 - "$FLEET" <<'PY' || fail "the read layer did not shape the fleet as expected"
 import json
 import sys
 
@@ -164,20 +172,24 @@ assert homes["pool-mate-p9"]["tasks"][0]["id"] == "pool-task"
 assert homes["orphan-mate-o8"]["tasks"] == []
 assert fleet["elapsed_ms"] >= 0
 PY
-pass "the read layer returns one shaped fleet from every discovered home"
+  pass "the read layer returns one shaped fleet from every discovered home"
+}
 
 # --- the screens -----------------------------------------------------------
 
-FRAME=$(FM_HOME="$MAIN" python3 "$TUI" --once)
-assert_contains "$FRAME" "FIRSTMATE FLEET" "the screen names itself"
-assert_contains "$FRAME" "ship-live" "every task in flight is on the screen"
-assert_contains "$FRAME" "pool-task" "a pool home's task is on the same screen as the main home's"
-assert_contains "$FRAME" "orphan-mate-o8" "an unregistered home is visible rather than silently absent"
-assert_contains "$FRAME" "EVENT" "the last status line is labelled as a wake event, not current state"
-assert_contains "$FRAME" "no work under way here" "a home with no work says so"
-pass "the terminal screen renders the whole fleet from the read layer"
+check_tui_screen() {  # the terminal screen renders from the read layer
+  FRAME=$(FM_HOME="$MAIN" python3 "$TUI" --once)
+  assert_contains "$FRAME" "FIRSTMATE FLEET" "the screen names itself"
+  assert_contains "$FRAME" "ship-live" "every task in flight is on the screen"
+  assert_contains "$FRAME" "pool-task" "a pool home's task is on the same screen as the main home's"
+  assert_contains "$FRAME" "orphan-mate-o8" "an unregistered home is visible rather than silently absent"
+  assert_contains "$FRAME" "EVENT" "the last status line is labelled as a wake event, not current state"
+  assert_contains "$FRAME" "no work under way here" "a home with no work says so"
+  pass "the terminal screen renders the whole fleet from the read layer"
+}
 
-BOARD=$(FM_HOME="$MAIN" python3 - "$ROOT" <<'PY'
+check_web_board() {  # the web board renders the same fleet
+  BOARD=$(FM_HOME="$MAIN" python3 - "$ROOT" <<'PY'
 import importlib.util
 import json
 import sys
@@ -191,27 +203,38 @@ import fm_fleet_read
 
 print(board.render(fm_fleet_read.read_fleet()))
 PY
-) || fail "the web board could not render from the read layer"
-assert_contains "$BOARD" "ship-live" "the web board lists the same tasks"
-assert_contains "$BOARD" "orphan-mate-o8" "the web board discovers homes instead of hardcoding them"
-assert_contains "$BOARD" "event" "the web board labels the last status line as an event"
-pass "the web board renders the same discovered fleet"
+  ) || fail "the web board could not render from the read layer"
+  assert_contains "$BOARD" "ship-live" "the web board lists the same tasks"
+  assert_contains "$BOARD" "orphan-mate-o8" "the web board discovers homes instead of hardcoding them"
+  assert_contains "$BOARD" "event" "the web board labels the last status line as an event"
+  pass "the web board renders the same discovered fleet"
+}
 
 # --- the backlog read ------------------------------------------------------
 
-if command -v tasks-axi > /dev/null 2>&1; then
-  cp "$ROOT/.tasks.toml" "$MAIN/.tasks.toml"
-  (
-    cd "$MAIN" || exit 1
-    tasks-axi add ship-live "Ship Live" --repo alpha --kind ship --start > /dev/null
-    tasks-axi add waiting-task "Waiting Task" --repo alpha --kind ship > /dev/null
-    tasks-axi add captain-call "Captain Call" --repo alpha --kind task > /dev/null
-    tasks-axi hold captain-call --reason "needs the captain" --kind captain > /dev/null
-  ) || fail "the fixture backlog could not be written through tasks-axi"
-  WITH_BACKLOG=$(cd "$MAIN" && FM_HOME="$MAIN" "$PROBE" --home)
-  assert_contains "$WITH_BACKLOG" "backlog	1	" "the backlog counts come from the home's configured backend"
-  assert_contains "$WITH_BACKLOG" "hold	captain-call	captain" "a task held for the captain is reported with its hold kind"
-  pass "the backlog read asks tasks-axi for counts and captain holds"
-else
-  echo "skip: tasks-axi not found (backlog counts and captain holds unasserted)"
-fi
+check_backlog_read() {  # backlog counts and captain holds through tasks-axi
+  if command -v tasks-axi > /dev/null 2>&1; then
+    cp "$ROOT/.tasks.toml" "$MAIN/.tasks.toml"
+    (
+      cd "$MAIN" || exit 1
+      tasks-axi add ship-live "Ship Live" --repo alpha --kind ship --start > /dev/null
+      tasks-axi add waiting-task "Waiting Task" --repo alpha --kind ship > /dev/null
+      tasks-axi add captain-call "Captain Call" --repo alpha --kind task > /dev/null
+      tasks-axi hold captain-call --reason "needs the captain" --kind captain > /dev/null
+    ) || fail "the fixture backlog could not be written through tasks-axi"
+    WITH_BACKLOG=$(cd "$MAIN" && FM_HOME="$MAIN" "$PROBE" --home)
+    assert_contains "$WITH_BACKLOG" "backlog	1	" "the backlog counts come from the home's configured backend"
+    assert_contains "$WITH_BACKLOG" "hold	captain-call	captain" "a task held for the captain is reported with its hold kind"
+    pass "the backlog read asks tasks-axi for counts and captain holds"
+  else
+    echo "skip: tasks-axi not found (backlog counts and captain holds unasserted)"
+  fi
+}
+
+check_discovery
+check_probe_home
+check_stateless_home
+check_read_layer
+check_tui_screen
+check_web_board
+check_backlog_read

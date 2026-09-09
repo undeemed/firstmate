@@ -123,6 +123,54 @@ def discover_homes() -> list[dict]:
     return homes
 
 
+def _shape_header_row(result: dict, row: list[str]) -> None:
+    """One header record - error, supervision, backlog, or hold - onto the home."""
+    kind = row[0]
+    if kind == "error":
+        result["error"] = row[1] if len(row) > 1 else "unreadable"
+    elif kind == "sup" and len(row) >= 5:
+        result["supervision"] = {
+            "wake_depth": _int_or_none(row[1]),
+            "oldest_wake_age": _int_or_none(row[2]),
+            "beat_age": _int_or_none(row[3]),
+            "lock": _field(row, 4),
+        }
+    elif kind == "backlog" and len(row) >= 4:
+        result["backlog"] = {
+            "in_flight": _int_or_none(row[1]),
+            "queued": _int_or_none(row[2]),
+            "held": _int_or_none(row[3]),
+        }
+    elif kind == "hold" and len(row) >= 3:
+        result["holds"].append({"id": row[1], "hold_kind": row[2]})
+
+
+def _shape_task_row(result: dict, tasks: dict[str, dict], row: list[str]) -> None:
+    """One task or event record; an event attaches to the task it names."""
+    kind = row[0]
+    if kind == "task" and len(row) >= 10:
+        task = {
+            "id": row[1],
+            "kind": _field(row, 2),
+            "mode": _field(row, 3),
+            "harness": _field(row, 4),
+            "backend": _field(row, 5),
+            "endpoint": _field(row, 6),
+            "busy": _field(row, 7),
+            "busy_source": _field(row, 8),
+            "pr": _field(row, 9),
+            "last_event": None,
+        }
+        tasks[task["id"]] = task
+        result["tasks"].append(task)
+    elif kind == "event" and len(row) >= 4 and row[1] in tasks:
+        tasks[row[1]]["last_event"] = {
+            "age_secs": _int_or_none(row[2]),
+            "verb": _field(row, 3),
+            "note": _field(row, 4),
+        }
+
+
 def read_home(home: dict) -> dict:
     """One home's cheap read: its supervision header, backlog, holds, and tasks."""
     result = dict(home)
@@ -149,50 +197,27 @@ def read_home(home: dict) -> dict:
 
     tasks: dict[str, dict] = {}
     for row in records:
-        kind = row[0]
-        if kind == "error":
-            result["error"] = row[1] if len(row) > 1 else "unreadable"
-        elif kind == "sup" and len(row) >= 5:
-            result["supervision"] = {
-                "wake_depth": _int_or_none(row[1]),
-                "oldest_wake_age": _int_or_none(row[2]),
-                "beat_age": _int_or_none(row[3]),
-                "lock": _field(row, 4),
-            }
-        elif kind == "backlog" and len(row) >= 4:
-            result["backlog"] = {
-                "in_flight": _int_or_none(row[1]),
-                "queued": _int_or_none(row[2]),
-                "held": _int_or_none(row[3]),
-            }
-        elif kind == "hold" and len(row) >= 3:
-            result["holds"].append({"id": row[1], "hold_kind": row[2]})
-        elif kind == "task" and len(row) >= 10:
-            task = {
-                "id": row[1],
-                "kind": _field(row, 2),
-                "mode": _field(row, 3),
-                "harness": _field(row, 4),
-                "backend": _field(row, 5),
-                "endpoint": _field(row, 6),
-                "busy": _field(row, 7),
-                "busy_source": _field(row, 8),
-                "pr": _field(row, 9),
-                "last_event": None,
-            }
-            tasks[task["id"]] = task
-            result["tasks"].append(task)
-        elif kind == "event" and len(row) >= 4 and row[1] in tasks:
-            tasks[row[1]]["last_event"] = {
-                "age_secs": _int_or_none(row[2]),
-                "verb": _field(row, 3),
-                "note": _field(row, 4),
-            }
+        if row[0] in ("task", "event"):
+            _shape_task_row(result, tasks, row)
+        else:
+            _shape_header_row(result, row)
     if probe_error:
         # The probe crashed after writing part of this home. The partial read
         # stays visible, and the crash outranks any record-level error above.
         result["error"] = probe_error
     return result
+
+
+def _counts(read: list[dict]) -> dict:
+    """The fleet summary counters both boards put in their headline."""
+    tasks = [task for entry in read for task in entry["tasks"]]
+    return {
+        "homes": len(read),
+        "tasks": len(tasks),
+        "tasks_live": sum(1 for task in tasks if task["endpoint"] == "alive"),
+        "tasks_busy": sum(1 for task in tasks if task["busy"] == "busy"),
+        "holds": sum(len(entry["holds"]) for entry in read),
+    }
 
 
 def read_fleet() -> dict:
@@ -201,18 +226,11 @@ def read_fleet() -> dict:
     homes = discover_homes()
     with ThreadPoolExecutor() as pool:
         read = list(pool.map(read_home, homes))
-    tasks = [task for entry in read for task in entry["tasks"]]
     return {
         "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "elapsed_ms": int((time.time() - started) * 1000),
         "homes": read,
-        "counts": {
-            "homes": len(read),
-            "tasks": len(tasks),
-            "tasks_live": sum(1 for task in tasks if task["endpoint"] == "alive"),
-            "tasks_busy": sum(1 for task in tasks if task["busy"] == "busy"),
-            "holds": sum(len(entry["holds"]) for entry in read),
-        },
+        "counts": _counts(read),
     }
 
 

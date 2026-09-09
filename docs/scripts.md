@@ -17,6 +17,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-fleet-snapshot.sh`   | Print the read-only structured fleet snapshot JSON (schema `fm-fleet-snapshot.v1`)   |
 | `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view                                   |
 | `fm-fleet-probe.sh`      | Probe one home cheaply for endpoints, harness turns, queued wakes, and backlog counts |
+| `fm-fleet-probe-home-lib.sh` | Sourced per-home half of that probe: `sup`, `task`, and `event` records read through their shell owners |
 | `fm_fleet_read.py`       | The one fleet read layer both boards render from: home discovery plus concurrent per-home reads ([fleet-tui.md](fleet-tui.md)) |
 | `fm-fleet-tui.py`        | Always-on terminal screen of every task in flight fleet-wide ([fleet-tui.md](fleet-tui.md)) |
 | `fm-live-board.py`       | Same fleet read, served as one auto-refreshing web page behind an unguessable path token |

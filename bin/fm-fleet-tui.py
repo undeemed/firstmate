@@ -57,6 +57,69 @@ def fit(text: str, width: int) -> str:
     return text if len(text) <= width else text[: max(0, width - 1)] + "…"
 
 
+def home_lines(home: dict, width: int) -> list[tuple[str, int]]:
+    """One home's header block: supervision, backlog, error, and captain holds."""
+    sup = home["supervision"]
+    backlog = home["backlog"]
+    detail = (
+        f"wakes {count(sup['wake_depth'])}"
+        f" (oldest {age(sup['oldest_wake_age'])})"
+        f"  beat {age(sup['beat_age'])}"
+        f"  lock {sup['lock'] or '-'}"
+        f"  backlog {count(backlog['in_flight'])}/{count(backlog['queued'])}/{count(backlog['held'])}"
+        " in-flight/queued/held"
+    )
+    stale_beat = sup["beat_age"] is None or sup["beat_age"] > 300
+    lines = [
+        ("", PLAIN),
+        (
+            fit(f"{home['label']} [{home['source']}]  {detail}", width),
+            WARN if stale_beat else HEAD,
+        ),
+    ]
+    if home.get("error"):
+        lines.append((fit(f"  ! {home['error']}", width), BAD))
+    captain_holds = [
+        hold["id"] for hold in home["holds"] if hold["hold_kind"] == "captain"
+    ]
+    if captain_holds:
+        lines.append(
+            (fit(f"  captain holds: {', '.join(captain_holds)}", width), WARN)
+        )
+    if not home["tasks"] and not home.get("error"):
+        lines.append(("  no work under way here", DIM))
+    return lines
+
+
+def event_line(event: dict | None, width: int) -> tuple[str, int]:
+    """The task's last wake EVENT, labelled as history and never as current truth."""
+    if not event:
+        return ("      EVENT none yet", DIM)
+    note = event["note"] or ""
+    return (
+        fit(
+            f"      EVENT {age(event['age_secs'])} ago · {event['verb']}: {note}",
+            width,
+        ),
+        DIM,
+    )
+
+
+def task_lines(task: dict, width: int) -> list[tuple[str, int]]:
+    """One task's row and its last wake EVENT line - history, never current truth."""
+    glyph, role = mark(task)
+    kind = "/".join(part for part in (task["kind"], task["mode"]) if part)
+    runtime = "/".join(part for part in (task["harness"], task["backend"]) if part)
+    busy = task["busy"] or "-"
+    if task["busy"] and task["busy_source"]:
+        busy = f"{busy} ({task['busy_source']})"
+    row = (
+        f"  {glyph} {task['id']:<30} {kind:<20} {runtime:<12} "
+        f"{task['endpoint'] or '-':<7} {busy:<22} {task['pr'] or ''}"
+    )
+    return [(fit(row, width), role), event_line(task["last_event"], width)]
+
+
 def frame(fleet: dict, width: int) -> list[tuple[str, int]]:
     """The whole screen as (text, role) lines, so curses and --once render the same."""
     counts = fleet["counts"]
@@ -70,66 +133,10 @@ def frame(fleet: dict, width: int) -> list[tuple[str, int]]:
         f"{counts['holds']} held tasks · read in {fleet['elapsed_ms']}ms at {fleet['generated']}"
     )
     lines.append((summary, DIM))
-
     for home in fleet["homes"]:
-        lines.append(("", PLAIN))
-        sup = home["supervision"]
-        backlog = home["backlog"]
-        detail = (
-            f"wakes {count(sup['wake_depth'])}"
-            f" (oldest {age(sup['oldest_wake_age'])})"
-            f"  beat {age(sup['beat_age'])}"
-            f"  lock {sup['lock'] or '-'}"
-            f"  backlog {count(backlog['in_flight'])}/{count(backlog['queued'])}/{count(backlog['held'])}"
-            " in-flight/queued/held"
-        )
-        stale_beat = sup["beat_age"] is None or sup["beat_age"] > 300
-        lines.append(
-            (
-                fit(f"{home['label']} [{home['source']}]  {detail}", width),
-                WARN if stale_beat else HEAD,
-            )
-        )
-        if home.get("error"):
-            lines.append((fit(f"  ! {home['error']}", width), BAD))
-        captain_holds = [
-            hold["id"] for hold in home["holds"] if hold["hold_kind"] == "captain"
-        ]
-        if captain_holds:
-            lines.append(
-                (fit(f"  captain holds: {', '.join(captain_holds)}", width), WARN)
-            )
-        if not home["tasks"] and not home.get("error"):
-            lines.append(("  no work under way here", DIM))
-
+        lines.extend(home_lines(home, width))
         for task in sorted(home["tasks"], key=lambda t: t["id"]):
-            glyph, role = mark(task)
-            kind = "/".join(part for part in (task["kind"], task["mode"]) if part)
-            runtime = "/".join(
-                part for part in (task["harness"], task["backend"]) if part
-            )
-            busy = task["busy"] or "-"
-            if task["busy"] and task["busy_source"]:
-                busy = f"{busy} ({task['busy_source']})"
-            row = (
-                f"  {glyph} {task['id']:<30} {kind:<20} {runtime:<12} "
-                f"{task['endpoint'] or '-':<7} {busy:<22} {task['pr'] or ''}"
-            )
-            lines.append((fit(row, width), role))
-            event = task["last_event"]
-            if event:
-                note = event["note"] or ""
-                lines.append(
-                    (
-                        fit(
-                            f"      EVENT {age(event['age_secs'])} ago · {event['verb']}: {note}",
-                            width,
-                        ),
-                        DIM,
-                    )
-                )
-            else:
-                lines.append(("      EVENT none yet", DIM))
+            lines.extend(task_lines(task, width))
     return lines
 
 
@@ -190,44 +197,57 @@ def paint(screen, reader: Reader, interval: int, top: int) -> tuple[int, int]:
     return top, body
 
 
+def init_colors() -> None:
+    """Map each screen role to a curses attribute, once colours are known."""
+    if not curses.has_colors():
+        return
+    curses.start_color()
+    curses.use_default_colors()
+    for pair, (role, colour) in enumerate(
+        (
+            (HEAD, curses.COLOR_CYAN),
+            (GOOD, curses.COLOR_GREEN),
+            (WARN, curses.COLOR_YELLOW),
+            (BAD, curses.COLOR_RED),
+        ),
+        start=1,
+    ):
+        curses.init_pair(pair, colour, -1)
+        ROLES[role] = curses.color_pair(pair)
+    ROLES[HEAD] |= curses.A_BOLD
+    ROLES[DIM] = curses.A_DIM
+
+
+def react(key: int, reader: Reader, top: int) -> int | None:
+    """One key's effect on the screen. Returns the scroll offset, None to quit."""
+    if key in (ord("q"), ord("Q")):
+        return None
+    if key in (ord("r"), ord("R")):
+        reader.start()
+    elif key in (curses.KEY_DOWN, ord("j")):
+        top += 1
+    elif key in (curses.KEY_UP, ord("k")):
+        top = max(0, top - 1)
+    elif key == ord("g"):
+        top = 0
+    elif key == ord("G"):
+        top = 1 << 20  # paint clamps this to the last full screen
+    return top
+
+
 def loop(screen, interval: int) -> None:
     curses.curs_set(0)
     screen.timeout(POLL_MS)
-    if curses.has_colors():
-        curses.start_color()
-        curses.use_default_colors()
-        for pair, (role, colour) in enumerate(
-            (
-                (HEAD, curses.COLOR_CYAN),
-                (GOOD, curses.COLOR_GREEN),
-                (WARN, curses.COLOR_YELLOW),
-                (BAD, curses.COLOR_RED),
-            ),
-            start=1,
-        ):
-            curses.init_pair(pair, colour, -1)
-            ROLES[role] = curses.color_pair(pair)
-        ROLES[HEAD] |= curses.A_BOLD
-        ROLES[DIM] = curses.A_DIM
-
+    init_colors()
     reader = Reader()
     reader.start()
     top = 0
     while True:
-        top, body = paint(screen, reader, interval, top)
-        key = screen.getch()
-        if key in (ord("q"), ord("Q")):
+        top, _body = paint(screen, reader, interval, top)
+        moved = react(screen.getch(), reader, top)
+        if moved is None:
             return
-        if key in (ord("r"), ord("R")):
-            reader.start()
-        elif key in (curses.KEY_DOWN, ord("j")):
-            top += 1
-        elif key in (curses.KEY_UP, ord("k")):
-            top = max(0, top - 1)
-        elif key == ord("g"):
-            top = 0
-        elif key == ord("G"):
-            top = 1 << 20  # paint clamps this to the last full screen
+        top = moved
         if reader.read_at and time.time() - reader.read_at >= interval:
             reader.start()
 
