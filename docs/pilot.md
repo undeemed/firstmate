@@ -42,7 +42,7 @@ journalctl --user-unit pilot -f      # follow what it is doing
 
 `sequential` execution with `wait_for_merge: true` keeps it to one task at a time, which matters on a shared box: a parallel Pilot plus the fleet's own workers can exhaust the CPU.
 A `MemoryMax` on the unit bounds the daemon and everything it spawns.
-An idle daemon watching nine repositories holds roughly 75 MB of resident memory.
+An idle daemon watching nine repositories holds roughly 75-90 MB of resident memory.
 
 In this mode Pilot waits up to one hour for a human merge before moving to the next labelled issue.
 That wait is fixed inside the poller in release 2.273.1, so `orchestrator.execution.pr_timeout` does not change it.
