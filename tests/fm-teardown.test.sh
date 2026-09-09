@@ -2825,7 +2825,9 @@ EOF
   expect_code 0 "$rc" "parked-run-pipeline-advanced-unfetched: teardown should still succeed"
   assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
     "parked-run-pipeline-advanced-unfetched: teardown did not abort the parked run the ledger proves is this task's continuation"
-  assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
+  # This fork aborts every run this task owns that has no outcome yet, not only
+  # a parked one, so the report names the missing outcome rather than the gate.
+  assert_grep "has no outcome yet; aborting" "$case_dir/stderr" \
     "parked-run-pipeline-advanced-unfetched: teardown did not report aborting the parked run"
   pass "a parked run the pipeline advanced past the task copy is still concluded from the runs ledger, not orphaned"
 }
