@@ -1333,6 +1333,57 @@ test_historical_annotation_skips_announced_status() {
   pass "historical annotations replay nothing already announced and keep everything new"
 }
 
+# The scheduled orphan sweep (bin/fm-orphan-sweep.sh) is destructive and
+# box-wide, so the drain owns exactly one thing about it: that it runs at most
+# once per window, and that what it says lands on stderr with the drain's other
+# operational notes rather than in the wake records a caller parses.
+test_orphan_sweep_runs_once_per_window_on_stderr() {
+  local dir state desktops registry marker
+  dir=$(make_case orphan-sweep-cadence)
+  state="$dir/state"
+  desktops="$dir/desktops"
+  registry="$desktops/registry"
+  marker="$state/.orphan-sweep-last"
+  mkdir -p "$desktops/dead-mate" "$dir/pools" "$dir/tmp" "$dir/proc"
+  printf 'profile\n' > "$desktops/dead-mate/Cookies"
+  printf 'dead-mate\t44\n' > "$registry"
+  find "$desktops" -exec touch -h -d '10 days ago' {} + 2>/dev/null || true
+
+  run_drain_with_sweep() {
+    FM_STATE_OVERRIDE="$state" \
+    FM_HOME="$dir" \
+    FM_ORPHAN_SWEEP=on \
+    FM_DESKTOP_ROOT="$desktops" \
+    FM_DESKTOP_LEGACY_REGISTRY="$registry" \
+    FM_DESKTOP_X_SOCKET_DIR="$dir/x-sockets" \
+    FM_ORPHAN_SWEEP_TREEHOUSE_ROOT="$dir/pools" \
+    FM_ORPHAN_SWEEP_TMP_DIR="$dir/tmp" \
+    FM_ORPHAN_SWEEP_PROC_ROOT="$dir/proc" \
+      "$DRAIN" > "$1" 2> "$2"
+  }
+
+  # Due: the marker is old enough that the window has passed.
+  touch -d '2 hours ago' "$marker"
+  run_drain_with_sweep "$dir/due.out" "$dir/due.err" || fail "cadence: the due drain failed"
+  [ ! -d "$desktops/dead-mate" ] || fail "cadence: a due drain did not run the sweep"
+  assert_grep 'removed desktop' "$dir/due.err" \
+    "cadence: the sweep's report did not reach the drain's stderr"
+  assert_no_grep 'orphan sweep' "$dir/due.out" \
+    "cadence: the sweep wrote to the stdout a caller reads wake records from"
+  find "$marker" -newermt '-5 minutes' -print -quit | grep -q . ||
+    fail "cadence: a due drain did not date the sweep it ran"
+
+  # Not due: the same drain again inside the window must not sweep.
+  mkdir -p "$desktops/dead-mate"
+  printf 'profile\n' > "$desktops/dead-mate/Cookies"
+  find "$desktops" -exec touch -h -d '10 days ago' {} + 2>/dev/null || true
+  run_drain_with_sweep "$dir/skip.out" "$dir/skip.err" || fail "cadence: the second drain failed"
+  [ -f "$desktops/dead-mate/Cookies" ] \
+    || fail "cadence: a second drain inside the window swept again"
+  pass "the orphan sweep runs at most once per window, and reports on stderr only"
+}
+
+
 test_self_held_lock_reclaims_instead_of_deadlocking
 test_secondmate_foreign_queue_stall_is_one_shot_and_read_only
 test_secondmate_unattended_home_names_live_child_work
@@ -1356,6 +1407,7 @@ test_retirement_delivery_purge_spares_prefix_siblings
 test_drain_keeps_pane_whose_segment_spells_a_retired_id
 test_retirement_purges_dotted_id_seen_markers
 test_drain_asserts_watcher_liveness
+test_orphan_sweep_runs_once_per_window_on_stderr
 test_structural_signal_enrichment_preserves_raw_rows
 test_enrichment_preserves_all_unread_lines_and_status_file_failures
 test_slow_annotation_does_not_block_append_and_deleted_file_fails_open
