@@ -114,14 +114,7 @@ run_rename() { # <args...>
 
 # A content-and-shape manifest of a tree, so "wrote nothing" is provable.
 manifest() { # <dir>
-	local path
-	find "$1" | LC_ALL=C sort | while IFS= read -r path; do
-		if [ -f "$path" ]; then
-			printf '%s %s\n' "$path" "$(cksum <"$path")"
-		else
-			printf '%s dir\n' "$path"
-		fi
-	done
+	find "$1" \( -type f -exec cksum {} + -o -print \) | LC_ALL=C sort
 }
 
 test_rename_moves_every_live_record() {
