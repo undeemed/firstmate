@@ -12,10 +12,14 @@
 # line that bin/fm-spawn.sh checks a ship brief against.
 # This file is the one owner of the no-mistakes `--intent` contract: only the
 # brief's `## Captain's intent` subsection plus later captain words, never
-# `## Firstmate spec` and never the worker's own tradeoffs. bin/fm-brief.sh
-# scaffolds those two `# Task` subsections; bin/fm-spawn.sh and bin/fm-promote.sh
-# refuse leftover `{TASK}` / `{FIRSTMATE_SPEC}` placeholders through the helpers
-# below. Other mentions of `--intent` point here rather than restating the rule.
+# `## Firstmate spec` and never the worker's own tradeoffs.
+# The string passed must be self-sufficient - it plus the codebase reconstructs
+# roughly the same specification - so a report, decision, or PR the intent
+# refers to is written into it as substance, never left as a pointer.
+# bin/fm-brief.sh scaffolds those two `# Task` subsections; bin/fm-spawn.sh and
+# bin/fm-promote.sh refuse leftover `{TASK}` / `{FIRSTMATE_SPEC}` placeholders
+# through the helpers below. Other mentions of `--intent` point here rather than
+# restating the rule.
 # Every heredoc here stays outside a command substitution: `VAR=$(cat <<EOF ...)`
 # breaks parsing of the whole file on Bash 3.2 (tests/fm-brief.test.sh).
 # The ponytail lean gate is identical for every mode, so the invocation and the
@@ -26,7 +30,26 @@
 # every ship delivery point has, the bare form reviews an empty diff and exits 1.
 # shellcheck disable=SC2016  # single quotes are deliberate: these backticks are literal brief text
 FM_DOD_LEAN_GATE='run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
-Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.'
+Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+The loop is bounded at THREE rounds because the gate does not always converge, so never run a fourth round, and never obey a finding that reverses what an earlier round ruled on the same code - record that contradiction and leave the earlier ruling standing.
+When the third round still exits 2, its remaining findings and every contradiction you recorded belong in the verdict you report below as named keeps, not in another round of cutting.'
+
+# fm_brief_worker_role owns the ship/scout role scope. bin/fm-spawn.sh is its one
+# emitter, supplying it to every ship/scout launch brief and never to a
+# secondmate charter. Like fm_brief_intent_overlay it is a distinctly titled
+# launch section that states its own precedence for Firstmate tasks, so a brief
+# that authors its own role wording is superseded rather than duplicated.
+
+fm_brief_worker_role() {
+  cat <<'EOF'
+# Current worker role contract
+When this task works on Firstmate itself, this section supersedes every earlier brief instruction about your role and identity.
+When this task works on Firstmate itself, the repository root `AGENTS.md` (also imported by `CLAUDE.md`) is the primary/secondmate supervisor's contract: follow this brief instead of that supervisor contract.
+For that Firstmate task, do the assigned work yourself and report to firstmate; do not adopt the supervisor identity, delegate the task, run fleet supervision, or address the captain.
+This exception preserves this brief's safety and authority boundaries and applicable contributor guidance, including `CONTRIBUTING.md` and `firstmate-coding-guidelines` for Firstmate changes.
+Other projects retain their own instructions unchanged.
+EOF
+}
 
 # Return 0 when a Task subsection still consists only of its scaffold
 # placeholder. A missing file and legacy briefs carry no such placeholders.
@@ -147,6 +170,7 @@ EOF
   cat <<'EOF'
 
 Firstmate-authored constraints, acceptance criteria, implementation details, decisions, and tradeoffs are specification, not captain intent.
+The Definition of done's rule that `--intent` must be self-sufficient still governs the string you pass: resolve any report, decision, or PR the intent above refers to into its substance rather than passing the pointer.
 EOF
 }
 
@@ -169,7 +193,16 @@ fm_brief_task_content_valid() {  # <file>
   [ -n "$(printf '%s' "$task" | tr -d '[:space:]')" ]
 }
 
-fm_dod_block() { # <mode> <task-id>
+fm_ask_user_escalation_block() {  # <data-dir> <task-id>
+  local data=$1 id=$2
+  cat <<EOF
+   For a no-mistakes ask-user gate specifically, escalate all ask-user findings as one event plus one snapshot file, using that same shape even when the gate holds only a single ask-user finding: write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority), to \`$data/$id/nm-<run>-findings.txt\`, then report the gate with
+   \`needs-decision [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file=$data/$id/nm-<run>-findings.txt\`
+   naming every ask-user finding id from that gate. The status line only points at the file; it never restates or summarizes a finding's content.
+EOF
+}
+
+fm_dod_block() {  # <mode> <task-id>
   local mode=$1 id=$2
   case "$mode" in
   direct-PR)
@@ -212,11 +245,21 @@ Follow the guidance no-mistakes itself provides for the mechanics: it loads when
 When starting no-mistakes, pass \`--intent\` as only this brief's \`## Captain's intent\` subsection plus any later words the captain actually said.
 For a legacy brief with no such subsection, include only words explicitly labeled \`Captain:\`, \`Captain's words:\`, \`Captain's ask:\`, or \`Captain's intent:\`; never copy its mixed \`# Task\` wholesale. If it has no provenance-marked captain words, stop and ask firstmate instead of starting no-mistakes.
 Do not include \`## Firstmate spec\`, later Firstmate build constraints, or your own decisions and tradeoffs.
+The \`--intent\` string you pass must be self-sufficient: that string plus the codebase must let a reader reconstruct roughly the same specification, without depending on a separate report, a PR, or context that lives only in this conversation.
+When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into \`--intent\` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.
+The pipeline publishes that \`--intent\` text verbatim as the published pull request body's \`## Intent\` section, so write it for the repository's own public audience: put every requirement in the project's vocabulary, and never carry fleet-internal vocabulary (firstmate, crewmate, secondmate, captain, ponytail, treehouse, \`fm-*.sh\` script names) or any path from this worktree into it.
+Firstmate reads the published body back and refuses to record a pull request whose body carries that vocabulary, so a body written for the fleet stops the task instead of shipping.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
+One drive call blocks until the next gate or outcome, which routinely outlives what your harness lets a single command run: Claude Code kills a command at ten minutes maximum, while one fix round is capped around thirty minutes and up to three rounds chain.
+So background the drive call and poll \`no-mistakes axi status\` from a separate call instead of sitting in one blocking hold your harness will kill.
+Where a harness's own command limit is not established, assume it bounds commands and use that same background-and-poll shape.
+A killed or timed-out call is never evidence the daemon died: the daemon accepts your response immediately and runs the round in the background, so the call was only ever waiting for a read while the run kept working.
+Reattach and keep going rather than reporting the pipeline blocked; rule 7 owns the checks that decide when a pipeline block is real.
+
 Two firstmate-specific rules layer on top of that guidance:
-- ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
+- ask-user findings are never yours to answer: escalate to firstmate using rule 6's ask-user format and stop.
   Firstmate applies \`ask-user-authority\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
