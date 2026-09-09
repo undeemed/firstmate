@@ -3173,7 +3173,12 @@ EOF
 # The ledger proves the continuation, but the run is NOT parked at a gate -
 # it is autonomously running/fixing against the daemon's own clone. Teardown
 # must leave that work alone even when the attribution proof would bind it.
-test_ledger_proven_continuation_never_aborts_active_run() {
+# This fork concludes every run the task owns that has no outcome yet, including
+# an autonomously active one: a run left driving itself after its task is gone
+# keeps WRITING (observed 2026-09-01, when a torn-down task's run committed and
+# opened a pull request half an hour later). A ledger-proven continuation is
+# this task's own run, so it is aborted rather than left running.
+test_ledger_proven_continuation_is_aborted_while_active() {
   local case_dir rc advanced_short anchor_short
   case_dir=$(make_case parked-run-ledger-active)
   write_meta "$case_dir" no-mistakes ship
@@ -3193,9 +3198,11 @@ EOF
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
   expect_code 0 "$rc" "parked-run-ledger-active: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-ledger-active: teardown aborted an actively running run the ledger happened to bind"
-  pass "a ledger-proven continuation is still left alone while the run is autonomously active"
+  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
+    "parked-run-ledger-active: teardown left an active run of this task driving itself"
+  assert_grep "has no outcome yet; aborting" "$case_dir/stderr" \
+    "parked-run-ledger-active: teardown did not report concluding the active run"
+  pass "a ledger-proven continuation of this task is concluded even while it is autonomously active"
 }
 
 test_mismatched_run_after_abort_refuses_unconfirmed() {
@@ -4332,7 +4339,7 @@ test_parked_terminal_unfetched_row_is_never_aborted
 test_parked_run_terminal_newest_row_at_own_head_is_never_aborted
 test_parked_run_behind_diverged_newer_row_is_never_aborted
 test_parked_advanced_run_ambiguous_rows_are_never_aborted
-test_ledger_proven_continuation_never_aborts_active_run
+test_ledger_proven_continuation_is_aborted_while_active
 test_parked_own_run_refuses_when_abort_is_unconfirmed
 test_mismatched_run_after_abort_refuses_unconfirmed
 test_empty_status_after_abort_refuses_unconfirmed
