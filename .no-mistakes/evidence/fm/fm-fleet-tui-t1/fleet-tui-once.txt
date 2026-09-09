@@ -1,0 +1,24 @@
+FIRSTMATE FLEET ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+5 homes · 4 tasks · 2 endpoints alive · 1 mid-turn · 1 held tasks · read in 2053ms at 2026-09-09T06:46:39Z
+
+main [main]  wakes 2 (oldest 5m)  beat 10s  lock free  backlog 1/2/1 in-flight/queued/held
+  captain holds: captain-call
+  ? mate-remote                    secondmate/secondmate claude/tmux  unknown unknown (not-probed)   
+      EVENT 11s ago · working: comparing the two board renderers
+  x ship-gone                      ship/direct-PR       claude/tmux  dead    dead (endpoint-gone)   https://github.com/o/r/pull/7
+      EVENT 12s ago · blocked: needs a credential from the captain
+  o ship-live                      ship/no-mistakes     claude/tmux  alive   idle (claude-hook)     https://github.com/o/r/pull/42
+      EVENT 12s ago · done: PR https://github.com/o/r/pull/42 checks green
+
+pool-mate-p9 [registry]  wakes 0 (oldest -)  beat -  lock free  backlog 0/0/0 in-flight/queued/held
+  * pool-task                      scout                claude/tmux  alive   busy (fm-spawn)        
+      EVENT 11s ago · working: reading the code
+
+remote-mate-r1 [remote:mac.local]  wakes - (oldest -)  beat -  lock -  backlog -/-/- in-flight/queued/held
+  ! remote home on mac.local, not read from here
+
+stateless-mate-s7 [marker]  wakes - (oldest -)  beat -  lock -  backlog -/-/- in-flight/queued/held
+  ! no state directory at /tmp/fm-fleet-evidence/pool/7/firstmate/state
+
+orphan-mate-o8 [marker]  wakes 0 (oldest -)  beat -  lock free  backlog 0/0/0 in-flight/queued/held
+  no work under way here

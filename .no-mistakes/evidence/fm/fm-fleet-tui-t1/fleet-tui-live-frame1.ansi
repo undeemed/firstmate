@@ -1,0 +1,42 @@
+[1m[36mFIRSTMATE FLEET ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[2m5 homes · 4 tasks · 2 endpoints alive · 1 mid-turn · 1 held tasks · read in 1271ms at 2026-09-09T06:47:09Z[0m
+
+[1m[36mmain [main]  wakes 2 (oldest 5m)  beat 40s  lock free  backlog 1/2/1 in-flight/queued/held[0m
+[33m  captain holds: captain-call[39m
+[2m  ? mate-remote                    secondmate/secondmate claude/tmux  unknown unknown (not-probed)   [0m
+     [2m EVENT 41s ago · working: comparing the two board renderers[0m
+[31m  x ship-gone                      ship/direct-PR       claude/tmux  dead    dead (endpoint-gone)   https://github.com/o/r/pull/7[39m
+     [2m EVENT 41s ago · blocked: needs a credential from the captain[0m
+  o ship-live                      ship/no-mistakes     claude/tmux  alive   idle (claude-hook)     https://github.com/o/r/pull/42
+     [2m EVENT 42s ago · done: PR https://github.com/o/r/pull/42 checks green[0m
+
+[33mpool-mate-p9 [registry]  wakes 0 (oldest -)  beat -  lock free  backlog 0/0/0 in-flight/queued/held[39m
+[32m  * pool-task                      scout                claude/tmux  alive   busy (fm-spawn)        [39m
+     [2m EVENT 41s ago · working: reading the code[0m
+
+[33mremote-mate-r1 [remote:mac.local]  wakes - (oldest -)  beat -  lock -  backlog -/-/- in-flight/queued/held[39m
+[31m  ! remote home on mac.local, not read from here[39m
+
+[33mstateless-mate-s7 [marker]  wakes - (oldest -)  beat -  lock -  backlog -/-/- in-flight/queued/held[39m
+[31m  ! no state directory at /tmp/fm-fleet-evidence/pool/7/firstmate/state[39m
+
+[33morphan-mate-o8 [marker]  wakes 0 (oldest -)  beat -  lock free  backlog 0/0/0 in-flight/queued/held[39m
+[2m  no work under way here[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1m[36m q quit · r refresh · j/k scroll · read 4s ago · every 5s[0m

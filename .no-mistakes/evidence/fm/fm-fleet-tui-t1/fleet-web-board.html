@@ -1,0 +1,41 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="15">
+<title>Fleet - live</title><style>
+:root{--bg:#0f1117;--panel:#161923;--line:#262b3a;--ink:#e8eaf0;--dim:#9aa3b8;--faint:#6b7488;
+--go:#4ade80;--wait:#fbbf24;--bad:#f87171;--done:#60a5fa}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
+font:15px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:20px 28px;border-bottom:1px solid var(--line);display:flex;
+justify-content:space-between;align-items:baseline;gap:20px;flex-wrap:wrap}
+h1{margin:0;font-size:19px;letter-spacing:-.01em}
+.meta{color:var(--faint);font-size:12.5px}
+main{padding:20px 28px 60px;max-width:1200px}
+.mate{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+margin-bottom:14px;overflow:hidden}
+.mhead{display:flex;align-items:center;gap:11px;padding:13px 16px;border-bottom:1px solid var(--line)}
+.mhead b{font-size:15px}
+.dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.dot.go{background:var(--go);box-shadow:0 0 9px var(--go)}
+.dot.wait{background:var(--wait)}.dot.bad{background:var(--bad)}.dot.done{background:var(--done)}
+.state{color:var(--dim);font-size:12.5px;margin-left:auto;text-align:right;min-width:0;
+overflow-wrap:anywhere}
+.say{padding:9px 16px;color:var(--dim);font-size:13px;border-bottom:1px solid var(--line);
+overflow-wrap:anywhere}
+.say .v{color:var(--faint);text-transform:uppercase;font-size:10.5px;letter-spacing:.08em;
+margin-right:7px}
+.w{display:flex;gap:11px;align-items:flex-start;padding:11px 16px 11px 30px;
+border-top:1px solid #1e2230}
+.w .body{min-width:0;flex:1}
+.w .name{font-size:13.5px;font-weight:600}
+.w .note{color:var(--faint);font-size:12.5px;margin-top:3px;overflow-wrap:anywhere}
+.tag{font-size:10.5px;color:var(--faint);border:1px solid var(--line);border-radius:20px;
+padding:1px 7px;margin-left:6px}
+.empty{padding:12px 16px;color:var(--faint);font-size:13px}
+a{color:var(--done)}
+</style></head><body>
+<header><h1>Fleet - live</h1>
+<div class="meta">2 of 4 workers mid-turn ·
+5 homes · 1 held tasks ·
+read in 1566ms · refreshes every 15s · 06:48:20</div>
+</header><main><div class="mate"><div class="mhead"><span class="dot go"></span><b>main</b><span class="tag">main</span><span class="state">wakes 2 · beat 1m · free · backlog 1/2/1 in-flight/queued/held</span></div><div class="say"><span class="v">captain holds</span>captain-call</div><div class="w"><span class="dot wait" style="margin-top:5px"></span><div class="body"><div class="name">mate-remote<span class="tag">unknown</span><span class="tag">unknown</span><span class="tag">secondmate</span><span class="tag">secondmate</span><span class="tag">claude</span><span class="tag">tmux</span></div><div class="note"><span class="v">event 1m ago</span>working: comparing the two board renderers</div></div></div><div class="w"><span class="dot bad" style="margin-top:5px"></span><div class="body"><div class="name">ship-gone<span class="tag">dead</span><span class="tag">dead</span><span class="tag">ship</span><span class="tag">direct-PR</span><span class="tag">claude</span><span class="tag">tmux</span> <a href="https://github.com/o/r/pull/7">PR</a></div><div class="note"><span class="v">event 1m ago</span>blocked: needs a credential from the captain</div></div></div><div class="w"><span class="dot go" style="margin-top:5px"></span><div class="body"><div class="name">ship-live<span class="tag">alive</span><span class="tag">busy</span><span class="tag">ship</span><span class="tag">no-mistakes</span><span class="tag">claude</span><span class="tag">tmux</span> <a href="https://github.com/o/r/pull/42">PR</a></div><div class="note"><span class="v">event 1m ago</span>working: reviewing gate feedback on the fleet screen</div></div></div></div><div class="mate"><div class="mhead"><span class="dot go"></span><b>pool-mate-p9</b><span class="tag">registry</span><span class="state">wakes 0 · beat - · free · backlog 0/0/0 in-flight/queued/held</span></div><div class="w"><span class="dot go" style="margin-top:5px"></span><div class="body"><div class="name">pool-task<span class="tag">alive</span><span class="tag">busy</span><span class="tag">scout</span><span class="tag">claude</span><span class="tag">tmux</span></div><div class="note"><span class="v">event 1m ago</span>working: reading the code</div></div></div></div><div class="mate"><div class="mhead"><span class="dot bad"></span><b>remote-mate-r1</b><span class="tag">remote:mac.local</span><span class="state">wakes - · beat - · lock unread · backlog -/-/- in-flight/queued/held</span></div><div class="empty">remote home on mac.local, not read from here</div></div><div class="mate"><div class="mhead"><span class="dot bad"></span><b>stateless-mate-s7</b><span class="tag">marker</span><span class="state">wakes - · beat - · lock unread · backlog -/-/- in-flight/queued/held</span></div><div class="empty">no state directory at /tmp/fm-fleet-evidence/pool/7/firstmate/state</div></div><div class="mate"><div class="mhead"><span class="dot wait"></span><b>orphan-mate-o8</b><span class="tag">marker</span><span class="state">wakes 0 · beat - · free · backlog 0/0/0 in-flight/queued/held</span></div><div class="empty">No work under way here.</div></div></main></body></html>
