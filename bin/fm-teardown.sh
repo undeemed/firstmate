@@ -1838,6 +1838,12 @@ task_status_is_own_active_run() { # <worktree> <axi-status-output>
   run_head=$(fm_nm_strip_quotes "$(fm_nm_field "$out" head)")
   outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$out" outcome)")
   [ -z "$outcome" ] || return 1
+  # A run whose STATUS already reads terminal has ended even when no outcome
+  # field was written, so there is nothing to abort and no attribution question
+  # to ask: neither the object-local rule nor the ledger below is consulted.
+  case "$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")" in
+    completed | failed | cancelled | passed | checks-passed) return 1 ;;
+  esac
   if ! fm_nm_head_matches_worktree "$wt" "$run_head"; then
     # The strict object-local rule rejected this run head. That rejection is
     # final when the head object resolves in this copy (diverged or rewritten
