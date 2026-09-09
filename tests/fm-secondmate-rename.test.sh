@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # tests/fm-secondmate-rename.test.sh - offline secondmate rename.
 #
-# Every case runs against a fixture parent home, a fixture mate home, a fixture
-# treehouse pool file, and a fixture code root holding a copy of the live-board
-# home map. The real pool state and the real tracked map are never opened.
+# Every case runs against a fixture parent home, a fixture mate home, and a
+# fixture treehouse pool file. The real pool state is never opened.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -44,21 +43,20 @@ SH
 	printf '%s\n' "$fakebin"
 }
 
-# Build a parent home, a mate home, a pool state file, and a code root. Sets
-# PARENT, MATE, POOL, CODE, FAKEBIN.
+# Build a parent home, a mate home, and a pool state file. Sets PARENT, MATE,
+# POOL, FAKEBIN.
 setup_fixture() { # <name>
 	local name=$1
 	PARENT="$TMP_ROOT/$name/parent"
 	POOL="$TMP_ROOT/$name/pool"
 	MATE="$POOL/2/firstmate"
-	CODE="$TMP_ROOT/$name/code"
 
-	mkdir -p "$PARENT/state/.secondmate-nudge-pending" "$PARENT/data/$OLD_ID" "$CODE/bin"
+	mkdir -p "$PARENT/state/.secondmate-nudge-pending" "$PARENT/data/$OLD_ID"
 	fm_make_secondmate_home "$OLD_ID" "$MATE"
 	mkdir -p "$MATE/projects/oldproj"
 	printf 'clone marker\n' >"$MATE/projects/oldproj/README.md"
 
-	fm_write_secondmate_meta "$PARENT/state/$OLD_ID.meta" "$MATE" "firstmate:fm-$OLD_ID" oldproj
+	fm_write_secondmate_meta "$PARENT/state/$OLD_ID.meta" "$MATE" "firstmate:fm-$OLD_ID" oldproj pi
 	printf 'backend=tmux\n' >>"$PARENT/state/$OLD_ID.meta"
 	printf 'tasktmp=/tmp/fm-%s\n' "$OLD_ID" >>"$PARENT/state/$OLD_ID.meta"
 
@@ -97,17 +95,11 @@ setup_fixture() { # <name>
 }
 EOF
 
-	cat >"$CODE/bin/fm-live-board.py" <<EOF
-HOMES = {
-    "oldproj": Path("$MATE"),
-}
-EOF
-
 	FAKEBIN=$(make_probe_tmux "$TMP_ROOT/$name/fake")
 }
 
 run_rename() { # <args...>
-	FM_HOME="$PARENT" FM_ROOT_OVERRIDE="$CODE" PATH="$FAKEBIN:$PATH" \
+	FM_HOME="$PARENT" PATH="$FAKEBIN:$PATH" \
 		FAKE_WINDOWS="${FAKE_WINDOWS:-}" FAKE_COMMAND="${FAKE_COMMAND:-bash}" \
 		"$RENAME" "$@" 2>&1
 }
@@ -142,7 +134,6 @@ test_rename_moves_every_live_record() {
 	assert_grep "- $NEW_ID " "$PARENT/data/secondmates.md" "the routing record id was not rewritten"
 	assert_grep "projects: newproj;" "$PARENT/data/secondmates.md" "the routing record project was not rewritten"
 	assert_grep "- newproj [" "$PARENT/data/projects.md" "the project registry entry was not rewritten"
-	assert_grep '"newproj": Path(' "$CODE/bin/fm-live-board.py" "the live-board home map was not rewritten"
 	assert_grep "(repo: newproj)" "$MATE/data/backlog.md" "the mate's own repo: fields were not rewritten"
 	assert_present "$MATE/projects/newproj/README.md" "the project clone did not move"
 	assert_absent "$MATE/projects/oldproj" "the old project clone survived"
@@ -206,16 +197,35 @@ test_refuses_while_the_agent_is_live() {
 	pass "a live agent refuses the rename and names the exit command"
 }
 
+# A busy turn recorded against the mate's ARMED incarnation, by a source the
+# busy contract trusts for its harness - the only shape that classifies busy.
+write_busy_record() { # <gen>
+	printf 'g-armed\n' >"$PARENT/state/$OLD_ID.busy-gen"
+	printf 'v1 gen=%s seq=3 state=busy source=pi-ext event=agent_start ts=1788901990\n' "$1" \
+		>"$PARENT/state/$OLD_ID.busy-state"
+}
+
 test_refuses_while_the_busy_record_reads_busy() {
 	local out rc=0
 	setup_fixture rename-busy
-	printf 'v1 gen=abc seq=3 state=busy source=tmux-wire event=submit ts=1788901990\n' \
-		>"$PARENT/state/$OLD_ID.busy-state"
+	write_busy_record g-armed
 	out=$(run_rename "$OLD_ID" "$NEW_ID") || rc=$?
 	[ "$rc" -ne 0 ] || fail "rename proceeded while the mate recorded a busy turn"
 	assert_contains "$out" "busy turn" "the refusal did not name the busy record"
 	assert_present "$PARENT/state/$OLD_ID.meta" "the task record moved despite the refusal"
 	pass "a busy record refuses the rename"
+}
+
+# A busy line left by a dead incarnation is not evidence of a live turn: the busy
+# contract reads it as stale, so it must not strand the mate under its old id.
+test_a_stale_busy_record_does_not_block() {
+	local rc=0
+	setup_fixture rename-stale-busy
+	write_busy_record g-previous
+	run_rename "$OLD_ID" "$NEW_ID" >/dev/null || rc=$?
+	expect_code 0 "$rc" "rename with a stale busy record"
+	assert_present "$PARENT/state/$NEW_ID.meta" "a stale busy record blocked the rename"
+	pass "a busy record from a dead incarnation does not block the rename"
 }
 
 test_refuses_when_another_id_contains_the_old_id() {
@@ -252,6 +262,7 @@ test_history_survives_the_rename
 test_dry_run_writes_nothing
 test_refuses_while_the_agent_is_live
 test_refuses_while_the_busy_record_reads_busy
+test_a_stale_busy_record_does_not_block
 test_refuses_when_another_id_contains_the_old_id
 test_refuses_when_the_lease_belongs_to_another_mate
 
