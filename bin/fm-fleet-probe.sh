@@ -144,7 +144,7 @@ list_homes() {
 
 probe_home() {
   local state="$FM_HOME/state" meta id kind mode harness backend target endpoint
-  local busy_verdict busy busy_source pr tail40 line verb note age
+  local busy_verdict busy busy_source pr line verb note age
   local beat depth oldest oldest_age lock
 
   emit home "$FM_HOME" "$(home_label "$FM_HOME")"
@@ -192,23 +192,25 @@ probe_home() {
     pr=$(fm_meta_get "$meta" pr)
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
-    if [ -n "$(fm_meta_get "$meta" remote_host)" ] || [ -z "$target" ]; then
-      # A remote secondmate's endpoint lives on its own host, and a task with no
-      # recorded endpoint has nothing to probe. Neither is evidence of death.
+    if [ -n "$(fm_meta_get "$meta" remote_host)" ]; then
+      # A remote secondmate's endpoint lives on its own host, so the local
+      # adapters are never asked about it. That is not evidence of death.
       endpoint=unknown
       busy=unknown
       busy_source=not-probed
     else
-      endpoint=dead
-      fm_backend_target_exists "$backend" "$target" "fm-$id" 2>/dev/null && endpoint=alive
-      tail40=''
-      case "$harness" in
-        grok*) tail40=$(fm_backend_capture "$backend" "$target" 40 "fm-$id" 2>/dev/null) || tail40='' ;;
-      esac
-      busy_verdict=$(fm_busy_classify "$backend" "$target" "$harness" "$id" "$state" "$tail40" 2>/dev/null)
+      # One call answers both halves: fm_busy_classify_live checks the endpoint
+      # before it classifies, so the endpoint state falls out of its verdict
+      # rather than being read a second time here.
+      busy_verdict=$(fm_busy_classify_live "$backend" "$target" "$harness" "$id" "$state" "fm-$id")
       busy=${busy_verdict%% *}
       busy_source=${busy_verdict#* }
       [ "$busy_source" = "$busy_verdict" ] && busy_source=-
+      case "$busy_verdict" in
+        "dead endpoint-gone") endpoint=dead ;;
+        "unknown no-target") endpoint=unknown ;;
+        *) endpoint=alive ;;
+      esac
     fi
     if [ -z "$pr" ] && [ -f "$state/$id.status" ]; then
       # The same pull-request shape fm-fleet-snapshot.sh recovers from a status

@@ -16,7 +16,7 @@ What it deliberately does NOT do: reconcile a task's current state. A task's
 label it that way. Ask bin/fm-crew-state.sh when current state matters - that
 read costs seconds per task, which is why it is not on a refresh timer.
 
-  python3 bin/fm_fleet_read.py --json     one fleet read as JSON
+  python3 bin/fm_fleet_read.py            one fleet read as JSON
 
 Environment:
   FM_HOME                  the main home whose registry drives discovery
@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -53,10 +52,6 @@ def age(secs: int | None) -> str:
 def _timeout() -> int:
     raw = os.environ.get("FM_FLEET_READ_TIMEOUT", "")
     return int(raw) if raw.isdigit() and int(raw) > 0 else DEFAULT_TIMEOUT
-
-
-def _main_home() -> str:
-    return os.environ.get("FM_HOME") or str(BIN_DIR.parent)
 
 
 def _run_probe(mode: str, home: str) -> tuple[list[list[str]], str | None]:
@@ -97,7 +92,7 @@ def _field(row: list[str], index: int) -> str | None:
 
 def discover_homes() -> list[dict]:
     """Every home of this fleet: the main home, its registry, and pool markers."""
-    home = _main_home()
+    home = os.environ.get("FM_HOME") or str(BIN_DIR.parent)
     records, error = _run_probe("--homes", home)
     if error:
         return [{"label": "main", "path": home, "source": "main", "error": error}]
@@ -190,17 +185,5 @@ def read_fleet() -> dict:
     }
 
 
-def main(argv: list[str]) -> int:
-    mode = argv[0] if argv else "--json"
-    if mode in ("-h", "--help"):
-        print(__doc__.strip())
-        return 0
-    if mode == "--json":
-        print(json.dumps(read_fleet(), indent=1))
-        return 0
-    print(__doc__.strip(), file=sys.stderr)
-    return 2
-
-
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    print(json.dumps(read_fleet(), indent=1))

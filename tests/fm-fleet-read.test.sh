@@ -140,7 +140,7 @@ pass "probing a home without records reports it and writes nothing"
 
 # --- the read layer --------------------------------------------------------
 
-FLEET=$(FM_HOME="$MAIN" python3 "$READER" --json)
+FLEET=$(FM_HOME="$MAIN" python3 "$READER")
 python3 - "$FLEET" <<'PY' || fail "the read layer did not shape the fleet as expected"
 import json
 import sys
