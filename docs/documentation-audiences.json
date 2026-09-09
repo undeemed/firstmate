@@ -349,6 +349,10 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/examples/pilot-config.example.yaml",
+      "audience": "operator-example"
+    },
+    {
       "path": "docs/examples/watched-tools.json",
       "audience": "operator-example"
     },
