@@ -54,7 +54,12 @@ cp "$ROOT/bin/fm-remote-entrypoint.sh" "$ROOT/bin/fm-remote-job-lib.sh" \
   "$ROOT/bin/fm-remote-job-worker.sh" "$ROOT/bin/fm-remote-file.sh" \
   "$ROOT/bin/fm-backlog-receive.sh" "$ROOT/bin/fm-tasks-axi-lib.sh" \
   "$ROOT/bin/fm-wake-lib.sh" "$REMOTE_ROOT/bin/"
-ln -s "$(command -v tasks-axi)" "$REMOTE_ROOT/bin/tasks-axi"
+# A pnpm shim resolves its own package from the directory it is INVOKED from, so
+# symlinking it into the fixture breaks `tasks-axi --version` and the receipt
+# reads as an incompatible tool. Exec the real path instead, as the local handoff
+# suite already does.
+printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$(command -v tasks-axi)" > "$REMOTE_ROOT/bin/tasks-axi"
+chmod +x "$REMOTE_ROOT/bin/tasks-axi"
 ln -s "$(command -v node)" "$REMOTE_ROOT/bin/node"
 chmod +x "$REMOTE_ROOT/bin"/*.sh
 git -C "$REMOTE_ROOT" init -q -b main
