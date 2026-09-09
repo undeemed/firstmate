@@ -1,117 +1,54 @@
 #!/usr/bin/env python3
 """Live fleet view: what every agent is doing right now, rendered on each request.
 
-Read-only. It shells out to the same sources firstmate itself trusts - herdr's
-pane list for liveness, each home's state/<id>.meta for identity, and the tail of
-state/<id>.status for the last thing that worker actually said - and renders them
-as one page. Nothing is cached and nothing is invented: a field that cannot be
-read says so.
+Read-only, and it reads nothing itself: bin/fm_fleet_read.py is the one fleet
+read layer, shared with the terminal screen in bin/fm-fleet-tui.py, so the two
+surfaces cannot disagree about what the fleet is. Homes are discovered from the
+fleet's own records - the registry and the pool's home markers - so a new or
+renamed home appears here without editing this file.
+
+Nothing is cached and nothing is invented: a field that cannot be read says so,
+and each task's last status line is shown as the wake EVENT it is, never as
+current state.
 
   python3 bin/fm-live-board.py [port]        # default 8899, binds 0.0.0.0
 """
+
 import html
-import json
-import subprocess
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-MAIN = Path("/home/ubuntu/Dev/firstmate")
-HOMES = {
-    "dorm": Path("/home/ubuntu/.treehouse/firstmate-4e604a/1/firstmate"),
-    "swarm": Path("/home/ubuntu/.treehouse/firstmate-4e604a/2/firstmate"),
-    "tetanus": Path("/home/ubuntu/.treehouse/firstmate-4e604a/3/firstmate"),
-    "aa-demo": Path("/home/ubuntu/.treehouse/firstmate-4e604a/4/firstmate"),
-}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fm_fleet_read
+
 REFRESH_SECONDS = 15
 
 
-def run(cmd, timeout=10):
-    try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return out.stdout
-    except Exception:
-        return ""
+def dot(task):
+    if task["endpoint"] == "alive":
+        return "go" if task["busy"] == "busy" else "wait"
+    return "bad" if task["endpoint"] == "dead" else "wait"
 
 
-def panes():
-    """pane_id -> (agent, status). Empty dict when herdr cannot be read."""
-    raw = run(["herdr", "pane", "list"])
-    try:
-        rows = json.loads(raw)["result"]["panes"]
-    except Exception:
-        return {}
-    return {r["pane_id"]: (r.get("agent") or "none", r.get("agent_status") or "unknown") for r in rows}
-
-
-def meta_fields(path):
-    fields = {}
-    try:
-        for line in path.read_text(errors="replace").split():
-            if "=" in line:
-                k, _, v = line.partition("=")
-                fields[k] = v
-    except Exception:
-        pass
-    return fields
-
-
-def last_status(home, task):
-    f = home / "state" / f"{task}.status"
-    try:
-        lines = [ln for ln in f.read_text(errors="replace").splitlines() if ln.strip()]
-    except Exception:
-        return None, None
-    if not lines:
-        return None, None
-    line = lines[-1]
-    verb, _, rest = line.partition(":")
-    return verb.strip(), rest.strip()
-
-
-def collect():
-    live = panes()
-    fleet = []
-    for label, home in HOMES.items():
-        mate_id = {"dorm": "dorm-mate-d9", "swarm": "swarm-mate-s6",
-                   "tetanus": "tetanus-mate-t1", "aa-demo": "aa-demo-mate-a1"}[label]
-        mate_meta = meta_fields(MAIN / "state" / f"{mate_id}.meta")
-        pane = mate_meta.get("window", "").replace("default:", "")
-        agent, status = live.get(pane, ("none", "no pane"))
-        verb, note = last_status(MAIN, mate_id)
-        workers = []
-        state_dir = home / "state"
-        if state_dir.is_dir():
-            for m in sorted(state_dir.glob("*.meta")):
-                task = m.stem
-                wf = meta_fields(m)
-                wpane = wf.get("window", "").replace("default:", "")
-                wagent, wstatus = live.get(wpane, ("none", "no pane"))
-                wverb, wnote = last_status(home, task)
-                workers.append({
-                    "task": task, "pane": wpane or "-", "agent": wagent, "status": wstatus,
-                    "verb": wverb, "note": wnote, "project": wf.get("project", ""),
-                    "mode": wf.get("mode", ""), "pr": wf.get("pr", ""),
-                })
-        fleet.append({
-            "label": label, "id": mate_id, "pane": pane or "-", "agent": agent,
-            "status": status, "verb": verb, "note": note, "workers": workers,
-            "home_readable": state_dir.is_dir(),
-        })
-    return fleet
-
-
-def dot(status):
-    return {"working": "go", "busy": "go", "idle": "wait", "done": "done",
-            "unknown": "bad", "no pane": "bad"}.get(status, "wait")
+def age(secs):
+    if secs is None:
+        return "-"
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    if secs < 86400:
+        return f"{secs // 3600}h"
+    return f"{secs // 86400}d"
 
 
 def render(fleet):
     now = time.strftime("%H:%M:%S")
-    live_workers = sum(1 for m in fleet for w in m["workers"] if w["status"] in ("working", "busy"))
-    total_workers = sum(len(m["workers"]) for m in fleet)
-    parts = [f"""<!doctype html><html><head><meta charset="utf-8">
+    counts = fleet["counts"]
+    parts = [
+        f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="{REFRESH_SECONDS}">
 <title>Fleet - live</title><style>
@@ -148,31 +85,64 @@ padding:1px 7px;margin-left:6px}}
 a{{color:var(--done)}}
 </style></head><body>
 <header><h1>Fleet - live</h1>
-<div class="meta">{live_workers} of {total_workers} workers busy · refreshes every {REFRESH_SECONDS}s · {now}</div>
-</header><main>"""]
+<div class="meta">{counts["tasks_busy"]} of {counts["tasks"]} workers mid-turn ·
+{counts["homes"]} homes · {counts["holds"]} held tasks ·
+read in {fleet["elapsed_ms"]}ms · refreshes every {REFRESH_SECONDS}s · {now}</div>
+</header><main>"""
+    ]
 
-    for m in fleet:
-        parts.append(f'<div class="mate"><div class="mhead"><span class="dot {dot(m["status"])}"></span>'
-                     f'<b>{html.escape(m["label"])}</b>'
-                     f'<span class="tag">{html.escape(m["agent"])}</span>'
-                     f'<span class="state">{html.escape(m["status"])} · {html.escape(m["pane"])}</span></div>')
-        if m["verb"]:
-            parts.append(f'<div class="say"><span class="v">{html.escape(m["verb"])}</span>'
-                         f'{html.escape((m["note"] or "")[:400])}</div>')
-        if not m["home_readable"]:
-            parts.append('<div class="empty">Its own records cannot be read from here.</div>')
-        elif not m["workers"]:
-            parts.append('<div class="empty">No workers running.</div>')
-        for w in m["workers"]:
-            pr = (f' <a href="{html.escape(w["pr"])}">PR</a>' if w["pr"].startswith("http") else "")
-            note = html.escape((w["note"] or "")[:300]) if w["note"] else "no word yet"
-            verb = f'<span class="v">{html.escape(w["verb"])}</span>' if w["verb"] else ""
-            mode = f'<span class="tag">{html.escape(w["mode"])}</span>' if w["mode"] else ""
-            parts.append(f'<div class="w"><span class="dot {dot(w["status"])}" style="margin-top:5px"></span>'
-                         f'<div class="body"><div class="name">{html.escape(w["task"])}'
-                         f'<span class="tag">{html.escape(w["status"])}</span>'
-                         f'{mode}{pr}</div>'
-                         f'<div class="note">{verb}{note}</div></div></div>')
+    for home in fleet["homes"]:
+        sup = home["supervision"]
+        backlog = home["backlog"]
+        holds = [hold["id"] for hold in home["holds"] if hold["hold_kind"] == "captain"]
+        head_dot = "bad" if home.get("error") else "go" if home["tasks"] else "wait"
+        parts.append(
+            f'<div class="mate"><div class="mhead"><span class="dot {head_dot}"></span>'
+            f"<b>{html.escape(home['label'])}</b>"
+            f'<span class="tag">{html.escape(home["source"])}</span>'
+            f'<span class="state">wakes {sup["wake_depth"] if sup["wake_depth"] is not None else "-"}'
+            f" · beat {age(sup['beat_age'])} · {html.escape(sup['lock'] or 'lock unread')}"
+            f" · backlog {backlog['in_flight']}/{backlog['queued']}/{backlog['held']}"
+            f" in-flight/queued/held</span></div>"
+        )
+        if home.get("error"):
+            parts.append(f'<div class="empty">{html.escape(home["error"])}</div>')
+        if holds:
+            parts.append(
+                '<div class="say"><span class="v">captain holds</span>'
+                f"{html.escape(', '.join(holds))}</div>"
+            )
+        if not home["tasks"] and not home.get("error"):
+            parts.append('<div class="empty">No work under way here.</div>')
+
+        for task in sorted(home["tasks"], key=lambda t: t["id"]):
+            pr = f' <a href="{html.escape(task["pr"])}">PR</a>' if task["pr"] else ""
+            tags = "".join(
+                f'<span class="tag">{html.escape(value)}</span>'
+                for value in (
+                    task["kind"],
+                    task["mode"],
+                    task["harness"],
+                    task["backend"],
+                )
+                if value
+            )
+            event = task["last_event"]
+            if event:
+                note = (
+                    f'<span class="v">event {age(event["age_secs"])} ago</span>'
+                    f"{html.escape(event['verb'] or '')}: {html.escape((event['note'] or '')[:300])}"
+                )
+            else:
+                note = '<span class="v">event</span>nothing said yet'
+            parts.append(
+                f'<div class="w"><span class="dot {dot(task)}" style="margin-top:5px"></span>'
+                f'<div class="body"><div class="name">{html.escape(task["id"])}'
+                f'<span class="tag">{html.escape(task["endpoint"] or "endpoint unread")}</span>'
+                f'<span class="tag">{html.escape(task["busy"] or "busy unread")}</span>'
+                f"{tags}{pr}</div>"
+                f'<div class="note">{note}</div></div></div>'
+            )
         parts.append("</div>")
 
     parts.append("</main></body></html>")
@@ -193,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        body = render(collect()).encode("utf8")
+        body = render(fm_fleet_read.read_fleet()).encode("utf8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
