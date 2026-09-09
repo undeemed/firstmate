@@ -2,8 +2,8 @@
 name: secondmate-provisioning
 description: >-
   Agent-only reference for persistent secondmate setup and retirement.
-  Use when creating, seeding, validating, launching, recovering, handing backlog to, pushing inherited local material into, or retiring a secondmate home, or when editing data/secondmates.md.
-  Covers local leases, whole-home remote routes, transactional seeding, record intake for an existing or inherited domain, project clone restrictions, secondmate harness pins, inherited local-material push, idle charter, handoff helper, and teardown safety.
+  Use when creating, seeding, validating, launching, recovering, handing backlog to, pushing inherited local material into, renaming, or retiring a secondmate home, or when editing data/secondmates.md.
+  Covers local leases, whole-home remote routes, transactional seeding, record intake for an existing or inherited domain, project clone restrictions, secondmate harness pins, inherited local-material push, idle charter, handoff helper, offline rename, and teardown safety.
 user-invocable: false
 metadata:
   internal: true
@@ -11,7 +11,7 @@ metadata:
 
 # secondmate-provisioning
 
-Use this reference before creating, seeding, validating, launching, handing backlog to, recovering, pushing inherited local material into, or retiring a persistent secondmate, and before editing `data/secondmates.md`.
+Use this reference before creating, seeding, validating, launching, handing backlog to, recovering, pushing inherited local material into, renaming, or retiring a persistent secondmate, and before editing `data/secondmates.md`.
 
 Keep the always-inline routing rules in `AGENTS.md` authoritative: route by natural-language `scope:`, local-only projects stay with the main firstmate, and secondmates are idle by default.
 
@@ -228,6 +228,22 @@ The main firstmate reconciles only direct reports.
 Each secondmate is a firstmate in its own home, so it runs recovery on startup and reconciles its own crewmates.
 A secondmate's recovery reconciles only work that is already its own and then idles.
 It never initiates a survey or audit during recovery.
+
+## Renaming
+
+A second mate's id is written into records with different owners: its task metadata and watcher sidecars, the pending reread nudge, the charter directory, the home's own identity marker, the routing record in `data/secondmates.md`, and the durable treehouse lease that keeps the pool slot reserved.
+Renaming by hand leaves some of them behind, and a half-renamed mate routes under a name whose lease, marker, and metadata still carry the old one.
+
+`bin/fm-secondmate-rename.sh` is the single owner of that rename; its header owns the exact flags, the full record list, and the failure model.
+Renaming is OFFLINE by contract, so the sequence is always: stop the mate with `bin/fm-control.sh <old-id> exit`, run the rename, then relaunch with `bin/fm-spawn.sh <new-id> <home> --secondmate`.
+The tool prints both bracketing commands on every run and refuses to write while the recorded endpoint is not proven exited or the mate still records a busy turn.
+
+Run `--dry-run` first: it lists every path it would touch, writes nothing, and reports the exit gate's verdict rather than enforcing it, so the plan can be read before the mate is stopped.
+Pass `--project <old> <new>` when the mate's project label is renamed in the same move; that also moves the clone in the mate's home and rewrites the project's registry entry, the `repo:` fields on that home's own items, and the tracked home map in `bin/fm-live-board.py`, which is a tracked change to commit.
+
+History is never rewritten.
+Status-log lines, pending-reply records, and every other append-only record keep the old id, because they say what happened under that name.
+Only the status log's file name moves, and the rename appends one line to the renamed transcript recording the id its history came from.
 
 ## Retirement and teardown
 
