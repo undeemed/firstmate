@@ -1,0 +1,40 @@
+$ systemctl --user is-active pilot.service
+active
+
+$ systemctl --user status pilot   (excerpt)
+● pilot.service - Pilot - autonomous ticket-to-PR agent (fleet-wide, GitHub polling, prod autopilot)
+     Loaded: loaded (/home/ubuntu/.config/systemd/user/pilot.service; enabled; preset: enabled)
+     Active: active (running) since Wed 2026-09-09 04:21:10 UTC; 30min ago
+ Invocation: e80d943245ce4fe0a64a45b9a7da1601
+   Main PID: 1873623 (pilot)
+      Tasks: 13 (limit: 25519)
+     Memory: 93.2M (max: 3G, available: 2.9G, peak: 109M, swap: 13.3M, swap peak: 25.9M)
+        CPU: 4.811s
+     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/pilot.service
+
+$ systemctl --user show pilot -p Restart -p MemoryMax
+Restart=on-failure
+MemoryMax=3221225472
+
+$ sudo journalctl _SYSTEMD_USER_UNIT=pilot.service   (poller startup; private repository names redacted; NOTE: the documented plain `journalctl --user-unit pilot -f` shows no entries on this host without sudo or adm/systemd-journal membership)
+  ✗ approval-misconfig: env "prod" has require_approval=true but approval.pre_merge.enabled=false → all PRs will deadlock until enabled or env is changed
+time=2026-09-09T04:22:15.996Z level=INFO msg="GitHub SDK polling enabled (M7 4b/4d.2b)" component=github-sdk-poller repos_configured=9 repos_started=9 token_source="config (adapters.github.token)"
+
+poller-started lines this boot: 9
+
+$ grep -n token ~/.pilot/config.yaml   (the live config also holds no literal credential)
+17:    token: "${GITHUB_TOKEN}"          # supplied by the systemd unit environment
+
+$ gh-axi label list --repo undeemed/firstmate | grep pilot   (hyphenated state labels exist, no issue labelled)
+  pilot
+  pilot-done
+  pilot-in-progress
+
+$ pilot task "noop" --dry-run   (tail)
+3. Before committing, verify: build passes, tests pass, no undefined methods
+4. Commit with format: `type(scope): description`
+
+Work autonomously. Do not ask for confirmation.
+
+─────────────────────────────────────
+exit=0
