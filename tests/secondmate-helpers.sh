@@ -26,7 +26,23 @@ make_fake_tmux() {
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
-  has-session|new-session|new-window|send-keys|kill-window)
+  kill-window)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    # A closed window stops being listed, exactly as tmux behaves, so a
+    # teardown that verifies its endpoint closed can observe the close.
+    prev=
+    for arg in "$@"; do
+      if [ "$prev" = -t ]; then
+        # tmux exact-match targets arrive as "=session:=window".
+        killed=${arg//=/}
+        printf '%s\n' "$killed" >> "$FM_FAKE_TMUX_LOG.killed"
+        break
+      fi
+      prev=$arg
+    done
+    exit 0
+    ;;
+  has-session|new-session|new-window|send-keys)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
     exit 0
     ;;
@@ -39,6 +55,10 @@ case "${1:-}" in
     done
     while IFS= read -r recorded; do
       [ -n "$recorded" ] || continue
+      if [ -f "$FM_FAKE_TMUX_LOG.killed" ] &&
+        grep -qxF "$recorded" "$FM_FAKE_TMUX_LOG.killed"; then
+        continue
+      fi
       if [ -z "$session" ]; then
         printf '%s\n' "$recorded"
         continue

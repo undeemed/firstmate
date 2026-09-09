@@ -1961,6 +1961,25 @@ EOF
   pass "counterfactual meta clears main inventory warning and projects the live task"
 }
 
+make_valid_secondmate_home() {  # <id> <home>
+  local id=$1 home=$2
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects" "$home/bin"
+  printf '# Firstmate fixture\n' > "$home/AGENTS.md"
+  printf '%s\n' "$id" > "$home/.fm-secondmate-home"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+
+## Done
+EOF
+}
+
+append_secondmate_registry() {  # <parent> <id> <home>
+  printf -- '- %s - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-07-13)\n' \
+    "$2" "$3" >> "$1/data/secondmates.md"
+}
+
 seed_working_child() {  # <mate-home> <id> <doing> [repo]
   local mate=$1 id=$2 doing=$3 repo=${4-sample} repo_field=
   mkdir -p "$mate/projects/$id"
