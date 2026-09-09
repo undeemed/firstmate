@@ -14,6 +14,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
@@ -171,7 +173,7 @@ make_spawn_case() {
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
   id="omp-$name-x1"
   mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
-  printf 'brief\n' > "$home/data/$id/brief.md"
+  fm_test_spawn_brief "$home" "$id"
   fm_git_worktree "$proj" "$wt" "fm/$id"
   touch "$home/state/.last-watcher-beat"
   printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin|$launchlog|$id"
@@ -204,7 +206,7 @@ EOF
   # The whole typed command, not a substring, so a dropped autonomy flag or a
   # brief delivered by some other route cannot pass unnoticed.
   launch=$(cat "$launchlog")
-  expected="unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS omp --auto-approve -e '$ext' \"\$('$ROOT/bin/fm-operational-input.sh' encode launch-brief < '$home/data/$id/brief.md')\""
+  expected="unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS omp --auto-approve -e '$ext' \"\$('$ROOT/bin/fm-operational-input.sh' encode launch-brief < '$home/data/$id/launch-brief.md')\""
   [ "$launch" = "$expected" ] || fail "omp launch command is not the verified template"$'\n'"expected: $expected"$'\n'"actual:   $launch"
 
   assert_present "$ext" "omp per-task turn-end extension was not written"

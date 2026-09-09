@@ -11,8 +11,8 @@
 # degradation when the fetch fails, and the one-fetch-per-spawn cost.
 set -u
 
-# shellcheck source=tests/spawn-helpers.sh
-. "$(dirname "${BASH_SOURCE[0]}")/spawn-helpers.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 fm_git_identity
 TMP_ROOT=$(fm_test_tmproot fm-spawn-clone-base-drift)
@@ -25,7 +25,7 @@ REAL_GIT=$(command -v git)
 # Everything else is the real git.
 make_spawn_fakebin() {
 	local dir=$1 fakebin
-	fakebin=$(fm_spawn_fake_terminal "$dir")
+	fakebin=$(fm_test_make_spawn_fakebin "$dir")
 	cat >"$fakebin/git" <<SH
 #!/usr/bin/env bash
 set -u
@@ -47,7 +47,13 @@ SH
 
 # A clone one commit behind its origin, plus a pooled worktree of that clone
 # sitting on the clone's own HEAD, so the only drift under test is the clone's.
-# Sets the case globals fm_spawn_run reads, plus CASE_DIR and CLONE_HEAD.
+# Sets the case globals run_spawn reads, plus CASE_DIR and CLONE_HEAD.
+run_spawn() {
+	local id=$1
+	shift
+	fm_test_run_spawn "$HOME_DIR" "$POOL_DIR" "$FAKEBIN_DIR" "$id" "$PROJECT_DIR" "$@"
+}
+
 make_case() {
 	local name=$1 id=$2 seed origin
 	CASE_DIR="$TMP_ROOT/$name"
@@ -57,7 +63,8 @@ make_case() {
 	FAKEBIN_DIR=$(make_spawn_fakebin "$CASE_DIR/fake")
 	seed="$CASE_DIR/seed"
 	origin="$CASE_DIR/origin.git"
-	fm_spawn_home "$HOME_DIR" "$id"
+	fm_test_spawn_home "$HOME_DIR" codex
+	fm_test_spawn_brief "$HOME_DIR" "$id"
 
 	git init --quiet -b main "$seed"
 	printf 'base\n' >"$seed/README.md"
@@ -89,9 +96,9 @@ test_behind_clone_with_unlanded_work_refuses_untouched() {
 		before="$CLONE_HEAD $(git -C "$PROJECT_DIR" status --porcelain)"
 
 		if [ "$contract" = scout ]; then
-			out=$(fm_spawn_run "$id" --scout)
+			out=$(run_spawn "$id" --scout)
 		else
-			out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
+			out=$(run_spawn "$id" --mode no-mistakes --yolo off)
 		fi
 		status=$?
 		[ "$status" -ne 0 ] || fail "$contract spawn succeeded from a clone behind origin"
@@ -117,14 +124,14 @@ test_synced_clone_launches_within_one_fetch_per_spawn() {
 	make_case behind-then-synced "$id"
 	log="$CASE_DIR/git-fetch.log"
 
-	out=$(fm_spawn_run "$id" --mode no-mistakes --yolo off)
+	out=$(run_spawn "$id" --mode no-mistakes --yolo off)
 	assert_contains "$out" "is 1 commit(s) behind origin/main" \
 		"a clean clone behind origin did not refuse"
 
 	git -C "$PROJECT_DIR" fetch --quiet origin
 	git -C "$PROJECT_DIR" merge --quiet --ff-only origin/main
 	: >"$log"
-	out=$(FM_TEST_GIT_LOG="$log" fm_spawn_run "$id" --mode no-mistakes --yolo off)
+	out=$(FM_TEST_GIT_LOG="$log" run_spawn "$id" --mode no-mistakes --yolo off)
 	assert_contains "$out" "spawned $id" "a synced clone did not launch"
 	# An upper bound, not a pinned cost: the check may become free if a later
 	# refactor folds it into an existing fetch, but it must never add a second
@@ -142,7 +149,7 @@ test_failed_clone_fetch_warns_and_launches() {
 	id='clone-drift-offline-c3'
 	make_case offline-fetch "$id"
 
-	out=$(FM_TEST_GIT_FETCH_FAIL_DIR="$PROJECT_DIR" fm_spawn_run "$id" --mode no-mistakes --yolo off)
+	out=$(FM_TEST_GIT_FETCH_FAIL_DIR="$PROJECT_DIR" run_spawn "$id" --mode no-mistakes --yolo off)
 	status=$?
 	expect_code 0 "$status" "a failed clone fetch should not block the spawn"
 	assert_contains "$out" "launching without a base-freshness check" \
