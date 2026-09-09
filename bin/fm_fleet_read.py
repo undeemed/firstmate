@@ -22,6 +22,7 @@ Environment:
   FM_HOME                  the main home whose registry drives discovery
   FM_FLEET_READ_TIMEOUT    seconds allowed per home probe (default 25)
 """
+
 from __future__ import annotations
 
 import json
@@ -49,6 +50,11 @@ def age(secs: int | None) -> str:
     return f"{secs // 86400}d"
 
 
+def count(n: int | None) -> str:
+    """A count, or `-` for one that could not be read, shared by both boards."""
+    return "-" if n is None else str(n)
+
+
 def _timeout() -> int:
     raw = os.environ.get("FM_FLEET_READ_TIMEOUT", "")
     return int(raw) if raw.isdigit() and int(raw) > 0 else DEFAULT_TIMEOUT
@@ -73,10 +79,12 @@ def _run_probe(mode: str, home: str) -> tuple[list[list[str]], str | None]:
         return [], f"probe timed out after {timeout}s"
     except OSError as exc:
         return [], f"probe could not run: {exc}"
-    if done.returncode != 0 and not done.stdout:
-        detail = done.stderr.strip().splitlines()
-        return [], f"probe failed: {detail[-1] if detail else done.returncode}"
     records = [line.split("\t") for line in done.stdout.splitlines() if line.strip()]
+    if done.returncode != 0:
+        # A crashed probe may have written part of its records first. Keep them,
+        # but name the failure, so a home is never silently shown incomplete.
+        detail = done.stderr.strip().splitlines()
+        return records, f"probe failed: {detail[-1] if detail else done.returncode}"
     return records, None
 
 
@@ -94,30 +102,49 @@ def discover_homes() -> list[dict]:
     """Every home of this fleet: the main home, its registry, and pool markers."""
     home = os.environ.get("FM_HOME") or str(BIN_DIR.parent)
     records, error = _run_probe("--homes", home)
-    if error:
-        return [{"label": "main", "path": home, "source": "main", "error": error}]
-    return [
+    homes = [
         {"label": row[1], "path": row[2], "source": row[3]}
         for row in records
         if row[0] == "home" and len(row) >= 4
     ]
+    if not homes:
+        return [
+            {
+                "label": "main",
+                "path": home,
+                "source": "main",
+                "error": error or "no homes discovered",
+            }
+        ]
+    if error:
+        # Discovery crashed after listing some homes: show what it found, and
+        # carry the failure on the first (main) entry rather than dropping it.
+        homes[0]["error"] = error
+    return homes
 
 
 def read_home(home: dict) -> dict:
     """One home's cheap read: its supervision header, backlog, holds, and tasks."""
     result = dict(home)
     result.update(
-        supervision={"wake_depth": None, "oldest_wake_age": None, "beat_age": None, "lock": None},
+        supervision={
+            "wake_depth": None,
+            "oldest_wake_age": None,
+            "beat_age": None,
+            "lock": None,
+        },
         backlog={"in_flight": None, "queued": None, "held": None},
         holds=[],
         tasks=[],
     )
     if home.get("source", "").startswith("remote:"):
-        result["error"] = f"remote home on {home['source'].split(':', 1)[1]}, not read from here"
+        result["error"] = (
+            f"remote home on {home['source'].split(':', 1)[1]}, not read from here"
+        )
         return result
-    records, error = _run_probe("--home", home["path"])
-    if error:
-        result["error"] = error
+    records, probe_error = _run_probe("--home", home["path"])
+    if probe_error and not records:
+        result["error"] = probe_error
         return result
 
     tasks: dict[str, dict] = {}
@@ -161,6 +188,10 @@ def read_home(home: dict) -> dict:
                 "verb": _field(row, 3),
                 "note": _field(row, 4),
             }
+    if probe_error:
+        # The probe crashed after writing part of this home. The partial read
+        # stays visible, and the crash outranks any record-level error above.
+        result["error"] = probe_error
     return result
 
 

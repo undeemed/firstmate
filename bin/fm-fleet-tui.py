@@ -20,6 +20,7 @@ Keys: q quit - r refresh now - j/k or arrows scroll - g/G top/bottom.
 Environment: FM_HOME selects the main home whose registry drives discovery, and
 FM_FLEET_READ_TIMEOUT bounds each home's read.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Imported after the path above, so the read layer resolves from bin/ however
 # this script was invoked.
 import fm_fleet_read
-from fm_fleet_read import age
+from fm_fleet_read import age, count
 
 DEFAULT_INTERVAL = 15
 POLL_MS = 200
@@ -60,7 +61,9 @@ def frame(fleet: dict, width: int) -> list[tuple[str, int]]:
     """The whole screen as (text, role) lines, so curses and --once render the same."""
     counts = fleet["counts"]
     title = "FIRSTMATE FLEET"
-    lines: list[tuple[str, int]] = [(f"{title} {'─' * max(0, width - len(title) - 1)}", HEAD)]
+    lines: list[tuple[str, int]] = [
+        (f"{title} {'─' * max(0, width - len(title) - 1)}", HEAD)
+    ]
     summary = (
         f"{counts['homes']} homes · {counts['tasks']} tasks · "
         f"{counts['tasks_live']} endpoints alive · {counts['tasks_busy']} mid-turn · "
@@ -73,30 +76,38 @@ def frame(fleet: dict, width: int) -> list[tuple[str, int]]:
         sup = home["supervision"]
         backlog = home["backlog"]
         detail = (
-            f"wakes {sup['wake_depth'] if sup['wake_depth'] is not None else '-'}"
+            f"wakes {count(sup['wake_depth'])}"
             f" (oldest {age(sup['oldest_wake_age'])})"
             f"  beat {age(sup['beat_age'])}"
             f"  lock {sup['lock'] or '-'}"
-            f"  backlog {backlog['in_flight']}/{backlog['queued']}/{backlog['held']}"
+            f"  backlog {count(backlog['in_flight'])}/{count(backlog['queued'])}/{count(backlog['held'])}"
             " in-flight/queued/held"
         )
         stale_beat = sup["beat_age"] is None or sup["beat_age"] > 300
-        lines.append((
-            fit(f"{home['label']} [{home['source']}]  {detail}", width),
-            WARN if stale_beat else HEAD,
-        ))
+        lines.append(
+            (
+                fit(f"{home['label']} [{home['source']}]  {detail}", width),
+                WARN if stale_beat else HEAD,
+            )
+        )
         if home.get("error"):
             lines.append((fit(f"  ! {home['error']}", width), BAD))
-        captain_holds = [hold["id"] for hold in home["holds"] if hold["hold_kind"] == "captain"]
+        captain_holds = [
+            hold["id"] for hold in home["holds"] if hold["hold_kind"] == "captain"
+        ]
         if captain_holds:
-            lines.append((fit(f"  captain holds: {', '.join(captain_holds)}", width), WARN))
+            lines.append(
+                (fit(f"  captain holds: {', '.join(captain_holds)}", width), WARN)
+            )
         if not home["tasks"] and not home.get("error"):
             lines.append(("  no work under way here", DIM))
 
         for task in sorted(home["tasks"], key=lambda t: t["id"]):
             glyph, role = mark(task)
             kind = "/".join(part for part in (task["kind"], task["mode"]) if part)
-            runtime = "/".join(part for part in (task["harness"], task["backend"]) if part)
+            runtime = "/".join(
+                part for part in (task["harness"], task["backend"]) if part
+            )
             busy = task["busy"] or "-"
             if task["busy"] and task["busy_source"]:
                 busy = f"{busy} ({task['busy_source']})"
@@ -108,10 +119,15 @@ def frame(fleet: dict, width: int) -> list[tuple[str, int]]:
             event = task["last_event"]
             if event:
                 note = event["note"] or ""
-                lines.append((
-                    fit(f"      EVENT {age(event['age_secs'])} ago · {event['verb']}: {note}", width),
-                    DIM,
-                ))
+                lines.append(
+                    (
+                        fit(
+                            f"      EVENT {age(event['age_secs'])} ago · {event['verb']}: {note}",
+                            width,
+                        ),
+                        DIM,
+                    )
+                )
             else:
                 lines.append(("      EVENT none yet", DIM))
     return lines
@@ -156,7 +172,7 @@ def paint(screen, reader: Reader, interval: int, top: int) -> tuple[int, int]:
     body = height - 1
     top = max(0, min(top, max(0, len(lines) - body)))
     screen.erase()
-    for row, (text, role) in enumerate(lines[top:top + body]):
+    for row, (text, role) in enumerate(lines[top : top + body]):
         try:
             screen.addstr(row, 0, text[: width - 1], ROLES[role])
         except curses.error:
@@ -181,8 +197,12 @@ def loop(screen, interval: int) -> None:
         curses.start_color()
         curses.use_default_colors()
         for pair, (role, colour) in enumerate(
-            ((HEAD, curses.COLOR_CYAN), (GOOD, curses.COLOR_GREEN),
-             (WARN, curses.COLOR_YELLOW), (BAD, curses.COLOR_RED)),
+            (
+                (HEAD, curses.COLOR_CYAN),
+                (GOOD, curses.COLOR_GREEN),
+                (WARN, curses.COLOR_YELLOW),
+                (BAD, curses.COLOR_RED),
+            ),
             start=1,
         ):
             curses.init_pair(pair, colour, -1)
@@ -207,7 +227,7 @@ def loop(screen, interval: int) -> None:
         elif key == ord("g"):
             top = 0
         elif key == ord("G"):
-            top += body
+            top = 1 << 20  # paint clamps this to the last full screen
         if reader.read_at and time.time() - reader.read_at >= interval:
             reader.start()
 
@@ -218,8 +238,12 @@ def main(argv: list[str]) -> int:
         description=__doc__.strip().splitlines()[0],
         epilog="Keys: q quit - r refresh now - j/k or arrows scroll - g/G top/bottom.",
     )
-    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL,
-                        help="seconds between reads (default 15)")
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=DEFAULT_INTERVAL,
+        help="seconds between reads (default 15)",
+    )
     parser.add_argument("--once", action="store_true", help="print one frame and exit")
     args = parser.parse_args(argv)
     if args.interval < 1:
