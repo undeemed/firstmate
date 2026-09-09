@@ -108,7 +108,6 @@ GEN=$("$ROOT/bin/fm-busy-event.sh" arm "$MAIN/state" ship-live)
   --gen "$GEN" --source claude-hook --event stop > /dev/null
 
 export FM_FLEET_TREEHOUSE_ROOT="$POOL"
-export FM_FLEET_PROBE_TASKS_AXI=0
 
 # --- discovery --------------------------------------------------------------
 
@@ -201,7 +200,6 @@ pass "the web board renders the same discovered fleet"
 # --- the backlog read ------------------------------------------------------
 
 if command -v tasks-axi > /dev/null 2>&1; then
-  unset FM_FLEET_PROBE_TASKS_AXI
   cp "$ROOT/.tasks.toml" "$MAIN/.tasks.toml"
   (
     cd "$MAIN" || exit 1

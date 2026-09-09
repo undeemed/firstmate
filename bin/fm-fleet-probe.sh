@@ -28,7 +28,6 @@
 #                               set it REPLACES the roots this script would
 #                               otherwise derive from the registry and from this
 #                               checkout's own pool position.
-#   FM_FLEET_PROBE_TASKS_AXI    set to 0 to skip the backlog read entirely
 #
 # Output is tab-separated records, one per line, consumed by bin/fm_fleet_read.py.
 # A field that cannot be read is `-`, and a note is the last field on its line
@@ -233,10 +232,6 @@ probe_home() {
 
 probe_backlog() {
   local in_flight queued held line id hold_kind
-  if [ "${FM_FLEET_PROBE_TASKS_AXI:-1}" = 0 ]; then
-    emit backlog - - -
-    return 0
-  fi
   # shellcheck source=bin/fm-tasks-axi-lib.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"

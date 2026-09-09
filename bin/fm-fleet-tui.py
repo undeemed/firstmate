@@ -14,11 +14,10 @@ seconds per task, which is why it is not on this timer.
   python3 bin/fm-fleet-tui.py                 live screen, 15s refresh
   python3 bin/fm-fleet-tui.py --interval 30   slower refresh
   python3 bin/fm-fleet-tui.py --once          print one frame and exit
-  python3 bin/fm-fleet-tui.py --main-home <path>
 
 Keys: q quit - r refresh now - j/k or arrows scroll - g/G top/bottom.
 
-Environment: FM_HOME selects the main home when --main-home is absent, and
+Environment: FM_HOME selects the main home whose registry drives discovery, and
 FM_FLEET_READ_TIMEOUT bounds each home's read.
 """
 from __future__ import annotations
@@ -121,8 +120,7 @@ def frame(fleet: dict, width: int) -> list[tuple[str, int]]:
 class Reader:
     """Reads the fleet off the drawing thread, so a slow home never freezes the screen."""
 
-    def __init__(self, main_home: str | None) -> None:
-        self.main_home = main_home
+    def __init__(self) -> None:
         self.fleet: dict | None = None
         self.error: str | None = None
         self.read_at = 0.0
@@ -136,7 +134,7 @@ class Reader:
 
     def _read(self) -> None:
         try:
-            fleet, error = fm_fleet_read.read_fleet(self.main_home), None
+            fleet, error = fm_fleet_read.read_fleet(), None
         except Exception as exc:  # a broken read must show as one line, not a traceback
             fleet, error = None, str(exc)
         if fleet is not None:
@@ -176,7 +174,7 @@ def paint(screen, reader: Reader, interval: int, top: int) -> tuple[int, int]:
     return top, body
 
 
-def loop(screen, main_home: str | None, interval: int) -> None:
+def loop(screen, interval: int) -> None:
     curses.curs_set(0)
     screen.timeout(POLL_MS)
     if curses.has_colors():
@@ -192,7 +190,7 @@ def loop(screen, main_home: str | None, interval: int) -> None:
         ROLES[HEAD] |= curses.A_BOLD
         ROLES[DIM] = curses.A_DIM
 
-    reader = Reader(main_home)
+    reader = Reader()
     reader.start()
     top = 0
     while True:
@@ -223,15 +221,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL,
                         help="seconds between reads (default 15)")
     parser.add_argument("--once", action="store_true", help="print one frame and exit")
-    parser.add_argument("--main-home", help="the main home whose registry drives discovery")
     args = parser.parse_args(argv)
     if args.interval < 1:
         parser.error("--interval takes whole seconds, 1 or more")
     if args.once:
-        for text, _role in frame(fm_fleet_read.read_fleet(args.main_home), 160):
+        for text, _role in frame(fm_fleet_read.read_fleet(), 160):
             print(text)
         return 0
-    curses.wrapper(loop, args.main_home, args.interval)
+    curses.wrapper(loop, args.interval)
     return 0
 
 
