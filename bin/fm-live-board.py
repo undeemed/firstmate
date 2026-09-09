@@ -21,7 +21,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Imported after the path above, so the read layer resolves from bin/ however
+# this script was invoked.
 import fm_fleet_read
+from fm_fleet_read import age
 
 REFRESH_SECONDS = 15
 
@@ -30,18 +33,6 @@ def dot(task):
     if task["endpoint"] == "alive":
         return "go" if task["busy"] == "busy" else "wait"
     return "bad" if task["endpoint"] == "dead" else "wait"
-
-
-def age(secs):
-    if secs is None:
-        return "-"
-    if secs < 60:
-        return f"{secs}s"
-    if secs < 3600:
-        return f"{secs // 60}m"
-    if secs < 86400:
-        return f"{secs // 3600}h"
-    return f"{secs // 86400}d"
 
 
 def render(fleet):

@@ -45,7 +45,7 @@
 #   sup      <wake-depth>    <oldest-wake-age-secs>  <watcher-beat-age-secs>  <session-lock>
 #   backlog  <in-flight>     <queued>                <held>
 #   hold     <task-id>       <hold-kind>
-#   task     <id>  <kind>  <mode>  <harness>  <backend>  <endpoint>  <busy>  <busy-source>  <pr>  <project>
+#   task     <id>  <kind>  <mode>  <harness>  <backend>  <endpoint>  <busy>  <busy-source>  <pr>
 #     endpoint: alive | dead | unknown (nothing recorded, or a remote endpoint)
 #     busy:     busy | idle | unknown
 #   event    <id>  <age-secs>  <verb>  <note>
@@ -61,20 +61,14 @@ usage() {
 }
 
 emit() {  # <field...> - one tab-separated record
-  local out="" f
-  for f in "$@"; do
-    if [ -z "$out" ]; then out=$f; else out=$out$'\t'$f; fi
-  done
-  printf '%s\n' "$out"
+  local IFS=$'\t'
+  printf '%s\n' "$*"
 }
 
 clean() {  # <text> - squeeze tabs and newlines so a field cannot break a record
   printf '%s' "${1-}" | tr '\t\n' '  '
 }
 
-dash() {  # <text> - `-` for an empty or unreadable field
-  if [ -z "${1-}" ]; then printf '%s' -; else printf '%s' "$1"; fi
-}
 
 # --- discovery --------------------------------------------------------------
 #
@@ -151,7 +145,7 @@ list_homes() {
 
 probe_home() {
   local state="$FM_HOME/state" meta id kind mode harness backend target endpoint
-  local busy_verdict busy busy_source pr project tail40 line verb note age
+  local busy_verdict busy busy_source pr tail40 line verb note age
   local beat depth oldest oldest_age lock
 
   emit home "$FM_HOME" "$(home_label "$FM_HOME")"
@@ -179,16 +173,14 @@ probe_home() {
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR/fm-wake-lib.sh"
 
-  IFS=$(printf '\t') read -r depth oldest _seq <<EOF
-$(fm_secondmate_home_queue_scan "$FM_HOME")
-EOF
+  IFS=$'\t' read -r depth oldest _seq <<< "$(fm_secondmate_home_queue_scan "$FM_HOME")"
   oldest_age=-
   [ -n "$oldest" ] && oldest_age=$(($(date +%s) - oldest))
   beat=-
   [ -f "$state/.last-watcher-beat" ] && beat=$(fm_path_age "$state/.last-watcher-beat")
   lock=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-lock.sh" status 2>/dev/null | head -1)
   lock=${lock#lock: }
-  emit sup "$(dash "${depth:-0}")" "$oldest_age" "$beat" "$(clean "$(dash "$lock")")"
+  emit sup "${depth:-0}" "$oldest_age" "$beat" "$(clean "${lock:--}")"
 
   probe_backlog
 
@@ -198,7 +190,6 @@ EOF
     kind=$(fm_meta_get "$meta" kind)
     mode=$(fm_meta_get "$meta" mode)
     harness=$(fm_meta_get "$meta" harness)
-    project=$(fm_meta_get "$meta" project)
     pr=$(fm_meta_get "$meta" pr)
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
@@ -209,11 +200,8 @@ EOF
       busy=unknown
       busy_source=not-probed
     else
-      if fm_backend_target_exists "$backend" "$target" "fm-$id" 2>/dev/null; then
-        endpoint=alive
-      else
-        endpoint=dead
-      fi
+      endpoint=dead
+      fm_backend_target_exists "$backend" "$target" "fm-$id" 2>/dev/null && endpoint=alive
       tail40=''
       case "$harness" in
         grok*) tail40=$(fm_backend_capture "$backend" "$target" 40 "fm-$id" 2>/dev/null) || tail40='' ;;
@@ -228,9 +216,8 @@ EOF
       # log, for a task that reported its PR before the merge poll recorded `pr=`.
       pr=$(grep -Eo 'https?://[^[:space:])"]+/pull/[0-9]+' "$state/$id.status" 2>/dev/null | head -1)
     fi
-    emit task "$id" "$(dash "${kind:-ship}")" "$(dash "$mode")" "$(dash "$harness")" \
-      "$backend" "$endpoint" "$(dash "$busy")" "$(dash "$busy_source")" \
-      "$(dash "$pr")" "$(clean "$(dash "$project")")"
+    emit task "$id" "${kind:-ship}" "${mode:--}" "${harness:--}" \
+      "$backend" "$endpoint" "${busy:--}" "${busy_source:--}" "${pr:--}"
 
     if [ -f "$state/$id.status" ]; then
       line=$(last_status_line "$state/$id.status")
@@ -238,7 +225,7 @@ EOF
         age=$(fm_path_age "$state/$id.status")
         verb=$(status_line_verb "$line")
         note=$(status_line_note "$line")
-        emit event "$id" "$age" "$(dash "$verb")" "$(clean "$(dash "$note")")"
+        emit event "$id" "$age" "${verb:--}" "$(clean "${note:--}")"
       fi
     fi
   done
@@ -263,7 +250,7 @@ probe_backlog() {
   in_flight=$(backlog_count in_flight)
   queued=$(backlog_count queued)
   held=$(backlog_count held)
-  emit backlog "$(dash "$in_flight")" "$(dash "$queued")" "$(dash "$held")"
+  emit backlog "${in_flight:--}" "${queued:--}" "${held:--}"
 
   # Held tasks are the captain's queue after the decision collapse: one row per
   # held task, carrying the hold kind that says whether it waits on the captain.

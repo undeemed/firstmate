@@ -16,14 +16,14 @@ seconds per task, which is why it is not on this timer.
   python3 bin/fm-fleet-tui.py --once          print one frame and exit
   python3 bin/fm-fleet-tui.py --main-home <path>
 
-Keys: q quit · r refresh now · j/k or arrows scroll · g/G top/bottom.
+Keys: q quit - r refresh now - j/k or arrows scroll - g/G top/bottom.
 
-Environment: FM_HOME selects the main home when --main-home is absent;
-FM_FLEET_READ_TIMEOUT and FM_FLEET_READ_WORKERS bound each read.
+Environment: FM_HOME selects the main home when --main-home is absent, and
+FM_FLEET_READ_TIMEOUT bounds each home's read.
 """
-
 from __future__ import annotations
 
+import argparse
 import curses
 import sys
 import threading
@@ -31,37 +31,25 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Imported after the path above, so the read layer resolves from bin/ however
+# this script was invoked.
 import fm_fleet_read
+from fm_fleet_read import age
 
 DEFAULT_INTERVAL = 15
-# Screen roles, mapped to one curses colour pair each.
+POLL_MS = 200
+# Screen roles, each mapped to one curses attribute once colours are known.
 PLAIN, HEAD, GOOD, WARN, BAD, DIM = range(6)
+ROLES = {role: 0 for role in (PLAIN, HEAD, GOOD, WARN, BAD, DIM)}
 
 
-def age(secs: int | None) -> str:
-    if secs is None:
-        return "-"
-    if secs < 60:
-        return f"{secs}s"
-    if secs < 3600:
-        return f"{secs // 60}m"
-    if secs < 86400:
-        return f"{secs // 3600}h"
-    return f"{secs // 86400}d"
-
-
-def endpoint_role(task: dict) -> int:
-    if task["endpoint"] == "alive":
-        return GOOD if task["busy"] == "busy" else PLAIN
+def mark(task: dict) -> tuple[str, int]:
+    """One task's glyph and colour role, from its endpoint and its harness turn."""
     if task["endpoint"] == "dead":
-        return BAD
-    return DIM
-
-
-def glyph(task: dict) -> str:
+        return "x", BAD
     if task["endpoint"] != "alive":
-        return "x" if task["endpoint"] == "dead" else "?"
-    return "*" if task["busy"] == "busy" else "o"
+        return "?", DIM
+    return ("*", GOOD) if task["busy"] == "busy" else ("o", PLAIN)
 
 
 def fit(text: str, width: int) -> str:
@@ -72,9 +60,8 @@ def fit(text: str, width: int) -> str:
 def frame(fleet: dict, width: int) -> list[tuple[str, int]]:
     """The whole screen as (text, role) lines, so curses and --once render the same."""
     counts = fleet["counts"]
-    lines: list[tuple[str, int]] = []
     title = "FIRSTMATE FLEET"
-    lines.append((f"{title} {'─' * max(0, width - len(title) - 1)}", HEAD))
+    lines: list[tuple[str, int]] = [(f"{title} {'─' * max(0, width - len(title) - 1)}", HEAD)]
     summary = (
         f"{counts['homes']} homes · {counts['tasks']} tasks · "
         f"{counts['tasks_live']} endpoints alive · {counts['tasks_busy']} mid-turn · "
@@ -86,7 +73,6 @@ def frame(fleet: dict, width: int) -> list[tuple[str, int]]:
         lines.append(("", PLAIN))
         sup = home["supervision"]
         backlog = home["backlog"]
-        label = f"{home['label']} [{home['source']}]"
         detail = (
             f"wakes {sup['wake_depth'] if sup['wake_depth'] is not None else '-'}"
             f" (oldest {age(sup['oldest_wake_age'])})"
@@ -96,54 +82,40 @@ def frame(fleet: dict, width: int) -> list[tuple[str, int]]:
             " in-flight/queued/held"
         )
         stale_beat = sup["beat_age"] is None or sup["beat_age"] > 300
-        lines.append((fit(f"{label}  {detail}", width), WARN if stale_beat else HEAD))
+        lines.append((
+            fit(f"{home['label']} [{home['source']}]  {detail}", width),
+            WARN if stale_beat else HEAD,
+        ))
         if home.get("error"):
             lines.append((fit(f"  ! {home['error']}", width), BAD))
-        captain_holds = [
-            hold["id"] for hold in home["holds"] if hold["hold_kind"] == "captain"
-        ]
+        captain_holds = [hold["id"] for hold in home["holds"] if hold["hold_kind"] == "captain"]
         if captain_holds:
-            lines.append(
-                (fit(f"  captain holds: {', '.join(captain_holds)}", width), WARN)
-            )
+            lines.append((fit(f"  captain holds: {', '.join(captain_holds)}", width), WARN))
         if not home["tasks"] and not home.get("error"):
             lines.append(("  no work under way here", DIM))
 
         for task in sorted(home["tasks"], key=lambda t: t["id"]):
+            glyph, role = mark(task)
             kind = "/".join(part for part in (task["kind"], task["mode"]) if part)
-            runtime = "/".join(
-                part for part in (task["harness"], task["backend"]) if part
-            )
+            runtime = "/".join(part for part in (task["harness"], task["backend"]) if part)
             busy = task["busy"] or "-"
             if task["busy"] and task["busy_source"]:
                 busy = f"{busy} ({task['busy_source']})"
             row = (
-                f"  {glyph(task)} {task['id']:<30} {kind:<20} {runtime:<12} "
+                f"  {glyph} {task['id']:<30} {kind:<20} {runtime:<12} "
                 f"{task['endpoint'] or '-':<7} {busy:<22} {task['pr'] or ''}"
             )
-            lines.append((fit(row, width), endpoint_role(task)))
+            lines.append((fit(row, width), role))
             event = task["last_event"]
             if event:
                 note = event["note"] or ""
-                lines.append(
-                    (
-                        fit(
-                            f"      EVENT {age(event['age_secs'])} ago · {event['verb']}: {note}",
-                            width,
-                        ),
-                        DIM,
-                    )
-                )
+                lines.append((
+                    fit(f"      EVENT {age(event['age_secs'])} ago · {event['verb']}: {note}", width),
+                    DIM,
+                ))
             else:
                 lines.append(("      EVENT none yet", DIM))
     return lines
-
-
-def render_once(main_home: str | None) -> int:
-    fleet = fm_fleet_read.read_fleet(main_home)
-    for text, _role in frame(fleet, 160):
-        print(text)
-    return 0
 
 
 class Reader:
@@ -155,86 +127,76 @@ class Reader:
         self.error: str | None = None
         self.read_at = 0.0
         self.busy = False
-        self._lock = threading.Lock()
 
     def start(self) -> None:
-        with self._lock:
-            if self.busy:
-                return
-            self.busy = True
+        if self.busy:
+            return
+        self.busy = True
         threading.Thread(target=self._read, daemon=True).start()
 
     def _read(self) -> None:
         try:
-            fleet = fm_fleet_read.read_fleet(self.main_home)
-            error = None
+            fleet, error = fm_fleet_read.read_fleet(self.main_home), None
         except Exception as exc:  # a broken read must show as one line, not a traceback
             fleet, error = None, str(exc)
-        with self._lock:
-            if fleet is not None:
-                self.fleet = fleet
-            self.error = error
-            self.read_at = time.time()
-            self.busy = False
+        if fleet is not None:
+            self.fleet = fleet
+        self.error = error
+        self.read_at = time.time()
+        self.busy = False
+
+
+def paint(screen, reader: Reader, interval: int, top: int) -> tuple[int, int]:
+    """Draw one screen. Returns the clamped scroll offset and the body height."""
+    height, width = screen.getmaxyx()
+    if reader.fleet is None:
+        lines = [(reader.error, BAD)] if reader.error else [("reading the fleet…", DIM)]
+    else:
+        lines = frame(reader.fleet, width - 1)
+        if reader.error:
+            lines.insert(1, (fit(f"last read failed: {reader.error}", width - 1), BAD))
+    body = height - 1
+    top = max(0, min(top, max(0, len(lines) - body)))
+    screen.erase()
+    for row, (text, role) in enumerate(lines[top:top + body]):
+        try:
+            screen.addstr(row, 0, text[: width - 1], ROLES[role])
+        except curses.error:
+            pass
+    since = int(time.time() - reader.read_at) if reader.read_at else 0
+    footer = (
+        f" q quit · r refresh · j/k scroll · read {age(since)} ago · "
+        f"every {interval}s{' · refreshing…' if reader.busy else ''}"
+    )
+    try:
+        screen.addstr(height - 1, 0, footer[: width - 1], ROLES[HEAD])
+    except curses.error:
+        pass
+    screen.refresh()
+    return top, body
 
 
 def loop(screen, main_home: str | None, interval: int) -> None:
     curses.curs_set(0)
-    screen.nodelay(True)
-    roles = {PLAIN: 0, HEAD: 0, GOOD: 0, WARN: 0, BAD: 0, DIM: 0}
+    screen.timeout(POLL_MS)
     if curses.has_colors():
         curses.start_color()
         curses.use_default_colors()
         for pair, (role, colour) in enumerate(
-            (
-                (HEAD, curses.COLOR_CYAN),
-                (GOOD, curses.COLOR_GREEN),
-                (WARN, curses.COLOR_YELLOW),
-                (BAD, curses.COLOR_RED),
-            ),
+            ((HEAD, curses.COLOR_CYAN), (GOOD, curses.COLOR_GREEN),
+             (WARN, curses.COLOR_YELLOW), (BAD, curses.COLOR_RED)),
             start=1,
         ):
             curses.init_pair(pair, colour, -1)
-            roles[role] = curses.color_pair(pair)
-        roles[HEAD] |= curses.A_BOLD
-        roles[DIM] = curses.A_DIM
+            ROLES[role] = curses.color_pair(pair)
+        ROLES[HEAD] |= curses.A_BOLD
+        ROLES[DIM] = curses.A_DIM
 
     reader = Reader(main_home)
     reader.start()
     top = 0
     while True:
-        height, width = screen.getmaxyx()
-        if reader.fleet is None:
-            lines = (
-                [("reading the fleet…", DIM)]
-                if not reader.error
-                else [(reader.error, BAD)]
-            )
-        else:
-            lines = frame(reader.fleet, width - 1)
-            if reader.error:
-                lines.insert(
-                    1, (fit(f"last read failed: {reader.error}", width - 1), BAD)
-                )
-        body = height - 1
-        top = max(0, min(top, max(0, len(lines) - body)))
-        screen.erase()
-        for row, (text, role) in enumerate(lines[top : top + body]):
-            try:
-                screen.addstr(row, 0, text[: width - 1], roles[role])
-            except curses.error:
-                pass
-        since = int(time.time() - reader.read_at) if reader.read_at else 0
-        footer = (
-            f" q quit · r refresh · j/k scroll · read {age(since)} ago · "
-            f"every {interval}s{' · refreshing…' if reader.busy else ''}"
-        )
-        try:
-            screen.addstr(height - 1, 0, footer[: width - 1], roles[HEAD])
-        except curses.error:
-            pass
-        screen.refresh()
-
+        top, body = paint(screen, reader, interval, top)
         key = screen.getch()
         if key in (ord("q"), ord("Q")):
             return
@@ -244,46 +206,32 @@ def loop(screen, main_home: str | None, interval: int) -> None:
             top += 1
         elif key in (curses.KEY_UP, ord("k")):
             top = max(0, top - 1)
-        elif key in (curses.KEY_NPAGE, ord(" ")):
-            top += body
-        elif key == curses.KEY_PPAGE:
-            top = max(0, top - body)
         elif key == ord("g"):
             top = 0
         elif key == ord("G"):
-            top = len(lines)
+            top += body
         if reader.read_at and time.time() - reader.read_at >= interval:
             reader.start()
-        time.sleep(0.2)
 
 
 def main(argv: list[str]) -> int:
-    interval, main_home, once = DEFAULT_INTERVAL, None, False
-    args = list(argv)
-    while args:
-        arg = args.pop(0)
-        if arg in ("-h", "--help"):
-            print(__doc__.strip())
-            return 0
-        if arg == "--once":
-            once = True
-        elif arg == "--interval" and args:
-            value = args.pop(0)
-            if not value.isdigit() or int(value) < 1:
-                print(
-                    "fm-fleet-tui: --interval takes whole seconds, 1 or more",
-                    file=sys.stderr,
-                )
-                return 2
-            interval = int(value)
-        elif arg == "--main-home" and args:
-            main_home = args.pop(0)
-        else:
-            print(f"fm-fleet-tui: unknown argument {arg}", file=sys.stderr)
-            return 2
-    if once:
-        return render_once(main_home)
-    curses.wrapper(loop, main_home, interval)
+    parser = argparse.ArgumentParser(
+        prog="fm-fleet-tui.py",
+        description=__doc__.strip().splitlines()[0],
+        epilog="Keys: q quit - r refresh now - j/k or arrows scroll - g/G top/bottom.",
+    )
+    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL,
+                        help="seconds between reads (default 15)")
+    parser.add_argument("--once", action="store_true", help="print one frame and exit")
+    parser.add_argument("--main-home", help="the main home whose registry drives discovery")
+    args = parser.parse_args(argv)
+    if args.interval < 1:
+        parser.error("--interval takes whole seconds, 1 or more")
+    if args.once:
+        for text, _role in frame(fm_fleet_read.read_fleet(args.main_home), 160):
+            print(text)
+        return 0
+    curses.wrapper(loop, args.main_home, args.interval)
     return 0
 
 
