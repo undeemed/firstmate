@@ -1,0 +1,4 @@
+== pre-fix (bd3de848) TTL regression test ==
+DIAG: a claim whose follow-up was lost never expired; still 2
+not ok - omp watch must expire a claimed wake whose follow-up was never consumed: expected exit 0, got 1
+exit=1

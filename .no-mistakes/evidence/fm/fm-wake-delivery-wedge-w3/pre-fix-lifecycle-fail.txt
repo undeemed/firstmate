@@ -1,0 +1,4 @@
+== pre-fix (bd3de848) wake-delivery lifecycle test ==
+DIAG: an idle wake must start a turn, got followUp
+not ok - omp watch must run an idle wake, queue a streaming one, and release a settled claim: expected exit 0, got 1
+exit=1
