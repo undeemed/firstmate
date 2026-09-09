@@ -11,7 +11,24 @@ TMP_ROOT=$(fm_test_tmproot fm-on)
 # and physicalize macOS's /var -> /private/var alias before transport validation.
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
-trap 'if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then kill "$(cat "$TMP_ROOT/remote-jobs/worker.pid")" 2>/dev/null || true; fi; rm -rf -- "$TMP_ROOT"' EXIT
+# shellcheck source=bin/fm-remote-job-lib.sh
+. "$ROOT/bin/fm-remote-job-lib.sh"
+# The recorded worker pid is the serving child, and killing it in the same
+# breath as `rm -rf` races the child's own shutdown writes: the dying worker
+# recreates a heartbeat or lock temp file between rm's readdir and its rmdir,
+# and teardown fails with "cannot remove .../remote-jobs: Directory not empty"
+# after every assertion passed. Stop the whole worker tree and wait for it to
+# be provably gone before removing the fixture root, the same teardown
+# tests/fm-remote-reply.test.sh uses.
+cleanup() {
+  local worker_pid=''
+  worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid" 2>/dev/null || true)
+  if [ -n "$worker_pid" ]; then
+    fm_remote_job_stop_worker_tree "$worker_pid" || true
+  fi
+  rm -rf -- "$TMP_ROOT"
+}
+trap cleanup EXIT
 LOCAL_HOME="$TMP_ROOT/local-home"
 REMOTE_ROOT="$TMP_ROOT/remote-root"
 REMOTE_HOME="$TMP_ROOT/remote-home"
