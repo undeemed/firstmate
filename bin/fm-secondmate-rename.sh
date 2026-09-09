@@ -190,25 +190,18 @@ done
 shopt -u dotglob nullglob
 [ ! -d "$DATA/$OLD_ID" ] || plan_move "$DATA/$OLD_ID" "$DATA/$NEW_ID"
 
-PROJECT_SRC=
-PROJECT_DST=
-if [ -n "$OLD_PROJECT" ] && [ -d "$MATE_HOME/projects/$OLD_PROJECT" ]; then
-	[ ! -e "$MATE_HOME/projects/$NEW_PROJECT" ] || die "project clone already exists: $MATE_HOME/projects/$NEW_PROJECT"
-	PROJECT_SRC="$MATE_HOME/projects/$OLD_PROJECT"
-	PROJECT_DST="$MATE_HOME/projects/$NEW_PROJECT"
-fi
+[ -z "$OLD_PROJECT" ] || [ ! -d "$MATE_HOME/projects/$OLD_PROJECT" ] \
+	|| plan_move "$MATE_HOME/projects/$OLD_PROJECT" "$MATE_HOME/projects/$NEW_PROJECT"
 
 # Treehouse lease: this mate's own slot only, and only while it still holds it.
-POOL=$(
-	probe=$MATE_HOME
-	while [ "$probe" != "/" ] && [ -n "$probe" ]; do
-		probe=$(dirname "$probe")
-		[ ! -f "$probe/treehouse-state.json" ] || {
-			printf '%s' "$probe"
-			break
-		}
-	done
-)
+POOL=$MATE_HOME
+until [ -f "$POOL/treehouse-state.json" ]; do
+	POOL=$(dirname "$POOL")
+	[ "$POOL" != / ] || {
+		POOL=
+		break
+	}
+done
 LEASE_ACTION=none
 if [ -n "$POOL" ]; then
 	command -v jq >/dev/null 2>&1 || die "jq is required to read the treehouse lease at $POOL/treehouse-state.json"
@@ -308,7 +301,6 @@ if [ -f "$REG" ]; then
 fi
 
 if [ -n "$OLD_PROJECT" ]; then
-	[ -z "$PROJECT_SRC" ] || do_move "$PROJECT_SRC" "$PROJECT_DST"
 	if [ -f "$PROJECT_REGISTRY" ] && grep -q "^- $OLD_PROJECT \[" "$PROJECT_REGISTRY"; then
 		do_sub "$PROJECT_REGISTRY" "project registry entry" "- $OLD_PROJECT [" "- $NEW_PROJECT [" prefix
 	fi
