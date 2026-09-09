@@ -650,7 +650,7 @@ $FORGE_POLL_RULE
    A still pane with no declared state is indistinguishable from a wedge, and supervision
    must spend a deep inspection to tell them apart.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
-6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
+6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [key=<slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    The \`[key=<slug>]\` token names that decision and must sit BEFORE the colon; \`blocked [key=<slug>]: {why}\` names a blocker the same way.
    A token written later in the line is read as message text, so the decision files under the shared \`default\` key, cannot be answered by its own key, and shares that key with every other unkeyed decision on this task.
