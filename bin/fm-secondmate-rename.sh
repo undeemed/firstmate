@@ -63,6 +63,8 @@ REG="$DATA/secondmates.md"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-secondmate-registry-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 
 usage() {
 	echo "usage: fm-secondmate-rename.sh <old-id> <new-id> [--project <old> <new>] [--dry-run]" >&2
@@ -252,9 +254,11 @@ do_move() { # <src> <dst>
 
 # Replace occurrences of <search> with <replace> in <file>, atomically and with
 # the file's own mode preserved. The match is LITERAL, never a regex, so an id's
-# dots and dashes cannot widen it, and every caller's search carries the record's
-# own key or punctuation (`projects=<field>`, `- <id> `, `(repo: <label>)`), so a
-# line that merely mentions the old name cannot match.
+# dots and dashes cannot widen it. Record-field callers anchor their search with
+# the record's own key or punctuation (`projects=<field>`, `- <id> `,
+# `(repo: <label>)`), so a line that merely mentions the old name cannot match;
+# the identity records (nudge marker, home marker, charters) are deliberate
+# whole-file bare-id substitutions.
 do_sub() { # <file> <note> <search> <replace>
 	local file=$1 note=$2 search=$3 replace=$4 tmp line
 	printf '  edit   %s (%s)\n' "$file" "$note"
@@ -267,6 +271,18 @@ do_sub() { # <file> <note> <search> <replace>
 	mv -f -- "$tmp" "$file" || die "stopped at $file"
 }
 
+# Print <list> with <old> replaced as one whole comma-separated element, in both
+# the meta field's `a,b` shape and the registry's `a, b` shape, so a label that
+# is a prefix or suffix of another element never matches.
+rename_list_element() { # <list> <old> <new>
+	local wrapped=",$1,"
+	wrapped=${wrapped//",$2,"/",$3,"}
+	wrapped=${wrapped//", $2,"/", $3,"}
+	wrapped=${wrapped#,}
+	wrapped=${wrapped%,}
+	printf '%s\n' "$wrapped"
+}
+
 # Facts that only the OLD records can answer, read before anything moves - so a
 # dry run prints exactly what the wet run will rewrite, and the wet run still
 # knows which optional records existed once their paths have moved.
@@ -274,6 +290,8 @@ read_old_records() {
 	OLD_ENDPOINT_ID=$(fm_meta_get "$META" endpoint_task_id)
 	OLD_TASKTMP=$(fm_meta_get "$META" tasktmp)
 	OLD_PROJECTS_FIELD=$(fm_meta_get "$META" projects)
+	OLD_REG_PROJECTS=$(secondmate_registry_field "$REG" "$OLD_ID" projects) || OLD_REG_PROJECTS=
+	[ -z "$OLD_REG_PROJECTS" ] || grep -qF -- "projects: $OLD_REG_PROJECTS;" "$REG" || OLD_REG_PROJECTS=
 	HAD_NUDGE=0
 	HAD_BRIEF=0
 	[ ! -f "$STATE/.secondmate-nudge-pending/$OLD_ID.pending" ] || HAD_NUDGE=1
@@ -287,10 +305,7 @@ apply_meta_fields() {
 	[ "$OLD_TASKTMP" != "/tmp/fm-$OLD_ID" ] ||
 		do_sub "$new_meta" "build cache path" "tasktmp=/tmp/fm-$OLD_ID" "tasktmp=/tmp/fm-$NEW_ID"
 	[ -n "$OLD_PROJECT" ] && [ -n "$OLD_PROJECTS_FIELD" ] || return 0
-	renamed=",$OLD_PROJECTS_FIELD,"
-	renamed=${renamed//",$OLD_PROJECT,"/",$NEW_PROJECT,"}
-	renamed=${renamed#,}
-	renamed=${renamed%,}
+	renamed=$(rename_list_element "$OLD_PROJECTS_FIELD" "$OLD_PROJECT" "$NEW_PROJECT")
 	[ "$renamed" != "$OLD_PROJECTS_FIELD" ] || return 0
 	do_sub "$new_meta" "project list" "projects=$OLD_PROJECTS_FIELD" "projects=$renamed"
 }
@@ -298,7 +313,7 @@ apply_meta_fields() {
 # The records that carry the id as an identity: the reread nudge, the home's own
 # marker, both charters, and the parent's routing record.
 apply_identity_records() {
-	local marker="$MATE_HOME/.fm-secondmate-home"
+	local marker="$MATE_HOME/.fm-secondmate-home" renamed
 	[ "$HAD_NUDGE" -eq 0 ] ||
 		do_sub "$STATE/.secondmate-nudge-pending/$NEW_ID.pending" "pending reread nudge" "$OLD_ID" "$NEW_ID"
 	[ ! -f "$marker" ] || [ -L "$marker" ] || do_sub "$marker" "home identity marker" "$OLD_ID" "$NEW_ID"
@@ -306,8 +321,10 @@ apply_identity_records() {
 	[ "$HAD_BRIEF" -eq 0 ] || do_sub "$DATA/$NEW_ID/brief.md" "charter identity" "$OLD_ID" "$NEW_ID"
 	[ -f "$REG" ] || return 0
 	! grep -q "^- $OLD_ID " "$REG" || do_sub "$REG" "routing record id" "- $OLD_ID " "- $NEW_ID "
-	[ -n "$OLD_PROJECT" ] && grep -q "projects: $OLD_PROJECT;" "$REG" || return 0
-	do_sub "$REG" "routing record project" "projects: $OLD_PROJECT;" "projects: $NEW_PROJECT;"
+	[ -n "$OLD_PROJECT" ] && [ -n "$OLD_REG_PROJECTS" ] || return 0
+	renamed=$(rename_list_element "$OLD_REG_PROJECTS" "$OLD_PROJECT" "$NEW_PROJECT")
+	[ "$renamed" != "$OLD_REG_PROJECTS" ] || return 0
+	do_sub "$REG" "routing record project" "projects: $OLD_REG_PROJECTS;" "projects: $renamed;"
 }
 
 # The records that carry the project label: BOTH project registries - the

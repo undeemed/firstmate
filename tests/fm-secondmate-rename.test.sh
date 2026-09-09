@@ -168,6 +168,20 @@ test_history_survives_the_rename() {
 	pass "history keeps the old id and only the transcript's file name moves"
 }
 
+test_renames_one_label_inside_a_multi_project_routing_record() {
+	local out rc=0
+	setup_fixture rename-multi-project
+	printf -- '- %s - fixture domain (home: %s; scope: fixture; projects: oldproj-ui, oldproj, big-oldproj; added 2026-07-13)\n' \
+		"$OLD_ID" "$MATE" >"$PARENT/data/secondmates.md"
+	out=$(run_rename "$OLD_ID" "$NEW_ID" --project oldproj newproj) || rc=$?
+	expect_code 0 "$rc" "rename with a multi-project routing record"
+	assert_grep "projects: oldproj-ui, newproj, big-oldproj;" "$PARENT/data/secondmates.md" \
+		"the routing record's own label was not renamed as a whole element"
+	[ "$(printf '%s\n' "$out" | grep -c "routing record project")" -eq 1 ] ||
+		fail "the routing record project edit did not print as one line"
+	pass "a multi-project routing record renames only its own whole label"
+}
+
 test_dry_run_writes_nothing() {
 	local out rc=0 before after
 	setup_fixture rename-dry
@@ -264,6 +278,7 @@ command -v jq >/dev/null 2>&1 || {
 
 test_rename_moves_every_live_record
 test_history_survives_the_rename
+test_renames_one_label_inside_a_multi_project_routing_record
 test_dry_run_writes_nothing
 test_refuses_while_the_agent_is_live
 test_refuses_while_the_busy_record_reads_busy
