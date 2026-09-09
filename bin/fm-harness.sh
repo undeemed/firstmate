@@ -92,6 +92,12 @@ detect_own() {
   # as omp, while the same variable leaking from an omp secondmate into that
   # home's claude worker (whose ancestry holds no omp) changes nothing. The
   # anchored ancestry arm below covers a plain hand-started `omp` by itself.
+  # omp (Oh My Pi) exports OMPCODE=1 and CLAUDECODE=1 together into every child
+  # it spawns (verified in the omp 17.3.4 bundle's child-environment builder),
+  # so its own marker is tested BEFORE claude's or every omp session reads as
+  # claude. bin/fm-spawn.sh clears both at each launch boundary, so an inherited
+  # marker cannot outrank a worker's real ancestry.
+  [ "${OMPCODE:-}" = "1" ] && { echo omp; return; }
   if [ "${FM_OMP_HARNESS:-}" = omp ] && ancestry_names_omp; then
     echo omp
     return
