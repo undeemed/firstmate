@@ -50,7 +50,7 @@ That wait is fixed inside the poller in release 2.273.1, so `orchestrator.execut
 ## Configuration
 
 The daemon reads `~/.pilot/config.yaml`; `pilot config validate` checks it and `pilot config path` prints the resolved location.
-[`../configs/pilot/config.example.yaml`](../configs/pilot/config.example.yaml) is a copyable starting point that matches the posture described here.
+[`examples/pilot-config.example.yaml`](examples/pilot-config.example.yaml) is a copyable starting point that matches the posture described here.
 
 Two structural points are worth stating, because the README's single-repository example hides them:
 
