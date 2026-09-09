@@ -634,11 +634,17 @@ test_native_pi_ultra_is_explicit_and_model_scoped() {
 }
 
 test_batch_preserves_native_ultra() {
-  local rec id1=ultra-batch-a id2=ultra-batch-b out launch
+  local rec id1=ultra-batch-a id2=ultra-batch-b out launch second_wt
   rec=$(make_spawn_case ultra-batch pi "$id1" "$id2")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+  # A batch is two spawns, so it needs two pool worktrees: fm-spawn refuses to
+  # put a second task into a checkout the first one already records.
+  second_wt="$CASE_DIR/wt-ultra-batch-second"
+  git -C "$PROJ_DIR" worktree add --quiet -b wt-ultra-batch-second "$second_wt"
+  printf '%s\n%s\n' "$WT_DIR" "$second_wt" > "$CASE_DIR/pool.list"
+  out=$(FM_FAKE_POOL_FILE="$CASE_DIR/pool.list" FM_FAKE_POOL_CURSOR="$CASE_DIR/pool.cursor" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness pi --model codex-native/gpt-6-astra --effort ultra)
   expect_code 0 "$?" "native Ultra batch failed: $out"
   assert_meta_profile "$HOME_DIR/state/$id1.meta" pi codex-native/gpt-6-astra ultra
