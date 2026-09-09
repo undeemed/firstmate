@@ -394,8 +394,6 @@ command_build() {
 
   command -v lavish-axi >/dev/null 2>&1 || fail "lavish-axi is not installed"
   fm_lavish_prepare_server
-  lavish-axi "$board" || fail "cannot establish the board Lavish session"
-  printf 'served: %s\n' "$board"
 
   sid=$("$SCRIPT_DIR/fm-procevent-lavish.sh" source-id "$board") \
     || fail "cannot derive the board source id"

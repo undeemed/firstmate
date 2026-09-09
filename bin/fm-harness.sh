@@ -176,15 +176,6 @@ detect_own() {
         esac ;;
       pi-signed) echo pi; return ;;
       pi) echo pi; return ;;
-      # omp is a Bun-compiled single binary whose process name is exactly `omp`
-      # (verified, omp 18.1.11: `ps -o comm=` reports omp from both its `!`
-      # bash path and the model's bash tool). Anchored, never *omp*, so ompd,
-      # comp, and similar unrelated commands are not misread as this harness.
-      # It sits above the node*|python* interpreter fallback deliberately: the
-      # optional claude-bridge extension runs a nested executable literally
-      # named `claude` with its own node child, and that fallback's *claude*
-      # args glob would otherwise claim it if that subtree were ever walked.
-      omp) echo omp; return ;;
       node*|python*)
         # Bare interpreter: match the harness name in its script path.
         args=$(ps -o args= -p "$pid" 2>/dev/null)
