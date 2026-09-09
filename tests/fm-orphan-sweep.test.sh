@@ -120,7 +120,7 @@ printf '1' >"$PROC_FIXTURE/4242425/ppid"
 printf 'caddy\0' >"$PROC_FIXTURE/4242425/cmdline"
 ln -s "$TMP_ROOT" "$PROC_FIXTURE/4242425/cwd"
 
-(cd "$TMP_SWEPT/held-dir" && exec sleep 300) &
+(cd "$TMP_SWEPT/held-dir" && exec sleep 300) </dev/null >/dev/null 2>&1 &
 HOLDER_PID=$!
 disown
 sleep 0.3
