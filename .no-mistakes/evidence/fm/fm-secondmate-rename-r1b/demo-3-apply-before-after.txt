@@ -1,0 +1,121 @@
+=== BEFORE: every live record still carries swarm-mate-s6 ===
+--- parent state dir ---
+.hb-surfaced-swarm-mate-s6
+.secondmate-nudge-pending
+.seen-swarm-mate-s6_status
+.swarm-mate-s6.open-decisions-cursor
+neighbour.meta
+neighbour.status
+swarm-mate-s6.meta
+swarm-mate-s6.status
+--- parent data/secondmates.md (routing registry) ---
+- swarm-mate-s6 - fixture domain (home: <FIXTURE>/pool/2/firstmate; scope: fixture; projects: swarm; added 2026-07-13)
+--- parent data/projects.md / mate-home seeded copy ---
+- swarm [direct-PR +yolo] - fixture project (added 2026-07-13)
+- swarm [direct-PR +yolo] - fixture project (added 2026-07-13)
+--- pool treehouse-state.json ---
+{
+  "worktrees": [
+    {"name": "1", "path": "<FIXTURE>/pool/1/firstmate", "leased": true, "lease_holder": "other-mate-o1"},
+    {"name": "2", "path": "<FIXTURE>/pool/2/firstmate", "leased": true, "lease_holder": "swarm-mate-s6"}
+  ]
+}
+
+$ bin/fm-secondmate-rename.sh swarm-mate-s6 flotilla-mate-l6 --project swarm flotilla
+
+rename swarm-mate-s6 -> flotilla-mate-l6 (home <FIXTURE>/pool/2/firstmate)
+project swarm -> flotilla
+endpoint state: missing
+
+  move   <FIXTURE>/parent/state/.hb-surfaced-swarm-mate-s6 -> <FIXTURE>/parent/state/.hb-surfaced-flotilla-mate-l6
+  move   <FIXTURE>/parent/state/.seen-swarm-mate-s6_status -> <FIXTURE>/parent/state/.seen-flotilla-mate-l6_status
+  move   <FIXTURE>/parent/state/.swarm-mate-s6.open-decisions-cursor -> <FIXTURE>/parent/state/.flotilla-mate-l6.open-decisions-cursor
+  move   <FIXTURE>/parent/state/swarm-mate-s6.meta -> <FIXTURE>/parent/state/flotilla-mate-l6.meta
+  move   <FIXTURE>/parent/state/swarm-mate-s6.status -> <FIXTURE>/parent/state/flotilla-mate-l6.status
+  move   <FIXTURE>/parent/state/.secondmate-nudge-pending/swarm-mate-s6.pending -> <FIXTURE>/parent/state/.secondmate-nudge-pending/flotilla-mate-l6.pending
+  move   <FIXTURE>/parent/data/swarm-mate-s6 -> <FIXTURE>/parent/data/flotilla-mate-l6
+  move   <FIXTURE>/pool/2/firstmate/projects/swarm -> <FIXTURE>/pool/2/firstmate/projects/flotilla
+  edit   <FIXTURE>/parent/state/flotilla-mate-l6.meta (endpoint task id)
+  edit   <FIXTURE>/parent/state/flotilla-mate-l6.meta (build cache path)
+  edit   <FIXTURE>/parent/state/flotilla-mate-l6.meta (project list)
+  edit   <FIXTURE>/parent/state/.secondmate-nudge-pending/flotilla-mate-l6.pending (pending reread nudge)
+  edit   <FIXTURE>/pool/2/firstmate/.fm-secondmate-home (home identity marker)
+  edit   <FIXTURE>/pool/2/firstmate/data/charter.md (charter identity)
+  edit   <FIXTURE>/parent/data/flotilla-mate-l6/brief.md (charter identity)
+  edit   <FIXTURE>/parent/data/secondmates.md (routing record id)
+  edit   <FIXTURE>/parent/data/secondmates.md (routing record project)
+  edit   <FIXTURE>/parent/data/projects.md (project registry entry)
+  edit   <FIXTURE>/pool/2/firstmate/data/projects.md (project registry entry)
+  edit   <FIXTURE>/pool/2/firstmate/data/backlog.md (repo: fields on this home's own items)
+  edit   <FIXTURE>/pool/treehouse-state.json (lease holder for <FIXTURE>/pool/2/firstmate)
+  append <FIXTURE>/parent/state/flotilla-mate-l6.status (rename record)
+
+operator sequence:
+  bin/fm-control.sh swarm-mate-s6 exit
+  bin/fm-spawn.sh flotilla-mate-l6 <FIXTURE>/pool/2/firstmate --secondmate
+
+exit status: 0
+
+=== AFTER ===
+--- parent state dir (all sidecars re-keyed to the new id) ---
+.flotilla-mate-l6.open-decisions-cursor
+.hb-surfaced-flotilla-mate-l6
+.secondmate-nudge-pending
+.seen-flotilla-mate-l6_status
+flotilla-mate-l6.meta
+flotilla-mate-l6.status
+neighbour.meta
+neighbour.status
+--- new status log flotilla-mate-l6.status: history keeps the OLD id, one new line records the past ---
+working [key=setup]: first turn under swarm-mate-s6
+note: renamed from swarm-mate-s6 at 2026-09-09T10:59:10Z; transcript history under the old id
+--- neighbour.status (append-only history of another task): UNTOUCHED ---
+done: handed the swarm-mate-s6 report over
+--- new meta flotilla-mate-l6.meta ---
+window=firstmate:fm-swarm-mate-s6
+endpoint_task_id=flotilla-mate-l6
+worktree=<FIXTURE>/pool/2/firstmate
+project=<FIXTURE>/pool/2/firstmate
+harness=pi
+kind=secondmate
+mode=secondmate
+yolo=off
+home=<FIXTURE>/pool/2/firstmate
+projects=flotilla
+backend=tmux
+tasktmp=/tmp/fm-flotilla-mate-l6
+--- pending nudge ---
+flotilla-mate-l6.pending
+id=flotilla-mate-l6
+selector=fm-flotilla-mate-l6
+home=<FIXTURE>/pool/2/firstmate
+--- routing registry data/secondmates.md ---
+- flotilla-mate-l6 - fixture domain (home: <FIXTURE>/pool/2/firstmate; scope: fixture; projects: flotilla; added 2026-07-13)
+--- project registries: parent + the mate home's seeded copy (the half-rename fix) ---
+- flotilla [direct-PR +yolo] - fixture project (added 2026-07-13)
+- flotilla [direct-PR +yolo] - fixture project (added 2026-07-13)
+--- charter dir + mate home identity marker + charter + backlog ---
+<FIXTURE>/parent/data/flotilla-mate-l6/
+flotilla-mate-l6
+# charter for flotilla-mate-l6
+- [ ] some-item - fixture work (repo: flotilla) (kind: ship)
+--- project clone dir renamed, contents untouched ---
+flotilla
+clone marker - contents must never change
+--- pool lease re-keyed under its lock; other mate's lease untouched ---
+{
+  "worktrees": [
+    {
+      "name": "1",
+      "path": "<FIXTURE>/pool/1/firstmate",
+      "leased": true,
+      "lease_holder": "other-mate-o1"
+    },
+    {
+      "name": "2",
+      "path": "<FIXTURE>/pool/2/firstmate",
+      "leased": true,
+      "lease_holder": "flotilla-mate-l6"
+    }
+  ]
+}
