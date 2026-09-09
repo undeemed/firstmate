@@ -698,8 +698,20 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
             HAVE_RUN=1
             ;;
           undetermined)
-            RUN_UNBINDABLE=1
-            UNBINDABLE_DETAIL="this branch's current run ($(strip_quotes "$(nm_field status)")) reports head $(strip_quotes "$(nm_field head)"), which this checkout has never seen"
+            # No head this run reports resolves here, so the shared ledger rule
+            # in bin/fm-nm-run-lib.sh is the one remaining recognition: it binds
+            # only an active row anchored by the row immediately older than it
+            # having ended at exactly this worktree's head. Proven, this IS the
+            # branch's current run and its own axi detail stays authoritative;
+            # unproven, the ambiguity is reported rather than guessed.
+            if [ -n "$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" \
+              "$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")" \
+              "$(strip_quotes "$(nm_field head)")")" ]; then
+              HAVE_RUN=1
+            else
+              RUN_UNBINDABLE=1
+              UNBINDABLE_DETAIL="this branch's current run ($(strip_quotes "$(nm_field status)")) reports head $(strip_quotes "$(nm_field head)"), which this checkout has never seen"
+            fi
             ;;
         esac
       fi
@@ -722,8 +734,28 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
             RUN_SOURCE=coarse
             ;;
           undetermined)
-            RUN_UNBINDABLE=1
-            UNBINDABLE_DETAIL="this branch's current run ($coarse_status) reports head $coarse_sha, which this checkout has never seen"
+            # The row's head exists only in no-mistakes' managed clone, so
+            # nothing local can confirm or deny it. The shared ledger rule in
+            # bin/fm-nm-run-lib.sh is the ONE remaining recognition: it binds
+            # only an active row anchored by the row immediately older than it
+            # having ended at exactly this worktree's head, and prints nothing
+            # for every other ledger shape, so an unprovable row still reports
+            # the ambiguity instead of guessing. It applies only to a head this
+            # copy does not hold at all: a head that resolves here was already
+            # judged by the object-local rule, and a busy pane outranks it.
+            ledger_status=
+            if [ -z "$(fm_nm_resolve_commit "$WT" "$coarse_sha")" ]; then
+              ledger_status=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" \
+                "$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")" "$coarse_sha")
+            fi
+            if [ -n "$ledger_status" ]; then
+              COARSE_STATUS=$ledger_status
+              HAVE_RUN=1
+              RUN_SOURCE=coarse
+            else
+              RUN_UNBINDABLE=1
+              UNBINDABLE_DETAIL="this branch's current run ($coarse_status) reports head $coarse_sha, which this checkout has never seen"
+            fi
             ;;
         esac
       fi
