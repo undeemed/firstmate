@@ -377,6 +377,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/pilot.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/pxpipe-chain.md",
       "audience": "operator-current"
     },
