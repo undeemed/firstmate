@@ -215,17 +215,15 @@ plan_moves() {
 }
 
 # Sets POOL and LEASE_ACTION: this mate's own treehouse slot only, and only while
-# it still holds the lease.
+# it still holds the lease. A pool's layout is fixed at <pool>/<slot>/<home>, so
+# a home outside a pool simply has no lease to re-key.
 read_lease() {
-	POOL=$MATE_HOME
+	POOL=$(dirname "$(dirname "$MATE_HOME")")
 	LEASE_ACTION=none
-	until [ -f "$POOL/treehouse-state.json" ]; do
-		POOL=$(dirname "$POOL")
-		[ "$POOL" != / ] || {
-			POOL=
-			return 0
-		}
-	done
+	[ -f "$POOL/treehouse-state.json" ] || {
+		POOL=
+		return 0
+	}
 	command -v jq >/dev/null 2>&1 || die "jq is required to read the treehouse lease at $POOL/treehouse-state.json"
 	local holder
 	holder=$(jq -r --arg home "$MATE_HOME" \
