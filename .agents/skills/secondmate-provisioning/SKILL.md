@@ -234,16 +234,9 @@ It never initiates a survey or audit during recovery.
 A second mate's id is written into records with different owners: its task metadata and watcher sidecars, the pending reread nudge, the charter directory, the home's own identity marker, the routing record in `data/secondmates.md`, and the durable treehouse lease that keeps the pool slot reserved.
 Renaming by hand leaves some of them behind, and a half-renamed mate routes under a name whose lease, marker, and metadata still carry the old one.
 
-`bin/fm-secondmate-rename.sh` is the single owner of that rename; its header owns the exact flags, the full record list, and the failure model.
-Renaming is OFFLINE by contract, so the sequence is always: stop the mate with `bin/fm-control.sh <old-id> exit`, run the rename, then relaunch with `bin/fm-spawn.sh <new-id> <home> --secondmate`.
-The tool prints both bracketing commands on every run and refuses to write while the recorded endpoint is not proven exited or the mate still records a busy turn.
-
-Run `--dry-run` first: it lists every path it would touch, writes nothing, and reports the exit gate's verdict rather than enforcing it, so the plan can be read before the mate is stopped.
-Pass `--project <old> <new>` when the mate's project label is renamed in the same move; that also moves the clone in the mate's home and rewrites the project's registry entry, the `repo:` fields on that home's own items, and the tracked home map in `bin/fm-live-board.py`, which is a tracked change to commit.
-
-History is never rewritten.
-Status-log lines, pending-reply records, and every other append-only record keep the old id, because they say what happened under that name.
-Only the status log's file name moves, and the rename appends one line to the renamed transcript recording the id its history came from.
+`bin/fm-secondmate-rename.sh` is the single owner of that rename; its header owns the flags, the full record list, what it refuses, and what it never rewrites.
+Renaming is offline, so the sequence is always: stop the mate with `bin/fm-control.sh <old-id> exit`, run the rename, then relaunch with `bin/fm-spawn.sh <new-id> <home> --secondmate`.
+Run it with `--dry-run` first, before the mate is stopped.
 
 ## Retirement and teardown
 
