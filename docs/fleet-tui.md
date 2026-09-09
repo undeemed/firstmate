@@ -53,7 +53,8 @@ A worker that resolved a decision and carried on writes nothing new, so its last
 `bin/fm-fleet-snapshot.sh` already reads the fleet deeply: it reconciles every task through `bin/fm-crew-state.sh`, which asks no-mistakes about each branch.
 Measured on the fleet box on 2026-09-09, that read took 76 seconds for one home holding 13 tasks, so it cannot sit behind a refresh timer.
 The probe therefore takes the cheap half of the same read - endpoint presence, the busy verdict, the status tail - from the same owners the deep reader uses, and skips reconciliation entirely.
-A whole-fleet read of 9 homes and 21 tasks measured 7 to 12 seconds, dominated by one endpoint query per task, which is why the screen refreshes every 15 seconds by default and reads off the drawing thread.
+A whole-fleet read of 9 homes measured 5.5 to 8.4 seconds at 21 tasks and 11 to 15 seconds at 25 tasks on the same box, dominated by one endpoint query per task.
+That is why the screen reads off the drawing thread, never starts a second read while one is in flight, and prints how old the read it is showing is.
 
 Read-only was chosen deliberately for this version.
 Steering a worker means interrupting, exiting, relaunching, or sending it text, and those mechanics already have owners in `bin/fm-control.sh` and `bin/fm-send.sh`; a screen that reimplemented them would be a second lifecycle path.
