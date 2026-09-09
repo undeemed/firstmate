@@ -121,7 +121,6 @@ A Claude failure notice describes the automatic mechanism as broken and does not
 
 OpenCode, Pi, pi-signed, and omp expose passive callbacks for this purpose.
 Their adapters fail open at the hook boundary to protect the user session but schedule one bounded follow-up when the predicate blocks.
-omp is the exception among the Pi-derived harnesses: its `session_stop` hook blocks like Codex's `Stop` hook, so no passive latch is needed and the `stop_hook_active` loop guard applies unchanged.
 The generated prompts use the canonical `turn-end-guard` kind after the U+2063 `FIRSTMATE_OP: ` prefix, so Ahoy does not treat them as captain messages.
 Each passive adapter owns a loop latch.
 Pi and omp keep the latch across internal tool turns and clear it only when the generated follow-up settles or delivery fails.

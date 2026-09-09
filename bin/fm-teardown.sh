@@ -1412,7 +1412,7 @@ EOF
 # merged, the current work is not contained in the PR head, no PR is found, or
 # any gh error occurs - the caller then falls back to the content check.
 pr_is_merged() {
-  local branch=$1 number slug view head resolved_url current landed=0
+  local branch=$1 number slug view head resolved_url current
   if [ -n "$PR_URL" ]; then
     # One validated parse yields the repository and the number together, and
     # refuses a URL this GitHub REST read cannot serve.
@@ -1439,17 +1439,10 @@ pr_is_merged() {
   [ "$head" != "$view" ] || return 1
   ensure_commit_object "$number" "$head" || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
-  if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
-    landed=1
-  elif unpushed_patches_are_in_pr_head "$head"; then
-    landed=1
-  fi
-  [ "$landed" = 1 ] || return 1
-  if [ -z "$PR_URL" ]; then
-    [ -n "$resolved_url" ] || return 1
-    PR_URL=$resolved_url
-  fi
-  return 0
+  git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null ||
+    unpushed_patches_are_in_pr_head "$head" || return 1
+  PR_URL=${PR_URL:-$resolved_url}
+  [ -n "$PR_URL" ] || return 1
 }
 
 # Is the branch's content already present in the up-to-date default branch? Fetches
@@ -1825,7 +1818,6 @@ validate_worktree_teardown_safety() {
 # shared ledger-anchored continuation rule as the only recognition for a head
 # this copy cannot resolve at all.
 NM_TEARDOWN_TIMEOUT=${FM_TEARDOWN_NM_TIMEOUT:-10}
-case "$NM_TEARDOWN_TIMEOUT" in '' | *[!0-9]*) NM_TEARDOWN_TIMEOUT=10 ;; esac
 case "$NM_TEARDOWN_TIMEOUT" in ''|*[!0-9]*) NM_TEARDOWN_TIMEOUT=10 ;; esac
 # How many of the most recent `no-mistakes runs` rows the parked-run
 # continuation proof may scan, mirroring bin/fm-crew-state.sh's limit posture

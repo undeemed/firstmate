@@ -146,13 +146,11 @@ case "${1:-} ${2:-}" in
     ;;
 esac
 case " $* " in
-  # The REST head read behind bin/fm-pr-check.sh's pr_head lookup, plus the
-  # GraphQL field the older path used, so a return to it records no head.
+  # The REST head read behind bin/fm-pr-check.sh's pr_head lookup.
   *" --jq .head.sha "*)
     printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
     exit 0
     ;;
-  *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
   # The REST merge read behind bin/fm-pr-poll.sh. GraphQL `gh pr view --json
   # state` is answered by nothing at all, so a return to it never reports a
   # merge. FM_TEST_GH_STATE stays the knob: only MERGED is a merged resource,
