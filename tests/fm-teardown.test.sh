@@ -2192,7 +2192,7 @@ test_parked_own_run_refuses_when_abort_is_unconfirmed() {
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  ( cd "$case_dir/wt" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
 
@@ -2383,9 +2383,9 @@ add_cotenant_task() {  # <case-dir> <cotenant-id>
 start_worktree_process() {
   local case_dir=$1 root=$2
   if [ "$root" = - ]; then
-    ( cd "$case_dir/wt" && exec env -u TMPDIR -u GOTMPDIR sleep 300 ) &
+    ( cd "$case_dir/wt" && exec env -u TMPDIR -u GOTMPDIR sleep 300 ) </dev/null >/dev/null 2>&1 &
   else
-    ( cd "$case_dir/wt" && exec env TMPDIR="$root/tmp" sleep 300 ) &
+    ( cd "$case_dir/wt" && exec env TMPDIR="$root/tmp" sleep 300 ) </dev/null >/dev/null 2>&1 &
   fi
   STARTED_PID=$!
   disown
@@ -2478,7 +2478,7 @@ test_leaked_worktree_process_is_reaped() {
   # worktree - the same shape the observed incident's leaked `go test`
   # binaries took (reparented to init, no live task meta to attribute them
   # to once an unpatched teardown had already run).
-  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  ( cd "$case_dir/wt" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.3
@@ -2505,7 +2505,7 @@ test_leaked_tasktmp_process_is_reaped() {
   mkdir -p "$case_dir/tasktmp"
   land_shippable_commit "$case_dir"
 
-  ( cd "$case_dir/tasktmp" && exec sleep 300 ) &
+  ( cd "$case_dir/tasktmp" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.3
@@ -2594,7 +2594,7 @@ test_reused_pid_identity_is_not_force_killed() {
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
 
-  perl -e '$SIG{TERM} = "IGNORE"; sleep 300' &
+  perl -e '$SIG{TERM} = "IGNORE"; sleep 300' </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.2
@@ -2649,7 +2649,7 @@ test_exec_changed_process_is_still_reaped() {
       open my $fh, ">", $done or die "open";
       close $fh;
       exec "perl", "-e", '\''$SIG{TERM} = "IGNORE"; sleep 300'\'';
-    ' "$marker" "$done_flag" ) &
+    ' "$marker" "$done_flag" ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.2
@@ -2716,7 +2716,7 @@ test_process_spawned_during_grace_is_reaped_on_later_pass() {
         exit 0;
       };
       sleep 300;
-    ' "$child_file" ) &
+    ' "$child_file" ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.2
@@ -2822,7 +2822,7 @@ test_run_abort_precedes_process_reap_precedes_worktree_removal() {
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
   abort_log="$case_dir/nm-abort.log"
 
-  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  ( cd "$case_dir/wt" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.3
@@ -3043,7 +3043,7 @@ test_live_build_keeps_build_cache() {
   seed_build_cache "$case_dir" "$cache"
 
   # A build still working in the cache, outside the worktree teardown reaps.
-  ( cd "$cache" && exec sleep 300 ) &
+  ( cd "$cache" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.3
@@ -3139,7 +3139,7 @@ test_desktop_browser_is_stopped_by_its_profile_path() {
   # `bash -c '<one command>'` execs that command and loses these arguments, so
   # the body is a list: the fixture has to keep the profile path in its cmdline.
   ( cd / && exec -a chrome bash -c 'sleep 300; exit 0' chrome \
-      "--user-data-dir=$case_dir/desktops/task-x1/chrome-profile" ) &
+      "--user-data-dir=$case_dir/desktops/task-x1/chrome-profile" ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.3
@@ -3173,7 +3173,7 @@ test_worktree_profile_browser_is_stopped_before_worktree_removal() {
   land_shippable_commit "$case_dir"
 
   ( cd / && exec -a chrome bash -c 'sleep 300; exit 0' chrome \
-      "--user-data-dir=$case_dir/wt" --no-first-run ) &
+      "--user-data-dir=$case_dir/wt" --no-first-run ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.3
