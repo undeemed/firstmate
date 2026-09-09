@@ -1455,6 +1455,21 @@ The same guard against the pre-change extension in the same lab measured a 676.9
 Measured through the same real `fm_branch_report` tool and real `bin/` scripts with a 1 ms interval timer, the largest single block of the JavaScript thread fell from 273 ms to 2.0 ms for a routine outcome, from 286 ms to 2.0 ms for a captain outcome, and from 134 ms to 1.9 ms for main's acknowledgement, against a 1.3-2.2 ms idle-loop floor.
 Those absolute figures are specific to this host and Pi version; the guards assert the relationship (delivery must stay in the class of the same machine's own floor) rather than a remembered millisecond number.
 
+## Native Codex through Pi
+
+Verified on 2026-09-08 with Pi 0.85.1 and the installed `pi-codex-native` 0.2.1 adapter.
+Run this token-free guard after updating Pi, Codex, or the adapter:
+
+```sh
+FM_PI_CODEX_NATIVE_LIVE=1 bash tests/fm-pi-codex-native.test.sh
+```
+
+Observed result: `"result": "PASS"`.
+The guard runs the real Pi runtime, native adapter, three FirstMate primary extensions, native MCP transport, and FirstMate's durable outcome scripts in an isolated home.
+It verifies native `ultra` on initial and operational turns and after restart, startup operational input, watcher arming, a notification while main is idle, outcome read and one acknowledgement, refusal of a duplicate acknowledgement, and no reprocessing after restart.
+Its native App Server peer and watcher-close process are deterministic fixtures; it does not claim a real backend or a live model was tested by that command.
+`tests/fm-busy-state.test.sh`, `tests/fm-busy-adapter-wiring.test.sh`, and `tests/fm-watch-triage.test.sh` cover separate progress notification, unchanged semantic busy state, rejection of a superseded worker's events, and progress refreshing the busy-age bound without fabricating a completed turn.
+
 ## Oh My Pi (omp)
 
 omp runs crewmate, scout, secondmate, and primary work; [`supervision.md`](supervision.md#omp-oh-my-pi-native-delivery-2026-09-05) owns the primary evidence.
