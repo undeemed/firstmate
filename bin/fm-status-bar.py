@@ -2,9 +2,10 @@
 """Live status bar for every agent: one row per state/*.meta, refreshed every 5s.
 
 Reads state/<id>.status (last line) and state/<id>.meta; serves plain HTML on
-127.0.0.1 and the tailnet. No auth beyond tailnet-only binding, read-only.
+every interface (0.0.0.0) with no token, so bind it only where the host firewall
+already limits reach. Read-only.
 """
-import html, os, re, sys, time
+import html, os, re, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 FM_HOME = os.environ.get("FM_HOME", os.path.expanduser("~/Dev/firstmate"))
@@ -19,8 +20,6 @@ def rows():
         if not f.endswith(".meta"):
             continue
         tid = f[:-5]
-        meta = open(os.path.join(STATE, f)).read()
-        kind = re.search(r"^kind=(.*)$", meta, re.M)
         sp = os.path.join(STATE, tid + ".status")
         last, age = "", None
         if os.path.exists(sp):
@@ -29,7 +28,7 @@ def rows():
             age = int(time.time() - os.path.getmtime(sp))
         word = re.match(r"\s*(?:\[[^\]]*\]\s*)?([a-z-]+)", last)
         word = word.group(1) if word else "?"
-        out.append((tid, kind.group(1) if kind else "", word, age, last))
+        out.append((tid, word, age, last))
     return out
 
 def fmt_age(a):
@@ -38,7 +37,7 @@ def fmt_age(a):
 
 def page():
     cards = []
-    for tid, kind, word, age, last in rows():
+    for tid, word, age, last in rows():
         c = WORDS.get(word, "#c9d1d9")
         stale = age is not None and age > 1800 and word not in ("done", "resolved")
         short = re.sub(r"^\s*(\[[^\]]*\]\s*)?[a-z-]+\s*(\[key=[^\]]*\])?\s*(corr=\S+)?:?\s*", "", last)
