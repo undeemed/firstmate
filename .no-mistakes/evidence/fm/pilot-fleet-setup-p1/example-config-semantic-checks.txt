@@ -1,0 +1,16 @@
+configs/pilot/config.example.yaml parsed with yaml.safe_load; assertions on the semantic model:
+PASS - orchestrator mode sequential
+PASS - wait_for_merge true
+PASS - max_concurrent 1
+PASS - autopilot env prod
+PASS - auto_merge false
+PASS - require_approval true (prod)
+PASS - executor claude-code
+PASS - gateway pinned to loopback
+PASS - token is env ref, not literal
+PASS - owner/repo are placeholders
+PASS - project path is a placeholder
+PASS - projects entries use placeholders
+PASS - no global quality block
+PASS - no literal GitHub token pattern
+PASS - pr_timeout omitted (fixed 1h wait in 2.273.1)

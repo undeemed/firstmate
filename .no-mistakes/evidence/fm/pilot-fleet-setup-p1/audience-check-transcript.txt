@@ -1,0 +1,7 @@
+$ bash bin/fm-doc-audience-check.sh   # with base docs/documentation-audiences.json (entry absent) and docs/pilot.md present
+fm-doc-audience-check: unclassified: docs/pilot.md
+exit=1
+
+$ bash bin/fm-doc-audience-check.sh   # with this change (entry present)
+fm-doc-audience-check: ok surfaces=98 local_links=291
+exit=0

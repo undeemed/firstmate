@@ -1,0 +1,18 @@
+$ pilot version
+Pilot 2.273.1
+Built: 2026-09-07T14:13:18Z
+
+$ pilot config validate --config configs/pilot/config.example.yaml   # GITHUB_TOKEN unset
+Error: invalid YAML syntax: config: environment variable "GITHUB_TOKEN" referenced by sensitive key "token" at line 14 is unset or empty: token: "${GITHUB_TOKEN}"   # exported by the service unit; never a literal token
+Usage:
+exit=1  (Pilot refuses an unset env token: the file itself carries no credential)
+
+$ GITHUB_TOKEN=placeholder-for-validation pilot config validate --config configs/pilot/config.example.yaml
+Config: configs/pilot/config.example.yaml
+
+Syntax:     OK
+Validation: OK
+
+Warnings:
+  - Project path does not exist: /home/USER/.pilot/projects/REPO
+exit=0  (only warning: the placeholder path /home/USER/... does not exist, expected for an example)
