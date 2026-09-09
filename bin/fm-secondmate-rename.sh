@@ -13,6 +13,11 @@
 # than an unrenamed one: the routing record names an id whose lease, marker, and
 # metadata still carry the old one.
 #
+# With --project, the records that carry the label are rewritten in the same
+# pass: both project registries - the parent's and the seeded copy inside the
+# mate home that fm-project-mode.sh resolves - the `(repo: ...)` fields on the
+# home's own backlog items, and the name of the project clone directory.
+#
 # What it deliberately does NOT touch:
 #   - History. Status-log lines, pending-reply records, and every other
 #     append-only record keep the old id, because they say what happened under
@@ -46,6 +51,10 @@
 # Ambiguity guard: state sidecars are matched by file name, so the rename refuses
 # when any other task id in this home contains the old id as a substring - a
 # name-matched rename there could rewrite a sibling's records.
+#
+# Lease guard: the durable treehouse lease is re-keyed under its lock, and only
+# when the old id itself is the holder - a slot leased to any other holder is
+# refused, never re-keyed.
 #
 # Failure model: everything is validated before anything is written, and every
 # step prints itself as it runs. A failure stops at that step and names it, so
