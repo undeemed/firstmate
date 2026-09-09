@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Imported after the path above, so the read layer resolves from bin/ however
 # this script was invoked.
 import fm_fleet_read
-from fm_fleet_read import age
+from fm_fleet_read import age, count
 
 REFRESH_SECONDS = 15
 
@@ -91,9 +91,9 @@ read in {fleet["elapsed_ms"]}ms · refreshes every {REFRESH_SECONDS}s · {now}</
             f'<div class="mate"><div class="mhead"><span class="dot {head_dot}"></span>'
             f"<b>{html.escape(home['label'])}</b>"
             f'<span class="tag">{html.escape(home["source"])}</span>'
-            f'<span class="state">wakes {sup["wake_depth"] if sup["wake_depth"] is not None else "-"}'
+            f'<span class="state">wakes {count(sup["wake_depth"])}'
             f" · beat {age(sup['beat_age'])} · {html.escape(sup['lock'] or 'lock unread')}"
-            f" · backlog {backlog['in_flight']}/{backlog['queued']}/{backlog['held']}"
+            f" · backlog {count(backlog['in_flight'])}/{count(backlog['queued'])}/{count(backlog['held'])}"
             f" in-flight/queued/held</span></div>"
         )
         if home.get("error"):
