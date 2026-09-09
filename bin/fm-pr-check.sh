@@ -215,6 +215,14 @@ audience_refuse() {  # <reason>
 # need a JSON processor firstmate does not require.
 if [ "$PROVIDER" = github ] && ! audience_repo_is_firstmate; then
   # Reuse the declared contract's final read-back when it made one.
+  if [ -z "${PUBLISHED+x}" ] && ! command -v gh >/dev/null 2>&1; then
+    # No reader on this host at all, so the wording check cannot run. Say so and
+    # continue: refusing here would block every gh-less path for a lint on
+    # prose, while a host that HAS gh and still cannot read the body is a real
+    # forge problem and still refuses below.
+    echo "warning: task $ID recorded $URL without the published-body vocabulary check, because gh is not available to read the body back" >&2
+    PUBLISHED=
+  fi
   [ -n "${PUBLISHED+x}" ] || PUBLISHED=$(body_read_published) \
     || audience_refuse "its published body could not be read back over REST to check it for fleet-internal vocabulary"
   AUDIENCE_HITS=$(printf '%s\n' "$PUBLISHED" \
