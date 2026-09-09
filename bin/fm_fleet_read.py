@@ -17,14 +17,11 @@ label it that way. Ask bin/fm-crew-state.sh when current state matters - that
 read costs seconds per task, which is why it is not on a refresh timer.
 
   python3 bin/fm_fleet_read.py --json     one fleet read as JSON
-  python3 bin/fm_fleet_read.py --homes    just the discovered homes
 
 Environment:
   FM_HOME                  the main home whose registry drives discovery
   FM_FLEET_READ_TIMEOUT    seconds allowed per home probe (default 25)
-  FM_FLEET_READ_WORKERS    concurrent home probes (default 8)
 """
-
 from __future__ import annotations
 
 import json
@@ -38,26 +35,36 @@ from pathlib import Path
 BIN_DIR = Path(__file__).resolve().parent
 PROBE = BIN_DIR / "fm-fleet-probe.sh"
 DEFAULT_TIMEOUT = 25
-DEFAULT_WORKERS = 8
 
 
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name, "")
-    return int(raw) if raw.isdigit() and int(raw) > 0 else default
+def age(secs: int | None) -> str:
+    """One age word, shared so both boards say the same thing about the same number."""
+    if secs is None:
+        return "-"
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    if secs < 86400:
+        return f"{secs // 3600}h"
+    return f"{secs // 86400}d"
+
+
+def _timeout() -> int:
+    raw = os.environ.get("FM_FLEET_READ_TIMEOUT", "")
+    return int(raw) if raw.isdigit() and int(raw) > 0 else DEFAULT_TIMEOUT
 
 
 def _main_home() -> str:
     return os.environ.get("FM_HOME") or str(BIN_DIR.parent)
 
 
-def _run_probe(
-    mode: str, home: str, timeout: int
-) -> tuple[list[list[str]], str | None]:
+def _run_probe(mode: str, home: str) -> tuple[list[list[str]], str | None]:
     """Run one probe and split its records. Returns (records, error)."""
     env = dict(os.environ, FM_HOME=home)
-    env.pop("FM_ROOT_OVERRIDE", None)
-    env.pop("FM_STATE_OVERRIDE", None)
-    env.pop("FM_CONFIG_OVERRIDE", None)
+    for override in ("FM_ROOT_OVERRIDE", "FM_STATE_OVERRIDE", "FM_CONFIG_OVERRIDE"):
+        env.pop(override, None)
+    timeout = _timeout()
     try:
         done = subprocess.run(
             [str(PROBE), mode],
@@ -85,48 +92,35 @@ def _int_or_none(value: str) -> int | None:
 def _field(row: list[str], index: int) -> str | None:
     if index >= len(row):
         return None
-    value = row[index]
-    return None if value in ("", "-") else value
+    return None if row[index] in ("", "-") else row[index]
 
 
-def discover_homes(
-    main_home: str | None = None, timeout: int | None = None
-) -> list[dict]:
+def discover_homes(main_home: str | None = None) -> list[dict]:
     """Every home of this fleet: the main home, its registry, and pool markers."""
     home = main_home or _main_home()
-    timeout = timeout or _env_int("FM_FLEET_READ_TIMEOUT", DEFAULT_TIMEOUT)
-    records, error = _run_probe("--homes", home, timeout)
+    records, error = _run_probe("--homes", home)
     if error:
         return [{"label": "main", "path": home, "source": "main", "error": error}]
-    homes = []
-    for row in records:
-        if row[0] != "home" or len(row) < 4:
-            continue
-        homes.append({"label": row[1], "path": row[2], "source": row[3]})
-    return homes
+    return [
+        {"label": row[1], "path": row[2], "source": row[3]}
+        for row in records
+        if row[0] == "home" and len(row) >= 4
+    ]
 
 
-def read_home(home: dict, timeout: int | None = None) -> dict:
+def read_home(home: dict) -> dict:
     """One home's cheap read: its supervision header, backlog, holds, and tasks."""
-    timeout = timeout or _env_int("FM_FLEET_READ_TIMEOUT", DEFAULT_TIMEOUT)
     result = dict(home)
     result.update(
-        supervision={
-            "wake_depth": None,
-            "oldest_wake_age": None,
-            "beat_age": None,
-            "lock": None,
-        },
+        supervision={"wake_depth": None, "oldest_wake_age": None, "beat_age": None, "lock": None},
         backlog={"in_flight": None, "queued": None, "held": None},
         holds=[],
         tasks=[],
     )
     if home.get("source", "").startswith("remote:"):
-        result["error"] = (
-            f"remote home on {home['source'].split(':', 1)[1]}, not read from here"
-        )
+        result["error"] = f"remote home on {home['source'].split(':', 1)[1]}, not read from here"
         return result
-    records, error = _run_probe("--home", home["path"], timeout)
+    records, error = _run_probe("--home", home["path"])
     if error:
         result["error"] = error
         return result
@@ -151,7 +145,7 @@ def read_home(home: dict, timeout: int | None = None) -> dict:
             }
         elif kind == "hold" and len(row) >= 3:
             result["holds"].append({"id": row[1], "hold_kind": row[2]})
-        elif kind == "task" and len(row) >= 11:
+        elif kind == "task" and len(row) >= 10:
             task = {
                 "id": row[1],
                 "home": home["path"],
@@ -164,7 +158,6 @@ def read_home(home: dict, timeout: int | None = None) -> dict:
                 "busy": _field(row, 7),
                 "busy_source": _field(row, 8),
                 "pr": _field(row, 9),
-                "project": _field(row, 10),
                 "last_event": None,
             }
             tasks[task["id"]] = task
@@ -173,28 +166,24 @@ def read_home(home: dict, timeout: int | None = None) -> dict:
             tasks[row[1]]["last_event"] = {
                 "age_secs": _int_or_none(row[2]),
                 "verb": _field(row, 3),
-                "note": _field(row, 4) if len(row) > 4 else None,
+                "note": _field(row, 4),
             }
     return result
 
 
-def read_fleet(main_home: str | None = None, workers: int | None = None) -> dict:
-    """One whole-fleet read. Homes are probed concurrently; slowest home sets the cost."""
+def read_fleet(main_home: str | None = None) -> dict:
+    """One whole-fleet read. Homes are probed concurrently, so the slowest home sets the cost."""
     started = time.time()
-    home = main_home or _main_home()
-    workers = workers or _env_int("FM_FLEET_READ_WORKERS", DEFAULT_WORKERS)
-    homes = discover_homes(home)
-    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(homes) or 1))) as pool:
+    homes = discover_homes(main_home or _main_home())
+    with ThreadPoolExecutor() as pool:
         read = list(pool.map(read_home, homes))
     tasks = [task for entry in read for task in entry["tasks"]]
     return {
         "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "elapsed_ms": int((time.time() - started) * 1000),
-        "main_home": home,
         "homes": read,
         "counts": {
             "homes": len(read),
-            "homes_unreadable": sum(1 for entry in read if entry.get("error")),
             "tasks": len(tasks),
             "tasks_live": sum(1 for task in tasks if task["endpoint"] == "alive"),
             "tasks_busy": sum(1 for task in tasks if task["busy"] == "busy"),
@@ -207,9 +196,6 @@ def main(argv: list[str]) -> int:
     mode = argv[0] if argv else "--json"
     if mode in ("-h", "--help"):
         print(__doc__.strip())
-        return 0
-    if mode == "--homes":
-        print(json.dumps(discover_homes(), indent=1))
         return 0
     if mode == "--json":
         print(json.dumps(read_fleet(), indent=1))
