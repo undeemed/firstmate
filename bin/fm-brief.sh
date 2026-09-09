@@ -4,7 +4,8 @@
 # For ordinary tasks, the standard Setup/Rules/Definition-of-done contract is
 # filled in. Ship and scout `# Task` sections have two subsections Firstmate
 # fills before dispatch: `{TASK}` under `## Captain's intent` (the captain's
-# own ask plus only the context needed to read it) and `{FIRSTMATE_SPEC}`
+# own ask plus the context needed to read it, including the substance of any
+# report, decision, or PR the ask refers to) and `{FIRSTMATE_SPEC}`
 # under `## Firstmate spec` (build instructions, which are never the captain's
 # intent). bin/fm-dod-lib.sh owns the no-mistakes `--intent` contract those
 # subsections feed; bin/fm-spawn.sh refuses leftover placeholders. Secondmate
@@ -103,8 +104,11 @@
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
-# over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
-# self-governance section when a touched project AGENTS.md lacks it.
+# over copied detail) and defers self-governance recognition and insertion to
+# fm-ensure-agents-md.sh's contract.
+# Scaffolds carry no role scope: fm-spawn.sh supplies fm_brief_worker_role from
+# fm-dod-lib.sh to every ship/scout launch brief, so this file never becomes a
+# second owner of a contract that must stay current across relaunches.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -247,6 +251,11 @@ mkdir -p "$DATA/$ID"
 
 PR_BODY_FILE="$DATA/$ID/pr-body-required.md"
 [ -z "$PR_BODY_REQUIRED" ] || cp -- "$PR_BODY_REQUIRED" "$PR_BODY_FILE" || exit 1
+
+ASK_USER_BLOCK=
+if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+  ASK_USER_BLOCK=$(fm_ask_user_escalation_block "$DATA" "$ID")
+fi
 
 shell_quote() {
   printf "'"
@@ -394,7 +403,8 @@ You must distinguish who it is from, because the answer goes to a different plac
 A request relayed to you by the main firstmate is tagged with a leading \`$FM_FROMFIRST_LABEL\` marker followed by an invisible system separator; this marker is untypable, so a human never produces it.
 When a message carries that marker, do the work, then respond via the STATUS/ESCALATION path below, never only in this chat: the main firstmate does not read your chat, so a chat-only reply is lost.
 Marked requests also carry a privacy-safe \`corr=<id>\` token after the marker; include that exact token in your parent status reply (or in the status pointer to a detailed doc) so the parent can correlate the answer.
-Optional helper: \`bin/fm-secondmate-report.sh\` can append a correlated status line for you, but a plain \`echo\` that includes the same \`corr=<id>\` is equally valid - do not depend on the helper being present.
+Optional helper: \`bin/fm-secondmate-report.sh <verb> <corr_id> <note>\` appends that correlated line to the parent channel itself - do not pass a status path, and do not write a hand path under this home.
+A plain \`echo\` that includes the same \`corr=<id>\` on this parent channel is equally valid; do not depend on the helper being present.
 For a terse result, a status line is the whole answer.
 For a detailed answer (an investigation, a plan, an audit), write it to a doc under your home's \`data/\` and append a status line that points to that doc - the scout-report pattern - so the main firstmate is woken and can read it.
 Before treating an investigation or visual review as complete, load \`captain-hold-lifecycle\` from this home's \`.agents/skills/\` and pass its shared completion gate.
@@ -408,7 +418,7 @@ Handle routine work yourself.
 Report only true captain-relevant outcomes or a declared external wait by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
 States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
-Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own; use \`blocked:\` when you are stuck and need firstmate to act.
+Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own, naming when it clears with \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) when you know; use \`blocked:\` when you are stuck and need firstmate to act.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, work ready for review, or work you landed.
 Work you landed includes a merge you performed yourself under standing merge authority and one the captain merged on the forge: under that authority nothing is ever \"ready for review\", so a landed merge that goes unreported reaches the captain as silence.
 This is also how you return the answer to a marked from-firstmate request above.
@@ -517,7 +527,9 @@ $FORGE_POLL_RULE
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - ONLY when you are deliberately idling on a
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset):
    firstmate then leaves your idle pane alone and rechecks it on a long cadence instead of
-   treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   treating it as a possible wedge. When you know when the wait clears, say so in the line with
+   \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) and firstmate rechecks at that time instead.
+   Use \`blocked:\` when you are stuck and need help.
    Declare every stop before you go quiet: whenever you stop making progress, append
    \`$PAUSED_VERB: {why}\` or \`blocked: {why}\` first. Finishing a block with nothing queued
    counts as stopping - say what is ready and where it sits rather than idling silently.
@@ -531,8 +543,17 @@ $FORGE_POLL_RULE
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>]: {how it cleared}\` yourself (the same key you opened it with) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
-   every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
-   daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+   every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
+   manages the daemon.
+   Before you append \`blocked:\` about the pipeline, run \`no-mistakes daemon status\` and
+   \`no-mistakes axi status\`. If the daemon socket refuses connections or is missing, append
+   \`blocked: {the daemon error}\` and stop even when the local run record still says running or
+   fixing, because that record can be stale after the daemon exits. A run record failed with a
+   daemon error is also a real block.
+   Only after ruling out socket refusal, if the run is still running or fixing, reattach and keep
+   going. A drive-call error, timeout, slow read, or generic unreachability is NOT a daemon error:
+   the daemon accepts \`respond\` immediately and runs the round in the background, so a killed or
+   timed-out call was only waiting for a read while the run kept working.
 
 $STATUS_HONESTY
 
@@ -633,11 +654,21 @@ $FORGE_POLL_RULE
    append \`needs-decision [key=<slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    The \`[key=<slug>]\` token names that decision and must sit BEFORE the colon; \`blocked [key=<slug>]: {why}\` names a blocker the same way.
    A token written later in the line is read as message text, so the decision files under the shared \`default\` key, cannot be answered by its own key, and shares that key with every other unkeyed decision on this task.
+$ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>]: {how it cleared}\` yourself (the same key you opened it with) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
-   every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
-   daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+   every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
+   manages the daemon.
+   Before you append \`blocked:\` about the pipeline, run \`no-mistakes daemon status\` and
+   \`no-mistakes axi status\`. If the daemon socket refuses connections or is missing, append
+   \`blocked: {the daemon error}\` and stop even when the local run record still says running or
+   fixing, because that record can be stale after the daemon exits. A run record failed with a
+   daemon error is also a real block.
+   Only after ruling out socket refusal, if the run is still running or fixing, reattach and keep
+   going. A drive-call error, timeout, slow read, or generic unreachability is NOT a daemon error:
+   the daemon accepts \`respond\` immediately and runs the round in the background, so a killed or
+   timed-out call was only waiting for a read while the run kept working.
 
 $STATUS_HONESTY
 
@@ -649,7 +680,7 @@ $INBOX_SECTION
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
 Record only project knowledge useful to almost every future session.
 For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
-If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass.
+If you touch a project \`AGENTS.md\`, follow \`$FM_ROOT/bin/fm-ensure-agents-md.sh\`'s self-governance contract in the same pass.
 Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
 
 $DOD

@@ -7,6 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   classifyFirstmateCurrentOperationalText,
   encodeFirstmateOperationalInput,
+  firstmateShellInvocation,
 } from "../../extensions/lib/fm-operational-input.ts";
 
 let guardFollowupActive = false;
@@ -252,19 +253,26 @@ function runSessionstartHook(generation: SessionstartGeneration): Promise<Sessio
     };
     const supervised = process.platform !== "win32";
     const runner = `${root}/bin/fm-sessionstart-run.sh`;
+    const invocation = supervised
+      ? {
+          command: "node",
+          args: [
+            `${extensionDir}/lib/fm-sessionstart-supervisor.mjs`,
+            runner,
+            "--source",
+            generation.source,
+            "--pi-prerequisite",
+          ],
+        }
+      : firstmateShellInvocation(
+          runner,
+          ["--source", generation.source, "--pi-prerequisite"],
+        );
     let child: ChildProcess;
     try {
       child = spawn(
-        supervised ? "node" : runner,
-        supervised
-          ? [
-              `${extensionDir}/lib/fm-sessionstart-supervisor.mjs`,
-              runner,
-              "--source",
-              generation.source,
-              "--pi-prerequisite",
-            ]
-          : ["--source", generation.source, "--pi-prerequisite"],
+        invocation.command,
+        invocation.args,
         {
           detached: supervised,
           stdio: supervised
@@ -440,20 +448,24 @@ async function claimSessionstartMessage(
 
 function runGuard(): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const child = spawn(`${root}/bin/fm-turnend-guard.sh`, {
-      stdio: ["pipe", "ignore", "pipe"],
-    });
+    const invocation = firstmateShellInvocation(`${root}/bin/fm-turnend-guard.sh`, []);
+    let child: ChildProcess;
+    try {
+      child = spawn(invocation.command, invocation.args, {
+        stdio: ["pipe", "ignore", "pipe"],
+      });
+    } catch {
+      resolveResult({ code: 0, stderr: "" });
+      return;
+    }
     let stderr = "";
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk) => {
       stderr += chunk.toString();
     });
     child.on("error", () => resolveResult({ code: 0, stderr: "" }));
     child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
-    // A guard that exits before reading its payload closes this pipe; that EPIPE
-    // is the guard's own verdict arriving early, never a reason to crash the
-    // primary session with an unhandled stream error.
-    child.stdin.on("error", () => {});
-    child.stdin.end('{"stop_hook_active":false}');
+    child.stdin?.on("error", () => {});
+    child.stdin?.end('{"stop_hook_active":false}');
   });
 }
 
@@ -468,19 +480,22 @@ function runGuard(): Promise<{ code: number; stderr: string }> {
 function runChecker(script: string, command: string, tool?: string): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
     const args = tool ? ["--tool", tool, "--command", command] : ["--command", command];
+    const invocation = firstmateShellInvocation(`${root}/bin/${script}`, args);
+    let child: ChildProcess;
     try {
-      const child = spawn(`${root}/bin/${script}`, args, {
+      child = spawn(invocation.command, invocation.args, {
         stdio: ["ignore", "ignore", "pipe"],
       });
-      let stderr = "";
-      child.stderr.on("data", (chunk) => {
-        stderr += chunk.toString();
-      });
-      child.on("error", () => resolveResult({ code: 0, stderr: "" }));
-      child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
     } catch {
       resolveResult({ code: 0, stderr: "" });
+      return;
     }
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", () => resolveResult({ code: 0, stderr: "" }));
+    child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
   });
 }
 

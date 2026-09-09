@@ -81,7 +81,7 @@ if [ -z "$HARNESS" ]; then
 fi
 
 case "$HARNESS" in
-  claude|codex|opencode|omp|pi|grok|cursor) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
+  claude|codex|opencode|pi|grok|cursor|omp) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
   pi-signed) SNIPPET="$DOC_DIR/pi.md" ;;
   *) HARNESS=unknown; SNIPPET="$DOC_DIR/unknown.md" ;;
 esac

@@ -716,6 +716,21 @@ install_omp_extensions_loaded() {
   done
 }
 
+install_omp_extension_fixtures() {
+  local root=$1
+  mkdir -p "$root/.omp/extensions"
+  cp "$ROOT/.omp/extensions/fm-primary-omp-watch.ts" "$root/.omp/extensions/fm-primary-omp-watch.ts"
+  cp "$ROOT/.omp/extensions/fm-primary-turnend-guard.ts" "$root/.omp/extensions/fm-primary-turnend-guard.ts"
+}
+
+write_omp_loaded_markers() {
+  local home=$1 root=$2 pid=$3 version
+  version=$(hash_file_for_test "$root/.omp/extensions/fm-primary-omp-watch.ts")
+  printf '%s\n%s\n' "$version" "$pid" > "$home/state/.omp-watch-extension-loaded"
+  version=$(hash_file_for_test "$root/.omp/extensions/fm-primary-turnend-guard.ts")
+  printf '%s\n%s\n' "$version" "$pid" > "$home/state/.omp-turnend-extension-loaded"
+}
+
 # --- context digest: absent vs empty vs present -----------------------------
 
 test_context_digest_absent_empty_present() {
@@ -980,7 +995,7 @@ EOF
   printf 'window=fm-sess:w1\nkind=ship\n' > "$home/state/task-a.meta"
   printf 'Captain memory that may be truncated away safely.\n' > "$home/data/captain.md"
 
-  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  out=$(run_session_start "$home" "$root" "$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)")
 
   lock_line=$(printf '%s\n' "$out" | grep -n '^LOCK$' | head -1 | cut -d: -f1)
   boot_line=$(printf '%s\n' "$out" | grep -n '^BOOTSTRAP$' | head -1 | cut -d: -f1)
@@ -1395,7 +1410,7 @@ SH
   printf 'needs-decision: pick a library\n' > "$home/state/task-z.status"
   append_wake "$home/state" signal task-z.status "needs-decision: pick a library"
 
-  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  out=$(run_session_start "$home" "$root" "$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)")
 
   # fm-lock.sh's own exact success text.
   assert_contains "$out" "lock acquired: harness pid" "fm-lock.sh's real output did not appear (composition, not reimplementation)"
@@ -2544,6 +2559,51 @@ EOF
   pass "session start accepts current Pi markers written before lock acquisition"
 }
 
+test_omp_supervision_block_and_diagnostic() {
+  local rec root home fakebin out block_count
+  rec=$(new_world omp-supervision-block)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_harness "$fakebin" omp
+
+  out=$(FM_FAKE_HARNESS=omp run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  block_count=$(printf '%s\n' "$out" | grep -c '^SUPERVISION OPERATING INSTRUCTIONS - primary harness:')
+  [ "$block_count" -eq 1 ] || fail "expected exactly one supervision block, got $block_count"
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: omp" "omp supervision block missing"
+  assert_contains "$out" "Mode: omp (Oh My Pi) extension background wake." "omp snippet missing from session start"
+  assert_contains "$out" "OMP_WATCH_EXTENSION: not loaded" "omp extension load diagnostic missing"
+  assert_contains "$out" "so $root/.omp/extensions/fm-primary-turnend-guard.ts and $root/.omp/extensions/fm-primary-omp-watch.ts auto-load" "omp diagnostic omits the two tracked extension paths"
+  assert_not_contains "$out" "PI_WATCH_EXTENSION" "omp primary must not receive the Pi diagnostic"
+  assert_not_contains "$out" "project trust" "omp diagnostic must not carry Pi's trust prerequisite"
+  pass "session start emits the omp block and reports omp extension load state"
+}
+
+test_omp_diagnostic_accepts_prelock_loaded_marker() {
+  local rec root home fakebin out holder_pid
+  rec=$(new_world omp-prelock-loaded-marker)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+
+  sleep 300 &
+  holder_pid=$!
+  make_fake_ps_harness_holder "$fakebin" omp "$holder_pid"
+  install_omp_extension_fixtures "$root"
+  write_omp_loaded_markers "$home" "$root" "$holder_pid"
+
+  out=$(FM_FAKE_HARNESS=omp run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  kill "$holder_pid" 2>/dev/null || true
+  wait "$holder_pid" 2>/dev/null || true
+
+  assert_contains "$out" "primary harness: omp" "omp holder ancestry was not detected as omp"
+  assert_not_contains "$out" "OMP_WATCH_EXTENSION: not loaded" "omp diagnostic rejected a current pre-lock loaded marker"
+  pass "session start accepts current omp markers written before lock acquisition"
+}
+
 test_pi_diagnostic_rejects_missing_turnend_guard_marker() {
   local rec root home fakebin out holder_pid
   rec=$(new_world pi-missing-turnend-marker)
@@ -2685,6 +2745,8 @@ test_supervision_block_exactly_one_and_pi_diagnostic
 test_pi_signed_primary_uses_pi_extensions_without_identity_normalization
 test_pi_diagnostic_rejects_stale_loaded_marker
 test_pi_diagnostic_accepts_prelock_loaded_marker
+test_omp_supervision_block_and_diagnostic
+test_omp_diagnostic_accepts_prelock_loaded_marker
 test_pi_diagnostic_rejects_missing_turnend_guard_marker
 test_pi_diagnostic_rejects_previous_session_loaded_marker
 test_omp_diagnostic_accepts_current_loaded_markers

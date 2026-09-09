@@ -24,6 +24,7 @@ TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-herdr-presentation.XX
 FAKEBIN="$TMP_ROOT/fakebin"
 HERDR_CALL_LOG="$TMP_ROOT/herdr-calls.log"
 TREEHOUSE_CALL_LOG="$TMP_ROOT/treehouse-calls.log"
+TREEHOUSE_LOCK_DIR="$TMP_ROOT/treehouse-call.lock"
 MOVE_CALL_LOG="$TMP_ROOT/workspace-move-calls.log"
 FOCUS_AUDIT_LOG="$TMP_ROOT/focus-audit.log"
 ACTIVE_SEEDED_CONTROL="$TMP_ROOT/active-seeded-control"
@@ -34,7 +35,7 @@ mkdir -p "$FAKEBIN"
 : > "$MOVE_CALL_LOG"
 : > "$FOCUS_AUDIT_LOG"
 REAL_MOVER="$ROOT/bin/backends/herdr-workspace-move.py"
-export REAL_HERDR REAL_TREEHOUSE REAL_MOVER HERDR_CALL_LOG TREEHOUSE_CALL_LOG MOVE_CALL_LOG FOCUS_AUDIT_LOG HERDR_ORIGINAL_PATH HERDR_LAB_HELPER
+export REAL_HERDR REAL_TREEHOUSE REAL_MOVER HERDR_CALL_LOG TREEHOUSE_CALL_LOG TREEHOUSE_LOCK_DIR MOVE_CALL_LOG FOCUS_AUDIT_LOG HERDR_ORIGINAL_PATH HERDR_LAB_HELPER
 export ACTIVE_SEEDED_CONTROL POST_CREATE_ABORT_CONTROL TMP_ROOT
 
 # Log every production-adapter call, remove its already-validated trailing
@@ -210,7 +211,17 @@ set -u
 if [ -d "$POST_CREATE_ABORT_CONTROL" ] && [ "${1:-}" = get ]; then
   exit 0
 fi
-exec "$REAL_TREEHOUSE" "$@"
+# Treehouse's pool allocator is outside the Herdr concurrency contract under
+# test. Serialize its calls so simultaneous recovery spawns cannot race for
+# one pool slot before reaching the Herdr session lock exercised below.
+while ! mkdir "$TREEHOUSE_LOCK_DIR" 2>/dev/null; do
+  sleep 0.01
+done
+release_treehouse_lock() { rmdir "$TREEHOUSE_LOCK_DIR" 2>/dev/null || true; }
+trap release_treehouse_lock EXIT
+trap 'exit 1' HUP INT TERM
+"$REAL_TREEHOUSE" "$@"
+exit $?
 SH
 
 cat > "$FAKEBIN/herdr-workspace-mover" <<'SH'
@@ -457,8 +468,10 @@ teardown_task() {  # <id> <home>
 finish_concurrent_teardown() {  # <id> <status> <stdout> <stderr>
   local id=$1 status=$2 out=$3 err=$4
   [ "$status" -ne 0 ] || return 0
-  grep -F "session presentation lock is contended" "$err" >/dev/null 2>&1 \
-    || fail "projected teardown $id failed unexpectedly: $(cat "$err")"
+  if ! grep -F "session presentation lock is contended" "$err" >/dev/null 2>&1 \
+     && ! grep -F "another Treehouse slot allocation or return is in progress" "$err" >/dev/null 2>&1; then
+    fail "projected teardown $id failed unexpectedly: $(cat "$err")"
+  fi
   teardown_task "$id" "$HOME_DIR" > "$out" 2> "$err" \
     || fail "projected teardown $id retry failed after presentation cleanup completed: $(cat "$err")"
 }
@@ -513,6 +526,7 @@ assert_no_projection_mutation_since() {  # <line-count> <case-name>
 
 HOME_DIR="$TMP_ROOT/home"
 PROJECT_DIR="$TMP_ROOT/project"
+RECOVERY_PROJECT_DIR="$TMP_ROOT/recovery-project"
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/config" \
   "$HOME_DIR/data/anchor" "$HOME_DIR/data/shape" \
   "$HOME_DIR/data/order-a" "$HOME_DIR/data/order-b" \
@@ -537,6 +551,7 @@ write_ship_brief "$HOME_DIR" abort-b 'Projection abort fixture B.'
 write_ship_brief "$HOME_DIR" lock-contended 'Projection lock contention fixture.'
 write_ship_brief "$HOME_DIR" default-on 'Projection default-on fixture.'
 make_project "$PROJECT_DIR"
+make_project "$RECOVERY_PROJECT_DIR"
 
 # Keep one ordinary primary task live so the durable firstmate workspace is
 # first and remains present while disposable workers are projected around it.
@@ -874,9 +889,12 @@ if wait "$ABORT_A_PID"; then ABORT_A_STATUS=0; else ABORT_A_STATUS=$?; fi
 if wait "$ABORT_B_PID"; then ABORT_B_STATUS=0; else ABORT_B_STATUS=$?; fi
 finish_concurrent_expected_abort abort-a "$ABORT_A_STATUS" "$TMP_ROOT/abort-a.out" "$TMP_ROOT/abort-a.err"
 finish_concurrent_expected_abort abort-b "$ABORT_B_STATUS" "$TMP_ROOT/abort-b.out" "$TMP_ROOT/abort-b.err"
-grep -F "did not yield an isolated worktree" "$TMP_ROOT/abort-a.err" >/dev/null 2>&1 \
+# The forced foreground_cwd is a plain non-git directory, which the discovery
+# poll now screens out on every read rather than adopting, so the armed failure
+# arrives as the poll's own deadline refusal naming that path.
+grep -F "did not enter an isolated worktree" "$TMP_ROOT/abort-a.err" >/dev/null 2>&1 \
   || fail "post-create abort fixture A did not reach the armed validation failure"
-grep -F "did not yield an isolated worktree" "$TMP_ROOT/abort-b.err" >/dev/null 2>&1 \
+grep -F "did not enter an isolated worktree" "$TMP_ROOT/abort-b.err" >/dev/null 2>&1 \
   || fail "post-create abort fixture B did not reach the armed validation failure"
 ABORT_A_PANE=$(cat "$POST_CREATE_ABORT_CONTROL/abort-a/task-pane")
 ABORT_B_PANE=$(cat "$POST_CREATE_ABORT_CONTROL/abort-b/task-pane")
@@ -1193,7 +1211,11 @@ teardown_task aflat "$SECOND_HOME_A" > "$TMP_ROOT/aflat-teardown.out" 2> "$TMP_R
 pass "real Herdr lab: session lock contention from a secondmate home falls back flat with no journal"
 
 # Same-identity recovery replaces only one exact agent-free husk in its
-# original projected workspace.
+# original projected workspace. These full-session restarts also stop the
+# earlier multi-home workers whose restored panes are retained for the final
+# exact-pane cleanup assertions. Keep the recovery fixtures in their own
+# Treehouse pool so those intentionally retained records cannot claim a slot
+# that a recovery fixture legitimately acquires after their processes stop.
 # Exercise both the leading fm- identity style seen in Hi Bit work and the
 # project-name identity style used by Wheelhouse work.
 for RESTART_ID in fm-hibit-resume-r1 wheelhouse-healing-r1; do
@@ -1217,6 +1239,10 @@ for RESTART_ID in fm-hibit-resume-r1 wheelhouse-healing-r1; do
   PATH="$HERDR_ORIGINAL_PATH" \
     "$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" \
     || fail "could not reprovision the isolated session for $RESTART_ID validation"
+  # Stopping the whole Herdr session also ends the anchor's agent. Its restored
+  # shell remains useful as the durable layout anchor, but its task record no
+  # longer represents a live slot owner and must not poison later slot reuse.
+  rm -f "$ANCHOR_META"
   lab pane get "$OLD_RESTART_PANE" >/dev/null 2>&1 \
     || fail "$RESTART_ID restart did not preserve the projected pane structurally"
   if lab agent get "$OLD_RESTART_PANE" >/dev/null 2>&1; then
@@ -1257,7 +1283,9 @@ for RESTART_ID in fm-hibit-resume-r1 wheelhouse-healing-r1; do
       || fail "$RESTART_ID repeated reclaim changed workspace identity"
     [ "$NEW_RESTART_PANE" != "$PRIOR_RESTART_PANE" ] \
       || fail "$RESTART_ID repeated reclaim reused the prior husk pane"
-    "$REAL_TREEHOUSE" return --force "$PRIOR_RESTART_WT" >/dev/null 2>&1 || true
+    if [ "$PRIOR_RESTART_WT" != "$NEW_RESTART_WT" ]; then
+      "$REAL_TREEHOUSE" return --force "$PRIOR_RESTART_WT" >/dev/null 2>&1 || true
+    fi
   fi
 
   teardown_task "$RESTART_ID" "$HOME_DIR" > "$TMP_ROOT/$RESTART_ID-teardown.out" 2> "$TMP_ROOT/$RESTART_ID-teardown.err" \
@@ -1350,9 +1378,9 @@ if lab pane get "$PRIMARY_WAVE_OLD_PANE" >/dev/null 2>&1 \
 fi
 assert_focus_is "$CONCURRENT_RECOVERY_FOCUS" "concurrent cross-home recovery"
 teardown_task "$PRIMARY_WAVE_ID" "$HOME_DIR" > "$TMP_ROOT/primary-wave-teardown.out" 2> "$TMP_ROOT/primary-wave-teardown.err" \
-  || fail "concurrent primary recovery teardown failed"
+  || fail "concurrent primary recovery teardown failed: $(cat "$TMP_ROOT/primary-wave-teardown.err")"
 teardown_task "$BRAVO_WAVE_ID" "$SECOND_HOME_B" > "$TMP_ROOT/bravo-wave-teardown.out" 2> "$TMP_ROOT/bravo-wave-teardown.err" \
-  || fail "concurrent secondmate recovery teardown failed"
+  || fail "concurrent secondmate recovery teardown failed: $(cat "$TMP_ROOT/bravo-wave-teardown.err")"
 "$REAL_TREEHOUSE" return --force "$PRIMARY_WAVE_OLD_WT" >/dev/null 2>&1 || true
 "$REAL_TREEHOUSE" return --force "$BRAVO_WAVE_OLD_WT" >/dev/null 2>&1 || true
 "$REAL_TREEHOUSE" return --force "$PRIMARY_WAVE_NEW_WT" >/dev/null 2>&1 || true
