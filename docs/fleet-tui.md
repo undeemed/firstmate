@@ -25,7 +25,7 @@ bin/fm-fleet-tui.py      bin/fm-live-board.py
                    |
           bin/fm-fleet-probe.sh           <- one cheap read per home
                    |
-   fm-backend.sh · fm-busy-lib.sh · fm-classify-lib.sh · fm-lock.sh · tasks-axi
+   fm-backend.sh · fm-busy-lib.sh · fm-classify-lib.sh · fm-secondmate-home-lib.sh · fm-lock.sh · tasks-axi
 ```
 
 Both screens render the same read.
