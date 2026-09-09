@@ -35,6 +35,76 @@ def dot(task):
     return "bad" if task["endpoint"] == "dead" else "wait"
 
 
+def render_task(task):
+    """One task's card: its cheap facts, and its last status line as the wake EVENT it is."""
+    pr = f' <a href="{html.escape(task["pr"])}">PR</a>' if task["pr"] else ""
+    tags = "".join(
+        f'<span class="tag">{html.escape(value)}</span>'
+        for value in (
+            task["kind"],
+            task["mode"],
+            task["harness"],
+            task["backend"],
+        )
+        if value
+    )
+    event = task["last_event"]
+    if event:
+        note = (
+            f'<span class="v">event {age(event["age_secs"])} ago</span>'
+            f"{html.escape(event['verb'] or '')}: {html.escape((event['note'] or '')[:300])}"
+        )
+    else:
+        note = '<span class="v">event</span>nothing said yet'
+    return (
+        f'<div class="w"><span class="dot {dot(task)}" style="margin-top:5px"></span>'
+        f'<div class="body"><div class="name">{html.escape(task["id"])}'
+        f'<span class="tag">{html.escape(task["endpoint"] or "endpoint unread")}</span>'
+        f'<span class="tag">{html.escape(task["busy"] or "busy unread")}</span>'
+        f"{tags}{pr}</div>"
+        f'<div class="note">{note}</div></div></div>'
+    )
+
+
+def render_home_notes(home, holds):
+    """The panel's notes between header and tasks: error, captain holds, or quiet."""
+    notes = []
+    if home.get("error"):
+        notes.append(f'<div class="empty">{html.escape(home["error"])}</div>')
+    if holds:
+        notes.append(
+            '<div class="say"><span class="v">captain holds</span>'
+            f"{html.escape(', '.join(holds))}</div>"
+        )
+    if not home["tasks"] and not home.get("error"):
+        notes.append('<div class="empty">No work under way here.</div>')
+    return notes
+
+
+def render_home(home):
+    """One home's panel: its supervision header, error, captain holds, and tasks."""
+    sup = home["supervision"]
+    backlog = home["backlog"]
+    holds = [hold["id"] for hold in home["holds"] if hold["hold_kind"] == "captain"]
+    head_dot = "bad" if home.get("error") else "go" if home["tasks"] else "wait"
+    parts = [
+        (
+            f'<div class="mate"><div class="mhead"><span class="dot {head_dot}"></span>'
+            f"<b>{html.escape(home['label'])}</b>"
+            f'<span class="tag">{html.escape(home["source"])}</span>'
+            f'<span class="state">wakes {count(sup["wake_depth"])}'
+            f" · beat {age(sup['beat_age'])} · {html.escape(sup['lock'] or 'lock unread')}"
+            f" · backlog {count(backlog['in_flight'])}/{count(backlog['queued'])}/{count(backlog['held'])}"
+            f" in-flight/queued/held</span></div>"
+        )
+    ]
+    parts.extend(render_home_notes(home, holds))
+    for task in sorted(home["tasks"], key=lambda t: t["id"]):
+        parts.append(render_task(task))
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def render(fleet):
     now = time.strftime("%H:%M:%S")
     counts = fleet["counts"]
@@ -81,61 +151,7 @@ a{{color:var(--done)}}
 read in {fleet["elapsed_ms"]}ms · refreshes every {REFRESH_SECONDS}s · {now}</div>
 </header><main>"""
     ]
-
-    for home in fleet["homes"]:
-        sup = home["supervision"]
-        backlog = home["backlog"]
-        holds = [hold["id"] for hold in home["holds"] if hold["hold_kind"] == "captain"]
-        head_dot = "bad" if home.get("error") else "go" if home["tasks"] else "wait"
-        parts.append(
-            f'<div class="mate"><div class="mhead"><span class="dot {head_dot}"></span>'
-            f"<b>{html.escape(home['label'])}</b>"
-            f'<span class="tag">{html.escape(home["source"])}</span>'
-            f'<span class="state">wakes {count(sup["wake_depth"])}'
-            f" · beat {age(sup['beat_age'])} · {html.escape(sup['lock'] or 'lock unread')}"
-            f" · backlog {count(backlog['in_flight'])}/{count(backlog['queued'])}/{count(backlog['held'])}"
-            f" in-flight/queued/held</span></div>"
-        )
-        if home.get("error"):
-            parts.append(f'<div class="empty">{html.escape(home["error"])}</div>')
-        if holds:
-            parts.append(
-                '<div class="say"><span class="v">captain holds</span>'
-                f"{html.escape(', '.join(holds))}</div>"
-            )
-        if not home["tasks"] and not home.get("error"):
-            parts.append('<div class="empty">No work under way here.</div>')
-
-        for task in sorted(home["tasks"], key=lambda t: t["id"]):
-            pr = f' <a href="{html.escape(task["pr"])}">PR</a>' if task["pr"] else ""
-            tags = "".join(
-                f'<span class="tag">{html.escape(value)}</span>'
-                for value in (
-                    task["kind"],
-                    task["mode"],
-                    task["harness"],
-                    task["backend"],
-                )
-                if value
-            )
-            event = task["last_event"]
-            if event:
-                note = (
-                    f'<span class="v">event {age(event["age_secs"])} ago</span>'
-                    f"{html.escape(event['verb'] or '')}: {html.escape((event['note'] or '')[:300])}"
-                )
-            else:
-                note = '<span class="v">event</span>nothing said yet'
-            parts.append(
-                f'<div class="w"><span class="dot {dot(task)}" style="margin-top:5px"></span>'
-                f'<div class="body"><div class="name">{html.escape(task["id"])}'
-                f'<span class="tag">{html.escape(task["endpoint"] or "endpoint unread")}</span>'
-                f'<span class="tag">{html.escape(task["busy"] or "busy unread")}</span>'
-                f"{tags}{pr}</div>"
-                f'<div class="note">{note}</div></div></div>'
-            )
-        parts.append("</div>")
-
+    parts.extend(render_home(home) for home in fleet["homes"])
     parts.append("</main></body></html>")
     return "".join(parts)
 

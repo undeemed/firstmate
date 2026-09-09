@@ -14,6 +14,8 @@
 # It never reconciles current state. A task's busy verdict and its `event` row
 # are separate facts: the event row is wake-EVENT history, and a renderer must
 # label it that way. Use bin/fm-crew-state.sh when current state matters.
+# The per-home record emission itself lives in bin/fm-fleet-probe-home-lib.sh;
+# this script owns discovery, the backlog read, and the record formats below.
 #
 # Usage:
 #   fm-fleet-probe.sh --homes          list every discovered fleet home
@@ -92,60 +94,73 @@ home_label() {  # <path>
   printf '%s/%s' "$(basename "$(dirname "$1")")" "$(basename "$1")"
 }
 
-list_homes() {
-  local reg="$FM_HOME/data/secondmates.md" line path root marker
-  local -a roots=() seen=()
-  emit home main "$FM_HOME" main
-  seen+=("$FM_HOME")
+# Registry homes come from data/secondmates.md, parsed by its own owner. The
+# three discovery functions share two globals: SEEN, the home paths already
+# emitted, and ROOTS, the pool roots the marker scan will walk.
+list_registry_homes() {  # <registry-file>
+  local reg=$1 line
 
   # shellcheck source=bin/fm-secondmate-registry-lib.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 
-  if [ -f "$reg" ] && [ ! -L "$reg" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in "- "*) ;; *) continue ;; esac
-      secondmate_registry_parse_line "$line" || continue
-      path=$SECONDMATE_REGISTRY_HOME
-      if [ "$SECONDMATE_REGISTRY_REMOTE" -eq 1 ]; then
-        emit home "$SECONDMATE_REGISTRY_ID" "$path" "remote:$SECONDMATE_REGISTRY_HOST"
-        continue
-      fi
-      case " ${seen[*]} " in *" $path "*) continue ;; esac
-      seen+=("$path")
-      emit home "$SECONDMATE_REGISTRY_ID" "$path" registry
-      root=$(dirname "$(dirname "$path")")
-      case " ${roots[*]:-} " in *" $root "*) ;; *) roots+=("$root") ;; esac
-    done < "$reg"
-  fi
+  [ -f "$reg" ] && [ ! -L "$reg" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in "- "*) ;; *) continue ;; esac
+    secondmate_registry_parse_line "$line" || continue
+    list_registry_entry
+  done < "$reg"
+}
 
-  if [ -n "${FM_FLEET_TREEHOUSE_ROOT:-}" ]; then
-    roots=("$FM_FLEET_TREEHOUSE_ROOT")
-  elif [ "$FM_ROOT" != "$FM_HOME" ]; then
-    # This checkout's own pool position, which is how a probe that runs from a
-    # pool worktree finds the pool even when the registry is empty.
-    root=$(dirname "$(dirname "$FM_ROOT")")
-    case " ${roots[*]:-} " in *" $root "*) ;; *) roots+=("$root") ;; esac
+list_registry_entry() {  # one parsed SECONDMATE_REGISTRY_* entry to its home row
+  local path=$SECONDMATE_REGISTRY_HOME root
+  if [ "$SECONDMATE_REGISTRY_REMOTE" -eq 1 ]; then
+    emit home "$SECONDMATE_REGISTRY_ID" "$path" "remote:$SECONDMATE_REGISTRY_HOST"
+    return 0
   fi
+  case " ${SEEN[*]} " in *" $path "*) return 0 ;; esac
+  SEEN+=("$path")
+  emit home "$SECONDMATE_REGISTRY_ID" "$path" registry
+  root=$(dirname "$(dirname "$path")")
+  case " ${ROOTS[*]:-} " in *" $root "*) ;; *) ROOTS+=("$root") ;; esac
+}
 
-  for root in "${roots[@]:-}"; do
+list_marker_homes() {  # walk ROOTS for .fm-secondmate-home markers
+  local root marker path
+  for root in "${ROOTS[@]:-}"; do
     [ -n "$root" ] && [ -d "$root" ] || continue
     for marker in "$root"/*/*/.fm-secondmate-home; do
       [ -f "$marker" ] && [ ! -L "$marker" ] || continue
       path=$(dirname "$marker")
-      case " ${seen[*]} " in *" $path "*) continue ;; esac
-      seen+=("$path")
+      case " ${SEEN[*]} " in *" $path "*) continue ;; esac
+      SEEN+=("$path")
       emit home "$(home_label "$path")" "$path" marker
     done
   done
 }
 
+list_homes() {
+  local root
+  SEEN=()
+  ROOTS=()
+  emit home main "$FM_HOME" main
+  SEEN+=("$FM_HOME")
+  list_registry_homes "$FM_HOME/data/secondmates.md"
+  if [ -n "${FM_FLEET_TREEHOUSE_ROOT:-}" ]; then
+    ROOTS=("$FM_FLEET_TREEHOUSE_ROOT")
+  elif [ "$FM_ROOT" != "$FM_HOME" ]; then
+    # This checkout's own pool position, which is how a probe that runs from a
+    # pool worktree finds the pool even when the registry is empty.
+    root=$(dirname "$(dirname "$FM_ROOT")")
+    case " ${ROOTS[*]:-} " in *" $root "*) ;; *) ROOTS+=("$root") ;; esac
+  fi
+  list_marker_homes
+}
+
 # --- one home ---------------------------------------------------------------
 
 probe_home() {
-  local state="$FM_HOME/state" meta id kind mode harness backend target endpoint
-  local busy_verdict busy busy_source pr line verb note age
-  local beat depth oldest oldest_age lock
+  local state="$FM_HOME/state"
 
   emit home "$FM_HOME" "$(home_label "$FM_HOME")"
   if [ ! -d "$state" ]; then
@@ -156,84 +171,20 @@ probe_home() {
   # Sourced only after the state directory is confirmed present: the wake
   # library materializes its own state directory at source time, and a probe
   # must not create records in a home it is merely reading.
-  # shellcheck source=bin/fm-backend.sh
-  # shellcheck disable=SC1091
-  . "$SCRIPT_DIR/fm-backend.sh"
-  # shellcheck source=bin/fm-busy-lib.sh
-  # shellcheck disable=SC1091
-  . "$SCRIPT_DIR/fm-busy-lib.sh"
-  # shellcheck source=bin/fm-classify-lib.sh
-  # shellcheck disable=SC1091
-  . "$SCRIPT_DIR/fm-classify-lib.sh"
-  # shellcheck source=bin/fm-secondmate-home-lib.sh
-  # shellcheck disable=SC1091
-  . "$SCRIPT_DIR/fm-secondmate-home-lib.sh"
   # shellcheck source=bin/fm-wake-lib.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR/fm-wake-lib.sh"
+  # shellcheck source=bin/fm-fleet-probe-home-lib.sh
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR/fm-fleet-probe-home-lib.sh"
 
-  IFS=$'\t' read -r depth oldest _seq <<< "$(fm_secondmate_home_queue_scan "$FM_HOME")"
-  oldest_age=-
-  [ -n "$oldest" ] && oldest_age=$(($(date +%s) - oldest))
-  beat=-
-  [ -f "$state/.last-watcher-beat" ] && beat=$(fm_path_age "$state/.last-watcher-beat")
-  lock=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-lock.sh" status 2>/dev/null | head -1)
-  lock=${lock#lock: }
-  emit sup "${depth:-0}" "$oldest_age" "$beat" "$(clean "${lock:--}")"
-
+  fleet_probe_sup "$state"
   probe_backlog
-
-  for meta in "$state"/*.meta; do
-    [ -f "$meta" ] || continue
-    id=$(basename "$meta" .meta)
-    kind=$(fm_meta_get "$meta" kind)
-    mode=$(fm_meta_get "$meta" mode)
-    harness=$(fm_meta_get "$meta" harness)
-    pr=$(fm_meta_get "$meta" pr)
-    backend=$(fm_backend_of_meta "$meta")
-    target=$(fm_backend_target_of_meta "$meta")
-    if [ -n "$(fm_meta_get "$meta" remote_host)" ]; then
-      # A remote secondmate's endpoint lives on its own host, so the local
-      # adapters are never asked about it. That is not evidence of death.
-      endpoint=unknown
-      busy=unknown
-      busy_source=not-probed
-    else
-      # One call answers both halves: fm_busy_classify_live checks the endpoint
-      # before it classifies, so the endpoint state falls out of its verdict
-      # rather than being read a second time here.
-      busy_verdict=$(fm_busy_classify_live "$backend" "$target" "$harness" "$id" "$state" "fm-$id")
-      busy=${busy_verdict%% *}
-      busy_source=${busy_verdict#* }
-      [ "$busy_source" = "$busy_verdict" ] && busy_source=-
-      case "$busy_verdict" in
-        "dead endpoint-gone") endpoint=dead ;;
-        "unknown no-target") endpoint=unknown ;;
-        *) endpoint=alive ;;
-      esac
-    fi
-    if [ -z "$pr" ] && [ -f "$state/$id.status" ]; then
-      # The same pull-request shape fm-fleet-snapshot.sh recovers from a status
-      # log, for a task that reported its PR before the merge poll recorded `pr=`.
-      pr=$(grep -Eo 'https?://[^[:space:])"]+/pull/[0-9]+' "$state/$id.status" 2>/dev/null | head -1)
-    fi
-    emit task "$id" "${kind:-ship}" "${mode:--}" "${harness:--}" \
-      "$backend" "$endpoint" "${busy:--}" "${busy_source:--}" "${pr:--}"
-
-    if [ -f "$state/$id.status" ]; then
-      line=$(last_status_line "$state/$id.status")
-      if [ -n "$line" ]; then
-        age=$(fm_path_age "$state/$id.status")
-        verb=$(status_line_verb "$line")
-        note=$(status_line_note "$line")
-        emit event "$id" "$age" "${verb:--}" "$(clean "${note:--}")"
-      fi
-    fi
-  done
+  fleet_probe_tasks "$state"
 }
 
 probe_backlog() {
-  local in_flight queued held line id hold_kind
+  local in_flight queued held
   # shellcheck source=bin/fm-tasks-axi-lib.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
@@ -248,11 +199,15 @@ probe_backlog() {
   queued=$(backlog_count queued)
   held=$(backlog_count held)
   emit backlog "${in_flight:--}" "${queued:--}" "${held:--}"
+  probe_holds
+}
 
-  # Held tasks are the captain's queue after the decision collapse: one row per
-  # held task, carrying the hold kind that says whether it waits on the captain.
-  # A row's id is everything before its first comma and its hold kind everything
-  # after its last, so a quoted title between them cannot be misread.
+# Held tasks are the captain's queue after the decision collapse: one row per
+# held task, carrying the hold kind that says whether it waits on the captain.
+# A row's id is everything before its first comma and its hold kind everything
+# after its last, so a quoted title between them cannot be misread.
+probe_holds() {
+  local line id hold_kind
   while IFS= read -r line; do
     case "$line" in "  "*) ;; *) continue ;; esac
     line=${line#  }
