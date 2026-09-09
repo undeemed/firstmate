@@ -246,15 +246,10 @@ MATE_BACKLOG="$MATE_HOME/data/backlog.md"
 # Every step prints itself and then acts, unless this is a dry run. One walk, so
 # the plan cannot drift from what is applied.
 
-step_failed() { # <what>
-	echo "error: rename stopped at: $1 (the steps printed above were applied)" >&2
-	exit 1
-}
-
 do_move() { # <src> <dst>
 	printf '  move   %s -> %s\n' "$1" "$2"
 	[ "$DRY_RUN" -eq 0 ] || return 0
-	mv -- "$1" "$2" || step_failed "move $1 -> $2"
+	mv -- "$1" "$2" || die "stopped at move $1 -> $2"
 }
 
 # Replace occurrences of <search> with <replace> in <file>, atomically and with
@@ -266,8 +261,8 @@ do_sub() { # <file> <note> <search> <replace> [all|prefix]
 	local file=$1 note=$2 search=$3 replace=$4 scope=${5:-all} tmp line
 	printf '  edit   %s (%s)\n' "$file" "$note"
 	[ "$DRY_RUN" -eq 0 ] || return 0
-	tmp=$(mktemp "$file.rename.XXXXXX") || step_failed "$file"
-	cp -p -- "$file" "$tmp" || step_failed "$file"
+	tmp=$(mktemp "$file.rename.XXXXXX") || die "stopped at $file"
+	cp -p -- "$file" "$tmp" || die "stopped at $file"
 	while IFS= read -r line || [ -n "$line" ]; do
 		if [ "$scope" = prefix ]; then
 			case "$line" in "$search"*) line=$replace${line#"$search"} ;; esac
@@ -275,8 +270,8 @@ do_sub() { # <file> <note> <search> <replace> [all|prefix]
 			line=${line//"$search"/"$replace"}
 		fi
 		printf '%s\n' "$line"
-	done <"$file" >"$tmp" || step_failed "$file"
-	mv -f -- "$tmp" "$file" || step_failed "$file"
+	done <"$file" >"$tmp" || die "stopped at $file"
+	mv -f -- "$tmp" "$file" || die "stopped at $file"
 }
 
 echo "rename $OLD_ID -> $NEW_ID (home $MATE_HOME)"
@@ -329,7 +324,7 @@ fi
 if [ "$LEASE_ACTION" = rekey ]; then
 	printf '  edit   %s (lease holder for %s)\n' "$POOL/treehouse-state.json" "$MATE_HOME"
 	if [ "$DRY_RUN" -eq 0 ]; then
-		lease_tmp=$(mktemp "$POOL/.treehouse-state.rename.XXXXXX") || step_failed "treehouse lease temp file"
+		lease_tmp=$(mktemp "$POOL/.treehouse-state.rename.XXXXXX") || die "stopped at treehouse lease temp file"
 		(
 			exec 9>>"$POOL/treehouse-state.lock"
 			flock -w 30 9 || exit 1
@@ -339,7 +334,7 @@ if [ "$LEASE_ACTION" = rekey ]; then
 			mv -f -- "$lease_tmp" "$POOL/treehouse-state.json" || exit 1
 		) || {
 			rm -f -- "$lease_tmp"
-			step_failed "treehouse lease re-key in $POOL/treehouse-state.json"
+			die "stopped at treehouse lease re-key in $POOL/treehouse-state.json"
 		}
 	fi
 elif [ -n "$POOL" ]; then
@@ -350,7 +345,7 @@ printf '  append %s (rename record)\n' "$STATE/$NEW_ID.status"
 if [ "$DRY_RUN" -eq 0 ]; then
 	printf 'note: renamed from %s at %s; transcript history under the old id\n' \
 		"$OLD_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATE/$NEW_ID.status" ||
-		step_failed "rename record in $STATE/$NEW_ID.status"
+		die "stopped at rename record in $STATE/$NEW_ID.status"
 fi
 
 echo
