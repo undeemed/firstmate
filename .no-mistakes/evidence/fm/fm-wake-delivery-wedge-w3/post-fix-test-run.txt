@@ -1,0 +1,7 @@
+ok - omp watch registers fm_watch_arm_omp tool + fm-watch-arm-omp command and starts an arm child
+ok - omp watch reports an external healthy watcher as an owned-wake failure
+ok - omp watch retires its session generation on shutdown and refuses a late arm
+ok - omp watch coalesces identical unread wakes and re-delivers after the queue is read
+ok - omp watcher coalesces distinct pending wakes until agent consumption
+ok - omp watch expires a claimed wake whose follow-up was lost, after the coalesce TTL
+ok - omp watch runs an idle wake as a turn, queues a streaming wake, and releases the claim when a run settles

@@ -1,0 +1,7 @@
+== post-fix (03fb6d89) extension, same harness ==
+-- TTL test --
+ok - omp watch expires a claimed wake whose follow-up was lost, after the coalesce TTL
+exit=0
+-- lifecycle test --
+ok - omp watch runs an idle wake as a turn, queues a streaming wake, and releases the claim when a run settles
+exit=0
