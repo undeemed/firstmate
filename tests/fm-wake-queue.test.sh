@@ -479,12 +479,12 @@ SH
   # holds, while a tight one reaps the watcher during its bounded startup work on
   # a loaded machine and reports a wake that did fire as missing. The negative
   # assertions below keep their short budgets, which they always spend in full.
-  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+  PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$out" 2> "$dir/watch.err" || true
-  grep -F 'check: secondmate wake-loop stalled: mate=mate row=7' "$out" >/dev/null \
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=8' "$out" >/dev/null \
     || fail "an aged foreign row did not wake the parent checkpoint: $(cat "$out"); err=$(cat "$dir/watch.err"); meta=$(cat "$state/mate.meta"); foreign=$(cat "$sub/state/.wake-queue")"
   [ -s "$state/.wake-queue" ] || fail "the parent notification was not durable"
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
@@ -517,8 +517,8 @@ SH
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$dir/watch-refrozen.out" 2> "$dir/watch-refrozen.err" || true
-  grep -F 'check: secondmate wake-loop stalled: mate=mate row=9 idle=2s' "$dir/watch-refrozen.out" >/dev/null \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$dir/watch-refrozen.out" 2> "$dir/watch-refrozen.err" || true
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=9' "$dir/watch-refrozen.out" >/dev/null \
     || fail "a genuine later no-progress episode was hidden after earlier progress"
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
   [ "$stall_count" -eq 1 ] || fail "the later no-progress episode did not publish exactly one notification"
@@ -827,6 +827,19 @@ test_secondmate_deep_backlog_reports_depth_and_keeps_escalating() {
     || fail "an acknowledged report repeated inside its interval: $(cat "$dir/watch-quiet.out")"
   [ ! -s "$state/.wake-queue" ] || fail "an acknowledged report was re-published inside its interval"
 
+  # The acknowledgement above leaves one re-arm resurface for the next cycle to
+  # deliver. Consume it first, so the cycle that must publish the repeat report
+  # is not cut short by an unrelated actionable wake.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=999999 \
+    FM_SECONDMATE_WAKE_STALL_REPEAT_SECS=999 FM_SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 10 > "$dir/watch-resurface.out" 2> "$dir/watch-resurface.err" || true
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain-resurface.out" 2> "$dir/drain-resurface.err" || true
+  ack_drain_err "$state" "$dir/drain-resurface.err" || true
+
   # Past the repeat interval the still-behind mate reports again, rather than being
   # silenced forever by the first report of that same oldest row.
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
@@ -836,9 +849,12 @@ test_secondmate_deep_backlog_reports_depth_and_keeps_escalating() {
     FM_SECONDMATE_WAKE_STALL_REPEAT_SECS=1 FM_SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS=1 \
     FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$dir/watch-again.out" 2> "$dir/watch-again.err" || true
-  grep -F 'check: secondmate wake-loop stalled: mate=mate row=1' "$dir/watch-again.out" >/dev/null \
-    || fail "a mate still hours behind was permanently silenced by its first report: $(cat "$dir/watch-again.out")"
-  [ -s "$state/.wake-queue" ] || fail "the repeat report was not durable"
+  # Read the durable queue rather than this one cycle's stdout: the cycle can
+  # legitimately return on another actionable wake first (a re-arm resurface
+  # after the acknowledgement above), while the repeat report itself is durable.
+  [ -s "$state/.wake-queue" ] || fail "the repeat report was not durable: resurface=$(cat "$dir/watch-resurface.out")$(cat "$dir/watch-resurface.err") again=$(cat "$dir/watch-again.out")$(cat "$dir/watch-again.err")"
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=1' "$state/.wake-queue" >/dev/null \
+    || fail "a mate still hours behind was permanently silenced by its first report: $(cat "$state/.wake-queue")"
   pass "a mate holding a deep, hours-old backlog reports its depth and keeps reporting on a bounded interval"
 }
 

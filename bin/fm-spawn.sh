@@ -2381,12 +2381,6 @@ assert_project_base_current() {  # <project-dir>
   return 1
 }
 
-# A relaunch re-enters a worktree whose work is already under way, so its base is
-# whatever that task started from; only a fresh ship or scout brief is at risk.
-if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
-  assert_project_base_current "$PROJ_ABS" || exit 1
-fi
-
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
 BRIEF_REAL="$BRIEF_DIR_REAL/$(basename "$BRIEF")"
 
@@ -3322,6 +3316,16 @@ WORKTREE_CLAIM_LOCK="$STATE/.worktree-claim.lock"
 fm_lock_acquire_wait "$WORKTREE_CLAIM_LOCK"
 WORKTREE_CLAIM_LOCK_HELD=1
 assert_worktree_unclaimed "$WT_SOURCE" "$T"
+
+# The brief's own stale-base check runs HERE, after isolation is proven, because
+# it fetches: a spawn refused for a non-isolated copy must not have touched the
+# repository it was refused against (tests/fm-spawn-pool-base-freshen.test.sh
+# asserts that order). A relaunch re-enters a worktree whose work is already
+# under way, so its base is whatever that task started from; only a fresh ship
+# or scout brief is at risk.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  assert_project_base_current "$PROJ_ABS" || exit 1
+fi
 
 # Pre-register Claude's workspace trust for the worktree, at the first point the
 # worktree is known and before any per-task state is created below. The dialog

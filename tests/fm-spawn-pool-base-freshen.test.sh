@@ -99,7 +99,7 @@ REC
 }
 
 test_linked_spawning_home_rejects_primary_before_refresh() {
-  local rec id out status returned primary spawning before_reflog
+  local rec id out status returned primary spawning before_reflog before_fetch_head before_primary_head
   for returned in primary primary-alias spawning scout; do
     id="pool-linked-${returned}-r12"
     rec=$(make_case "linked-$returned" "$id")
@@ -117,6 +117,11 @@ test_linked_spawning_home_rejects_primary_before_refresh() {
       spawning) POOL_DIR=$spawning ;;
     esac
     before_reflog=$(git -C "$primary" reflog)
+    # This fixture's own setup fast-forwards the clone, so the assertion below
+    # reads whether THIS spawn fetched, not whether the repository has ever
+    # been fetched into.
+    before_fetch_head=$(cat "$primary/.git/FETCH_HEAD" 2>/dev/null || printf 'absent')
+    before_primary_head=$(git -C "$primary" rev-parse HEAD)
     # The assertion concerns identity, not how long an unchanged cwd is polled.
     fm_test_fake_sleep_noop "$FAKEBIN_DIR"
 
@@ -157,9 +162,12 @@ test_linked_spawning_home_rejects_primary_before_refresh() {
         "spawn did not explain its isolation refusal"
       assert_contains "$out" "last seen" "refusal did not name the path the pane reported"
       [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "refused spawn published task metadata"
-      [ ! -e "$primary/.git/FETCH_HEAD" ] || fail "refused spawn fetched before proving isolation"
+      [ "$(cat "$primary/.git/FETCH_HEAD" 2>/dev/null || printf 'absent')" = "$before_fetch_head" ] \
+        || fail "refused spawn fetched before proving isolation"
     fi
-    [ "$(git -C "$primary" rev-parse HEAD)" = "$INITIAL_SHA" ] \
+    # The fixture's clone follows origin, so the primary's own head - whatever it
+    # is - must simply be the same one it had before this spawn ran.
+    [ "$(git -C "$primary" rev-parse HEAD)" = "$before_primary_head" ] \
       || fail "spawn reset the repository primary from a linked home"
     [ "$(git -C "$primary" reflog)" = "$before_reflog" ] \
       || fail "spawn touched the primary reflog from a linked home"

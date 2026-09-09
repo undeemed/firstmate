@@ -928,14 +928,19 @@ EOF
       [ "$episode_alerted" -eq 0 ] || rm -f "$marker" || return 1
       continue
     fi
-    [ "$episode_alerted" -eq 0 ] || continue
+    # An already-reported episode is not silenced outright: the decayed repeat
+    # interval below decides when an unchanged, still-behind backlog reports
+    # again, because a mate holding a deep hours-old queue must keep escalating
+    # rather than being muted by its first report (measured 2026-08-24).
     idle=$((now - observed_at))
     [ "$idle" -ge "$threshold" ] || continue
     receipt="$receipt_dir/$row_key"
-    if [ "$(cat "$receipt" 2>/dev/null || true)" = "$row_key" ]; then
-      fm_wake_secondmate_stall_marker_write "$task" "$row_key" || return 1
-      continue
+    if [ -e "$marker" ] || [ -L "$marker" ]; then
+      [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
     fi
+    # An acknowledged report DATES the last report rather than vetoing every
+    # later one: a mate that stays behind must keep escalating on the decayed
+    # interval below, which is what the receipt and marker ages feed.
     repeat=$(decayed_interval "$age" "$repeat_base" "$repeat_max")
     # When this exact row was last reported, from whichever record is newer: the
     # marker this watcher writes at publication, or the receipt the drain writes at
