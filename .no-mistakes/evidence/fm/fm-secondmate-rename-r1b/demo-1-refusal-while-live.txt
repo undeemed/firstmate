@@ -1,0 +1,6 @@
+$ bin/fm-secondmate-rename.sh swarm-mate-s6 flotilla-mate-l6 --project swarm flotilla
+  (fixture: the mate's tmux window is still open, pane runs 'claude')
+
+error: swarm-mate-s6 is not proven exited (endpoint tmux firstmate:fm-swarm-mate-s6 reads 'alive'); run bin/fm-control.sh swarm-mate-s6 exit first
+
+exit status: 1   (non-zero: the tool is fail-closed while the agent lives)

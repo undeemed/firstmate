@@ -1,0 +1,38 @@
+$ bin/fm-secondmate-rename.sh swarm-mate-s6 flotilla-mate-l6 --project swarm flotilla --dry-run
+  (fixture: the mate has exited - its window is gone)
+
+rename swarm-mate-s6 -> flotilla-mate-l6 (home <FIXTURE>/pool/2/firstmate)
+project swarm -> flotilla
+endpoint state: missing
+
+  move   <FIXTURE>/parent/state/.hb-surfaced-swarm-mate-s6 -> <FIXTURE>/parent/state/.hb-surfaced-flotilla-mate-l6
+  move   <FIXTURE>/parent/state/.seen-swarm-mate-s6_status -> <FIXTURE>/parent/state/.seen-flotilla-mate-l6_status
+  move   <FIXTURE>/parent/state/.swarm-mate-s6.open-decisions-cursor -> <FIXTURE>/parent/state/.flotilla-mate-l6.open-decisions-cursor
+  move   <FIXTURE>/parent/state/swarm-mate-s6.meta -> <FIXTURE>/parent/state/flotilla-mate-l6.meta
+  move   <FIXTURE>/parent/state/swarm-mate-s6.status -> <FIXTURE>/parent/state/flotilla-mate-l6.status
+  move   <FIXTURE>/parent/state/.secondmate-nudge-pending/swarm-mate-s6.pending -> <FIXTURE>/parent/state/.secondmate-nudge-pending/flotilla-mate-l6.pending
+  move   <FIXTURE>/parent/data/swarm-mate-s6 -> <FIXTURE>/parent/data/flotilla-mate-l6
+  move   <FIXTURE>/pool/2/firstmate/projects/swarm -> <FIXTURE>/pool/2/firstmate/projects/flotilla
+  edit   <FIXTURE>/parent/state/flotilla-mate-l6.meta (endpoint task id)
+  edit   <FIXTURE>/parent/state/flotilla-mate-l6.meta (build cache path)
+  edit   <FIXTURE>/parent/state/flotilla-mate-l6.meta (project list)
+  edit   <FIXTURE>/parent/state/.secondmate-nudge-pending/flotilla-mate-l6.pending (pending reread nudge)
+  edit   <FIXTURE>/pool/2/firstmate/.fm-secondmate-home (home identity marker)
+  edit   <FIXTURE>/pool/2/firstmate/data/charter.md (charter identity)
+  edit   <FIXTURE>/parent/data/flotilla-mate-l6/brief.md (charter identity)
+  edit   <FIXTURE>/parent/data/secondmates.md (routing record id)
+  edit   <FIXTURE>/parent/data/secondmates.md (routing record project)
+  edit   <FIXTURE>/parent/data/projects.md (project registry entry)
+  edit   <FIXTURE>/pool/2/firstmate/data/projects.md (project registry entry)
+  edit   <FIXTURE>/pool/2/firstmate/data/backlog.md (repo: fields on this home's own items)
+  edit   <FIXTURE>/pool/treehouse-state.json (lease holder for <FIXTURE>/pool/2/firstmate)
+  append <FIXTURE>/parent/state/flotilla-mate-l6.status (rename record)
+
+operator sequence:
+  bin/fm-control.sh swarm-mate-s6 exit
+  bin/fm-spawn.sh flotilla-mate-l6 <FIXTURE>/pool/2/firstmate --secondmate
+dry run: nothing was written
+
+exit status: 0
+
+fixture manifest (cksum of every file + every path) before vs after: IDENTICAL - dry run wrote nothing
