@@ -2120,7 +2120,10 @@ SH
       "$ROOT/bin/fm-config-push.sh" > "$first_out" 2>&1
   ) &
   first_pid=$!
-  for _ in $(seq 1 100); do
+  # 30s, not 2s: this waits for a real background push to reach delivery, and a
+  # loaded CI box or shared machine misses a two-second budget without any fault
+  # in the code under test.
+  for _ in $(seq 1 1500); do
     [ -e "$entered" ] && break
     sleep 0.02
   done
