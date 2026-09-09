@@ -163,6 +163,7 @@ export FM_TEST_STUB_MAX_BLOCK_SECONDS
 
 fm_test_cleanup() {
 	local d
+	fm_test_reap_procevent_homes
 	for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"; do
 		[ -n "$d" ] && rm -rf "$d"
 	done
@@ -186,17 +187,6 @@ fm_test_tmproot_fatal() {
 	printf 'not ok - %s\n' "$1" >&2
 	kill -TERM $$ 2>/dev/null || true
 	return 1
-  local d
-  fm_test_reap_procevent_homes
-  for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"; do
-    [ -n "$d" ] && rm -rf "$d"
-  done
-  if [ -f "$FM_TEST_CLEANUP_REGISTRY" ]; then
-    while IFS= read -r d; do
-      [ -n "$d" ] && rm -rf "$d"
-    done < "$FM_TEST_CLEANUP_REGISTRY"
-    rm -f "$FM_TEST_CLEANUP_REGISTRY"
-  fi
 }
 
 fm_test_tmproot() {
