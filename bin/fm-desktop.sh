@@ -22,7 +22,7 @@
 #   fm-desktop.sh register <name> --display <N> [options]
 #                                                  record a display that already exists
 #   fm-desktop.sh list                             every desktop, with live/dead state
-#   fm-desktop.sh retire   <name>                  drop the record (never kills anything)
+#   fm-desktop.sh retire   <name>                  drop its records (never kills anything)
 #
 #   Options for create/register:
 #     --group <g>        wall grouping, e.g. secondmates | main-firstmate
@@ -41,7 +41,8 @@
 #                            so the two tools can never hand out the same display.
 #
 # SAFETY
-#   `retire` removes a record and never signals a process: another home may be
+#   `retire` removes a name's records - this registry's row and the legacy TSV
+#   line that reserves its display number - and never signals a process: another home may be
 #   working on that desktop right now. It prints the command to stop the display
 #   for a human to run deliberately.
 set -euo pipefail
@@ -226,16 +227,37 @@ cmd_create() {
 	record
 }
 
+# The legacy TSV is what reserves a display number, so a line left behind holds
+# that number out of the allocator forever. This is the only place that removes
+# one, next to mirror_legacy which is the only place that adds one.
+drop_legacy_line() { # <owner> -> echoes the display number it released
+	local owner="$1" n tmp
+	[ -f "$LEGACY_REGISTRY" ] || return 0
+	n=$(awk -F'\t' -v o="$owner" '$1 == o { print $2; exit }' "$LEGACY_REGISTRY")
+	[ -n "$n" ] || return 0
+	tmp="$LEGACY_REGISTRY.tmp.$$"
+	awk -F'\t' -v o="$owner" '$1 != o' "$LEGACY_REGISTRY" >"$tmp" || return 1
+	mv "$tmp" "$LEGACY_REGISTRY" || return 1
+	printf '%s\n' "$n"
+}
+
+# Retiring a name means forgetting it in both registries. A name only one of
+# them knows is the ordinary case - the legacy TSV is written by the per-agent
+# helper - so retire drops what it finds instead of refusing.
 cmd_retire() {
-	local name="${1:-}" n
+	local name="${1:-}" n legacy
 	[ -n "$name" ] || die "usage: fm-desktop.sh retire <name>"
 	with_lock
 	n=$(jq -r --arg n "$name" '.desktops[] | select(.name==$n) | .display' "$REGISTRY")
-	[ -n "$n" ] || die "no desktop named '$name'"
-	jq --arg n "$name" '.desktops |= map(select(.name!=$n))' "$REGISTRY" | write_registry
-	printf 'retired %s (record only)\n' "$name"
-	printf 'display :%s was NOT touched. Another home may be working on it.\n' "$n"
-	printf 'to stop it deliberately: tigervncserver -kill :%s\n' "$n"
+	if [ -n "$n" ]; then
+		jq --arg n "$name" '.desktops |= map(select(.name!=$n))' "$REGISTRY" | write_registry
+		printf 'retired %s (record only)\n' "$name"
+		printf 'display :%s was NOT touched. Another home may be working on it.\n' "$n"
+		printf 'to stop it deliberately: tigervncserver -kill :%s\n' "$n"
+	fi
+	legacy=$(drop_legacy_line "$name") || die "could not rewrite $LEGACY_REGISTRY"
+	[ -z "$legacy" ] || printf 'released display :%s reserved in %s\n' "$legacy" "$LEGACY_REGISTRY"
+	[ -n "$n" ] || [ -n "$legacy" ] || printf 'no desktop record for %s\n' "$name"
 }
 
 cmd_list() {

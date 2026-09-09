@@ -45,7 +45,7 @@ They are retired only after the captain confirms the single listener from his ow
 **Registry - `bin/fm-desktop.sh`.**
 Writes `state/desktops.json`, the single source of truth: name, display, group, owner and status file.
 The RFB port is derived as `5900 + display` wherever it is needed, so it cannot drift from the display.
-`create` allocates a free display, starts it, and records it; `register` records a display that already exists; `list` shows liveness; `retire` drops a record.
+`create` allocates a free display, starts it, and records it; `register` records a display that already exists; `list` shows liveness; `retire` drops a name's records, releasing its display reservation.
 No display number or port is hardcoded anywhere else: the wall enumerates this file, and the listener's token plugin resolves a token to `127.0.0.1:5900+display` by reading it per connection.
 The name is the websockify token and the snapshot filename, so it is restricted to `[a-z0-9][a-z0-9-]*`.
 

@@ -34,6 +34,13 @@ FM_TEST_LIB_SOURCED=1
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
+# bin/fm-wake-drain.sh runs bin/fm-orphan-sweep.sh on a schedule, and every
+# suite that drains gives it a fresh state directory, so the schedule would be
+# due every time. That sweep is box-wide and destructive by design: left on, a
+# test run would reclaim the developer's own /tmp and worktree pools. Suites
+# that exercise the schedule turn it back on against their own fixture roots.
+export FM_ORPHAN_SWEEP=off
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
@@ -136,6 +143,36 @@ trap 'fm_test_cleanup; exit 143' TERM
 if [ -z "${FM_TASKTMP_ROOT:-}" ]; then
   FM_TASKTMP_ROOT=$(fm_test_tmproot fm-tasktmp) || return 1
   export FM_TASKTMP_ROOT
+fi
+
+# Treehouse pools default under $HOME, and a pool OUTLIVES the fixture repo it
+# was cut from: `treehouse return` hands a worktree back to the pool, it does
+# not delete the pool. A suite driving the real spawn path therefore left one
+# permanent directory in the developer's own ~/.treehouse per fixture repo -
+# 1533 of them, ~700 MB, measured 2026-09-05.
+#
+# treehouse's own root override is the `root` key of the repo's treehouse.toml,
+# so the redirect belongs to each fixture repo rather than to one environment
+# variable. tests/treehouse-shim.sh writes that key on every treehouse call,
+# which reaches fixtures built by any helper, by a plain `git clone`, or by a
+# spawn running in a pane, because PATH is inherited where an edit to each
+# fixture builder is not. A suite that shims treehouse itself still wins: its
+# own fakebin is prepended to PATH after this one.
+if [ -z "${FM_TEST_TREEHOUSE_ROOT:-}" ]; then
+  FM_TEST_TREEHOUSE_ROOT=$(fm_test_tmproot fm-treehouse) || return 1
+  export FM_TEST_TREEHOUSE_ROOT
+  # A nested suite inherits the real binary rather than re-resolving it, which
+  # would find this shim on the PATH it also inherited.
+  if [ -n "${FM_TEST_TREEHOUSE_BIN:-}" ] || FM_TEST_TREEHOUSE_BIN=$(command -v treehouse); then
+    export FM_TEST_TREEHOUSE_BIN
+    fm_test_shim_dir=$(fm_test_tmproot fm-treehouse-shim) || return 1
+    ln -sf "$ROOT/tests/treehouse-shim.sh" "$fm_test_shim_dir/treehouse" || return 1
+    PATH="$fm_test_shim_dir:$PATH"
+    export PATH
+    unset fm_test_shim_dir
+  else
+    unset FM_TEST_TREEHOUSE_BIN
+  fi
 fi
 
 # fm_test_reap_orphans: best-effort sweep for fixture roots left behind by a

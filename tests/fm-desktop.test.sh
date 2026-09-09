@@ -235,9 +235,30 @@ PY
 	pass "the heartbeat clamps bad lengths and drops non-string names"
 }
 
+# The legacy TSV is what reserves a display number, so a line left behind holds
+# that number out of the allocator forever. Retiring a name forgets it in both
+# registries, and the two do not have to agree on which names they know.
+test_retire_releases_the_reserved_display_number() {
+	local home out
+	home=$(new_home retire-legacy)
+	printf 'keep-mate\t12\ndead-mate\t13\n' >"$home/legacy/registry"
+
+	out=$(desktop "$home" retire dead-mate) ||
+		fail "retire must succeed on a name only the legacy registry knows"
+	assert_contains "$out" "released display :13" "retire did not report the display it released"
+	assert_no_grep 'dead-mate' "$home/legacy/registry" "retire left the reservation behind"
+	assert_grep 'keep-mate' "$home/legacy/registry" "retire dropped another owner's reservation"
+
+	out=$(desktop "$home" retire dead-mate) ||
+		fail "retire must stay idempotent once both records are gone"
+	assert_contains "$out" "no desktop record" "retire did not say there was nothing left to drop"
+	pass "retire releases exactly one owner's reserved display number, idempotently"
+}
+
 test_register_records_display_and_ownership
 test_name_must_be_token_safe
 test_allocation_skips_live_and_legacy_displays
 test_retire_drops_the_record_without_touching_the_display
+test_retire_releases_the_reserved_display_number
 test_wall_reads_the_registry_and_gates_on_viewers
 test_wall_heartbeat_hardens_against_malformed_posts
