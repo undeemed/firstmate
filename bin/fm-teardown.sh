@@ -1826,7 +1826,7 @@ NM_TEARDOWN_RUNS_LIMIT=${FM_TEARDOWN_NM_RUNS_LIMIT:-200}
 case "$NM_TEARDOWN_RUNS_LIMIT" in ''|*[!0-9]*) NM_TEARDOWN_RUNS_LIMIT=200 ;; esac
 TASK_RUN_ID=
 task_status_is_own_active_run() { # <worktree> <axi-status-output>
-  local wt=$1 out=$2 branch run_id run_branch run_head outcome ledger
+  local wt=$1 out=$2 branch run_id run_branch run_head ledger
   TASK_RUN_ID=
   branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
   [ -n "$branch" ] || return 1
@@ -1836,14 +1836,10 @@ task_status_is_own_active_run() { # <worktree> <axi-status-output>
   run_branch=$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")
   [ -n "$run_branch" ] && [ "$run_branch" = "$branch" ] || return 1
   run_head=$(fm_nm_strip_quotes "$(fm_nm_field "$out" head)")
-  outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$out" outcome)")
-  [ -z "$outcome" ] || return 1
-  # A run whose STATUS already reads terminal has ended even when no outcome
-  # field was written, so there is nothing to abort and no attribution question
-  # to ask: neither the object-local rule nor the ledger below is consulted.
-  case "$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")" in
-    completed | failed | cancelled | passed | checks-passed) return 1 ;;
-  esac
+  # bin/fm-nm-run-lib.sh owns what "still in flight" means: no terminal outcome
+  # and no terminal status. A run that has ended needs no abort and raises no
+  # attribution question, so neither the head rule nor the ledger below runs.
+  fm_nm_run_is_active "$out" || return 1
   if ! fm_nm_head_matches_worktree "$wt" "$run_head"; then
     # The strict object-local rule rejected this run head. That rejection is
     # final when the head object resolves in this copy (diverged or rewritten
