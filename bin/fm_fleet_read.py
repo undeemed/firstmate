@@ -95,9 +95,9 @@ def _field(row: list[str], index: int) -> str | None:
     return None if row[index] in ("", "-") else row[index]
 
 
-def discover_homes(main_home: str | None = None) -> list[dict]:
+def discover_homes() -> list[dict]:
     """Every home of this fleet: the main home, its registry, and pool markers."""
-    home = main_home or _main_home()
+    home = _main_home()
     records, error = _run_probe("--homes", home)
     if error:
         return [{"label": "main", "path": home, "source": "main", "error": error}]
@@ -148,8 +148,6 @@ def read_home(home: dict) -> dict:
         elif kind == "task" and len(row) >= 10:
             task = {
                 "id": row[1],
-                "home": home["path"],
-                "home_label": home["label"],
                 "kind": _field(row, 2),
                 "mode": _field(row, 3),
                 "harness": _field(row, 4),
@@ -171,10 +169,10 @@ def read_home(home: dict) -> dict:
     return result
 
 
-def read_fleet(main_home: str | None = None) -> dict:
+def read_fleet() -> dict:
     """One whole-fleet read. Homes are probed concurrently, so the slowest home sets the cost."""
     started = time.time()
-    homes = discover_homes(main_home or _main_home())
+    homes = discover_homes()
     with ThreadPoolExecutor() as pool:
         read = list(pool.map(read_home, homes))
     tasks = [task for entry in read for task in entry["tasks"]]
