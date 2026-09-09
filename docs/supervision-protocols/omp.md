@@ -1,8 +1,9 @@
-Mode: omp extension background wake.
+Mode: omp (Oh My Pi) extension background wake.
 
 When this session owns supervision and away mode is not active:
 1. Drain first with `bin/fm-wake-drain.sh`.
-2. Confirm omp auto-loaded both project extensions (after approving project trust once per clone); if not, restart `omp` with `-e __FM_OMP_TURNEND_EXT__ -e __FM_OMP_EXT__` as a trust-free fallback.
+2. Confirm omp auto-loaded both project extensions from `.omp/extensions/`; omp has no trust gate, so a plain `omp` started with this home as its working directory loads them with no dialog.
+   If they are not loaded, restart omp inside this home, or pass `-e __FM_OMP_TURNEND_EXT__ -e __FM_OMP_EXT__` when omp must start from another directory.
 3. First cycle only: make the one required `fm_watch_arm_omp` call.
    Use `/fm-watch-arm-omp` only as a human-entered fallback.
    Never run `bin/fm-watch-arm.sh` through omp's bash tool because that foreground arm can wedge the agent and bypasses extension-owned cleanup.
@@ -20,7 +21,7 @@ When this session owns supervision and away mode is not active:
 
 The turn-end guard extension lives at `__FM_OMP_TURNEND_EXT__`.
 The watcher extension lives at `__FM_OMP_EXT__`.
-Both are tracked, project-local `.omp/extensions/*.ts` files that omp auto-discovers once the project is trusted; `bin/fm-session-start.sh` reports when the running omp session has not loaded both required extensions.
+Both are tracked, project-local `.omp/extensions/*.ts` files that omp auto-discovers from this home with no trust dialog; `bin/fm-session-start.sh` reports when the running omp session has not loaded both required extensions.
 
 omp emits no `agent_settled` event; its loop ends on `agent_end`, which also fires for automatic continuations.
 The turn-end guard therefore runs only when omp's settle triple agrees the run is idle: `willContinue` is false, `isIdle()` is true, and `hasPendingMessages()` is false.
