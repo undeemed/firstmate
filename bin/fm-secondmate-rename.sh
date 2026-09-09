@@ -254,22 +254,17 @@ do_move() { # <src> <dst>
 
 # Replace occurrences of <search> with <replace> in <file>, atomically and with
 # the file's own mode preserved. The match is LITERAL, never a regex, so an id's
-# dots and dashes cannot widen it. Scope "prefix" replaces only at the start of a
-# line, which is how a record's own key is rewritten without touching prose that
-# happens to quote it.
-do_sub() { # <file> <note> <search> <replace> [all|prefix]
-	local file=$1 note=$2 search=$3 replace=$4 scope=${5:-all} tmp line
+# dots and dashes cannot widen it, and every caller's search carries the record's
+# own key or punctuation (`projects=<field>`, `- <id> `, `(repo: <label>)`), so a
+# line that merely mentions the old name cannot match.
+do_sub() { # <file> <note> <search> <replace>
+	local file=$1 note=$2 search=$3 replace=$4 tmp line
 	printf '  edit   %s (%s)\n' "$file" "$note"
 	[ "$DRY_RUN" -eq 0 ] || return 0
 	tmp=$(mktemp "$file.rename.XXXXXX") || die "stopped at $file"
 	cp -p -- "$file" "$tmp" || die "stopped at $file"
 	while IFS= read -r line || [ -n "$line" ]; do
-		if [ "$scope" = prefix ]; then
-			case "$line" in "$search"*) line=$replace${line#"$search"} ;; esac
-		else
-			line=${line//"$search"/"$replace"}
-		fi
-		printf '%s\n' "$line"
+		printf '%s\n' "${line//"$search"/"$replace"}"
 	done <"$file" >"$tmp" || die "stopped at $file"
 	mv -f -- "$tmp" "$file" || die "stopped at $file"
 }
@@ -290,16 +285,16 @@ read_old_records() {
 apply_meta_fields() {
 	local new_meta="$STATE/$NEW_ID.meta" renamed
 	[ -z "$OLD_ENDPOINT_ID" ] ||
-		do_sub "$new_meta" "endpoint task id" "endpoint_task_id=$OLD_ENDPOINT_ID" "endpoint_task_id=$NEW_ID" prefix
+		do_sub "$new_meta" "endpoint task id" "endpoint_task_id=$OLD_ENDPOINT_ID" "endpoint_task_id=$NEW_ID"
 	[ "$OLD_TASKTMP" != "/tmp/fm-$OLD_ID" ] ||
-		do_sub "$new_meta" "build cache path" "tasktmp=/tmp/fm-$OLD_ID" "tasktmp=/tmp/fm-$NEW_ID" prefix
+		do_sub "$new_meta" "build cache path" "tasktmp=/tmp/fm-$OLD_ID" "tasktmp=/tmp/fm-$NEW_ID"
 	[ -n "$OLD_PROJECT" ] && [ -n "$OLD_PROJECTS_FIELD" ] || return 0
 	renamed=",$OLD_PROJECTS_FIELD,"
 	renamed=${renamed//",$OLD_PROJECT,"/",$NEW_PROJECT,"}
 	renamed=${renamed#,}
 	renamed=${renamed%,}
 	[ "$renamed" != "$OLD_PROJECTS_FIELD" ] || return 0
-	do_sub "$new_meta" "project list" "projects=$OLD_PROJECTS_FIELD" "projects=$renamed" prefix
+	do_sub "$new_meta" "project list" "projects=$OLD_PROJECTS_FIELD" "projects=$renamed"
 }
 
 # The records that carry the id as an identity: the reread nudge, the home's own
@@ -312,21 +307,25 @@ apply_identity_records() {
 	[ ! -f "$MATE_HOME/data/charter.md" ] || do_sub "$MATE_HOME/data/charter.md" "charter identity" "$OLD_ID" "$NEW_ID"
 	[ "$HAD_BRIEF" -eq 0 ] || do_sub "$DATA/$NEW_ID/brief.md" "charter identity" "$OLD_ID" "$NEW_ID"
 	[ -f "$REG" ] || return 0
-	! grep -q "^- $OLD_ID " "$REG" || do_sub "$REG" "routing record id" "- $OLD_ID " "- $NEW_ID " prefix
+	! grep -q "^- $OLD_ID " "$REG" || do_sub "$REG" "routing record id" "- $OLD_ID " "- $NEW_ID "
 	[ -n "$OLD_PROJECT" ] && grep -q "projects: $OLD_PROJECT;" "$REG" || return 0
 	do_sub "$REG" "routing record project" "projects: $OLD_PROJECT;" "projects: $NEW_PROJECT;"
 }
 
-# The records that carry the project label: the project registry and the mate's
-# own backlog items. No tracked code names a project's home any more - the fleet
-# read layer discovers homes from the registry (bin/fm_fleet_read.py) - so there
-# is no source file to rewrite here.
+# The records that carry the project label: BOTH project registries - the
+# parent's and the copy `fm-home-seed.sh` seeds inside the mate home, which is
+# what `fm-project-mode.sh` resolves there - and the mate's own backlog items.
+# No tracked code names a project's home any more, because the fleet read layer
+# discovers homes from the registry (bin/fm_fleet_read.py), so there is no
+# source file to rewrite here.
 apply_project_records() {
-	local backlog="$MATE_HOME/data/backlog.md"
+	local backlog="$MATE_HOME/data/backlog.md" registry
 	[ -n "$OLD_PROJECT" ] || return 0
-	if [ -f "$PROJECT_REGISTRY" ] && grep -q "^- $OLD_PROJECT \[" "$PROJECT_REGISTRY"; then
-		do_sub "$PROJECT_REGISTRY" "project registry entry" "- $OLD_PROJECT [" "- $NEW_PROJECT [" prefix
-	fi
+	for registry in "$PROJECT_REGISTRY" "$MATE_HOME/data/projects.md"; do
+		if [ -f "$registry" ] && grep -q "^- $OLD_PROJECT \[" "$registry"; then
+			do_sub "$registry" "project registry entry" "- $OLD_PROJECT [" "- $NEW_PROJECT ["
+		fi
+	done
 	[ -f "$backlog" ] && grep -q "(repo: $OLD_PROJECT)" "$backlog" || return 0
 	do_sub "$backlog" "repo: fields on this home's own items" "(repo: $OLD_PROJECT)" "(repo: $NEW_PROJECT)"
 }

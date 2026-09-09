@@ -80,6 +80,10 @@ setup_fixture() { # <name>
 		"$OLD_ID" "$MATE" >"$PARENT/data/secondmates.md"
 	printf -- '- oldproj [direct-PR +yolo] - fixture project (added 2026-07-13)\n' \
 		>"$PARENT/data/projects.md"
+	# The seeded copy inside the mate home, which is what fm-project-mode.sh
+	# resolves when the mate itself asks for the project's delivery mode.
+	printf -- '- oldproj [direct-PR +yolo] - fixture project (added 2026-07-13)\n' \
+		>"$MATE/data/projects.md"
 	printf '# charter for %s\n' "$OLD_ID" >"$PARENT/data/$OLD_ID/brief.md"
 	printf '# charter for %s\n' "$OLD_ID" >"$MATE/data/charter.md"
 	printf -- '- [ ] some-item - fixture work (repo: oldproj) (kind: ship)\n' >>"$MATE/data/backlog.md"
@@ -134,6 +138,7 @@ test_rename_moves_every_live_record() {
 	assert_grep "- $NEW_ID " "$PARENT/data/secondmates.md" "the routing record id was not rewritten"
 	assert_grep "projects: newproj;" "$PARENT/data/secondmates.md" "the routing record project was not rewritten"
 	assert_grep "- newproj [" "$PARENT/data/projects.md" "the project registry entry was not rewritten"
+	assert_grep "- newproj [" "$MATE/data/projects.md" "the mate home's own project registry was not rewritten"
 	assert_grep "(repo: newproj)" "$MATE/data/backlog.md" "the mate's own repo: fields were not rewritten"
 	assert_present "$MATE/projects/newproj/README.md" "the project clone did not move"
 	assert_absent "$MATE/projects/oldproj" "the old project clone survived"
