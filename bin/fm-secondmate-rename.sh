@@ -58,7 +58,6 @@ FM_HOME="${FM_HOME:-$FM_ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 REG="$DATA/secondmates.md"
-PROJECT_REGISTRY="$DATA/projects.md"
 
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
@@ -147,7 +146,9 @@ read_mate_record() {
 }
 
 # No other task id in this home may contain the old id, or a name-matched sidecar
-# rename could rewrite that sibling's records. The new id must be unclaimed.
+# rename could rewrite that sibling's records. The new id's own task record is
+# covered by the move plan's target guard; its data directory needs this check,
+# because an absent old one plans no move at all.
 check_no_collision() {
 	local other_meta other_id
 	for other_meta in "$STATE"/*.meta; do
@@ -158,7 +159,6 @@ check_no_collision() {
 		*"$OLD_ID"*) die "task id $other_id contains $OLD_ID; renaming would rewrite its records" ;;
 		esac
 	done
-	[ ! -e "$STATE/$NEW_ID.meta" ] || die "$NEW_ID already has a task record at $STATE/$NEW_ID.meta"
 	[ ! -e "$DATA/$NEW_ID" ] || die "$NEW_ID already has a data directory at $DATA/$NEW_ID"
 }
 
@@ -321,7 +321,7 @@ apply_identity_records() {
 apply_project_records() {
 	local backlog="$MATE_HOME/data/backlog.md" registry
 	[ -n "$OLD_PROJECT" ] || return 0
-	for registry in "$PROJECT_REGISTRY" "$MATE_HOME/data/projects.md"; do
+	for registry in "$DATA/projects.md" "$MATE_HOME/data/projects.md"; do
 		if [ -f "$registry" ] && grep -q "^- $OLD_PROJECT \[" "$registry"; then
 			do_sub "$registry" "project registry entry" "- $OLD_PROJECT [" "- $NEW_PROJECT ["
 		fi
