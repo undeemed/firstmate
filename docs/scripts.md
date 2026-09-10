@@ -16,6 +16,11 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
 | `fm-fleet-snapshot.sh`   | Print the read-only structured fleet snapshot JSON (schema `fm-fleet-snapshot.v1`)   |
 | `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view                                   |
+| `fm-fleet-probe.sh`      | Probe one home cheaply for endpoints, harness turns, queued wakes, and backlog counts |
+| `fm-fleet-probe-home-lib.sh` | Sourced per-home half of that probe: `sup`, `task`, and `event` records read through their shell owners |
+| `fm_fleet_read.py`       | The one fleet read layer both boards render from: home discovery plus concurrent per-home reads ([fleet-tui.md](fleet-tui.md)) |
+| `fm-fleet-tui.py`        | Always-on terminal screen of every task in flight fleet-wide ([fleet-tui.md](fleet-tui.md)) |
+| `fm-live-board.py`       | Same fleet read, served as one auto-refreshing web page behind an unguessable path token |
 | `fm-bearings-snapshot.sh` | Project the fleet snapshot to the compact TOON bearings view; local-only unless `--include-prs` |
 | `fm-bearings-board.sh`   | Build and arm the stable interactive `/bearings lavish` fleet board                  |
 | `fm-update.sh`           | Fast-forward-only self-update of firstmate and local or remote secondmate homes       |
