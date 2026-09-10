@@ -830,14 +830,18 @@ Claims live under `$XDG_STATE_HOME/firstmate/procevent-claims` (override with `F
 Each claim binds its caller-reported home and runner PID to a process identity, unique claim generation, exact registration-file generation, and resolved state-root identity.
 Registration, acquisition, replacement, retirement, and generation-bound release are serialized at one machine-wide boundary per source.
 A live identity-matched owner is never displaced, and release removes only the exact generation the caller acquired.
-Retirement and orphan reconciliation select a runner process group for signalling only while its recorded process identity still matches and the live runner still leads that group.
+Every stop proves ownership before its first signal: the live runner's recorded process identity must match and it must still lead its process group.
+Once that stop has proved ownership and sent TERM, its own escalation to KILL checks only whether the proved group still has members; it does not re-read the leader's identity or group membership, which can change or become unreadable as TERM ends the leader.
+This proof belongs only to that stop's own escalation and cannot authorize another caller that encounters an unproved group.
 A claim counts as reclaimable only when its owner is stale and an independent process-group check finds no members; a crashed leader or reused pid whose process group still has members cannot relax ownership cleanup, so reconcile preserves the claim without signalling the ambiguous group or starting a replacement.
+If the leader dies to anything other than the stop's own signal, `retire`, `reconcile`, `sweep-home`, and the guard all refuse its surviving group permanently, and the source silently stops listening.
+Whether that group may ever be signalled remains an open decision; the repaired guard does not close this gap.
 Reclaiming a generation that IS gone is not gated on tidying its capture-reservation records.
 Those records are keyed by claim token and every replacement claims a fresh one, so a leftover that can no longer be located - a state-root identity a claim recorded before its home was re-created, for example - is stale bytes rather than an ownership hazard.
 Ordinary release and reclamation still attempt reservation cleanup and require it unless both owner staleness and whole-group absence prove the generation gone.
 The narrow live-owner terminal-self-retirement path also attempts cleanup but tolerates its own still-in-flight reservation, which the runner removes on the normal end-of-capture path; exact home, PID, and claim-token ownership remains mandatory before the claim is released.
-If identity cannot be established for a live PID, or a surviving owned group cannot be proved stopped, the operation preserves the registration and claim for safe retry rather than adding a second owner.
-A live PID whose identity no longer matches is a reused PID, so cleanup refuses it before signalling.
+If identity cannot be established before the first signal, or a surviving owned group cannot be proved stopped, the operation preserves the registration and claim for safe retry rather than adding a second owner.
+A live PID whose identity no longer matches is refused before the first signal.
 Identity and process-group verification cannot be made atomic with signalling in portable shell: the reaper signals only a target it has verified as the recorded generation, but PID and group reuse remain possible in the narrow interval between verification and the signal.
 Launch pacing is the primary host-wedge protection; watchdog cleanup is a backstop.
 
@@ -859,13 +863,16 @@ Detaching a runner into its own process group is what lets a persistent source o
 So a home's process-event state carries a lease that registration, attached start, reconciliation, acknowledgement, and listing refresh, and the watcher's reconcile cycle is what keeps it fresh in a live home.
 An attached public `start` continues refreshing the lease while its caller remains attached.
 Each runner fails closed unless a small guard starts successfully beside it in a separate process group.
-That guard accepts the lease only while the state root retains the device/inode identity recorded by the runner's claim, and stops the runner's whole process group after two consecutive checks cannot prove that identity and lease freshness.
+That guard accepts the lease only while the state root retains the device/inode identity recorded by the runner's claim, and initiates the verified stop after two consecutive reads cannot prove that identity and lease freshness, so one unreadable read cannot kill a live runner.
+Those two reads are spaced half a check interval apart, so the pair the debounce requires completes inside one check interval instead of costing two of them.
+For a runner whose ownership can still be proved, the nominal detection bound is therefore the lease plus one check interval, after which the verified stop runs within its own grace period; the lease age is compared in whole seconds, so a configured lease is honoured until that age reads one second past it, and scheduling delays or failed inspection and signalling can extend the whole bound.
+That grace is a ceiling rather than a delay every stop pays: two seconds for the ordinary signal and two more for the forced one, spent only by a group that outlives the signal it was sent, which is why a healthy runner's stop completes in a fraction of a second.
 The group signal reaches the blocking child and everything under it exactly as retirement does.
 A runner exports the inherited `FM_PROCEVENT_IN_RUNNER` marker and every lease refresh is skipped under it, so a runner and its ordinary children do not certify their own owner, and the next reconcile in a live home simply starts a replacement runner.
 That no-self-refresh rule is CONFUSED-AGENT-GRADE, the same deliberate captain-decided grade `bin/fm-lease-lib.sh` documents: it stops the accidental case this boundary exists for, an orphaned or test-scaffolding source tree that would otherwise keep its own owner alive.
 A source that DELIBERATELY strips the marker from its environment can still refresh the lease, so adversarial-grade unforgeability is explicitly out of scope here and tracked as separate follow-up design work.
 Scope is the owning state root and one runner generation, never a script or process name, so a live source in another home is untouched: that home refreshes its own lease.
-`FM_PROCEVENT_OWNER_LEASE_SECONDS` (default 600, range 1..86400) is how long a runner keeps going with no sign of activity in its owning home, and `FM_PROCEVENT_OWNER_CHECK_SECONDS` (default 15, range 1..3600) is how often its guard re-reads the lease.
+`FM_PROCEVENT_OWNER_LEASE_SECONDS` (default 600, range 1..86400) is how long a runner keeps going with no sign of activity in its owning home, and `FM_PROCEVENT_OWNER_CHECK_SECONDS` (default 15, range 1..3600) is the guard's detection interval: it re-reads the lease and the recorded state-root identity twice within each interval, half an interval apart, so the two reads its debounce needs fit inside one interval rather than costing two.
 `FM_PROCEVENT_LAUNCH_FLOOR_SECONDS` (default 1, range 1..3600) is the minimum time between consecutive launches of one registration generation's stored command, bounding the launch rate of an immediately returning source during that lease window.
 The generation's first launch is immediate, later launches share its monotonic pacing timestamp, a timestamp from before a reboot is treated as expired, and replacing the registration starts a fresh pacing generation.
 
@@ -960,7 +967,7 @@ FM_TOOL_UPDATE_NOW=     # test override for the watched-tool sweep clock; the sw
 FM_PROCEVENT_MAX_OUTPUT_BYTES=1048576   # bound on one captured process-to-event result
 FM_PROCEVENT_CLAIM_ROOT=                # machine-wide source claim root; default $XDG_STATE_HOME/firstmate/procevent-claims
 FM_PROCEVENT_OWNER_LEASE_SECONDS=600    # how long a source runner keeps going with no activity in its owning home; 1..86400
-FM_PROCEVENT_OWNER_CHECK_SECONDS=15     # how often a runner's guard re-reads that lease; 1..3600
+FM_PROCEVENT_OWNER_CHECK_SECONDS=15     # a runner guard's detection interval, read twice per interval; 1..3600
 FM_PROCEVENT_LAUNCH_FLOOR_SECONDS=1     # minimum interval between launches of one registration generation's source command; 1..3600
 FM_WHEN_OUTPUT_TAIL_BYTES=8192          # bound on the command-output tail inside one condition->action outcome document
 FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in Codex primary supervision
