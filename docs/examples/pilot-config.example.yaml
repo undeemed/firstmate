@@ -1,0 +1,64 @@
+# Example ~/.pilot/config.yaml for the posture described in docs/pilot.md:
+# one daemon, many repositories, one task at a time, and no automated merge.
+# Replace the owner/repo/path placeholders with real ones.
+version: "1.0"
+
+gateway:
+  host: "127.0.0.1"
+  port: 9090
+
+adapters:
+  # Default repository: required, and polled like any projects: entry.
+  github:
+    enabled: true
+    token: "${GITHUB_TOKEN}"   # exported by the service unit; never a literal token
+    repo: "OWNER/REPO"
+    project_path: "/home/USER/.pilot/projects/REPO"
+    pilot_label: "pilot"
+    polling:
+      enabled: true
+      interval: 60s
+      label: "pilot"
+
+orchestrator:
+  max_concurrent: 1
+
+  execution:
+    mode: "sequential"        # one task at a time
+    wait_for_merge: true      # the next issue waits for the pull request to land
+    poll_interval: 60s
+
+  autopilot:
+    enabled: true
+    default_environment: "prod"
+    auto_merge: false
+    ci_wait_timeout: 30m
+    ci_poll_interval: 60s
+    scan_stagger_interval: 5s
+
+    environments:
+      prod:
+        branch: main
+        require_approval: true   # with no approval channel wired, humans merge by hand
+
+executor:
+  type: "claude-code"
+  auto_create_pr: true
+  use_worktree: true
+
+memory:
+  path: "~/.pilot/data"
+  cross_project: true
+
+# No global quality: block on purpose - Pilot auto-detects a gate per project.
+
+default_project: "REPO"
+
+# One block per repository, each with its own checkout.
+projects:
+  - name: "REPO"
+    path: "/home/USER/.pilot/projects/REPO"
+    default_branch: "main"
+    github:
+      owner: "OWNER"
+      repo: "REPO"
