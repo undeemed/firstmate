@@ -199,6 +199,9 @@
 #                  turn-end signal rides the launch command, e.g. codex -c notify=[...])
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
 #                  written by this script; outside the worktree to avoid pi's trust gate)
+#     __PIGUARD__  absolute path to extensions/fm-swarms-platform-guard.ts, the tracked
+#                  PreToolUse seatbelt loaded next to __PIEXT__/__OMPEXT__ for every pi
+#                  and omp crewmate/scout (inert outside a swarms-platform checkout)
 #     __OMPEXT__   absolute path to state/<task-id>.omp-ext.ts (omp turn-end extension,
 #                  written by this script; outside the worktree for the same reason as __PIEXT__)
 #     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
@@ -1220,7 +1223,7 @@ launch_template() {
       if [ "$kind" = secondmate ]; then
         printf '%s' 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPTURNEND__ -e __OMPWATCH__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       else
-        printf '%s' 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+        printf '%s' 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ -e __PIGUARD__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       fi
       ;;
     pi|pi-signed)
@@ -1228,7 +1231,7 @@ launch_template() {
       if [ "$kind" = secondmate ]; then
         printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       else
-        printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PIEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+        printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PIEXT__ -e __PIGUARD__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       fi
       ;;
     # grok (Grok Build TUI): a positional prompt starts the supervised interactive
@@ -3028,6 +3031,21 @@ sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_ompturnend=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-turnend-guard.ts")
 sq_ompwatch=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-omp-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
+# The crewmate seatbelt (extensions/fm-swarms-platform-guard.ts) is a tracked
+# file of this checkout, loaded by every pi/omp crewmate and scout. Fail closed:
+# a missing file would make the harness start WITHOUT the seatbelt and say
+# nothing - exactly how the codegraph guard once disabled itself silently -
+# so an unguarded crewmate is refused instead of launched.
+fm_piguard_path="$FM_ROOT/extensions/fm-swarms-platform-guard.ts"
+case "$HARNESS" in
+  pi|pi-signed|omp)
+    if [ "$KIND" != secondmate ] && [ ! -f "$fm_piguard_path" ]; then
+      echo "error: crewmate guard missing at $fm_piguard_path; refusing to spawn unguarded" >&2
+      exit 1
+    fi
+    ;;
+esac
+sq_piguard=$(shell_quote "$fm_piguard_path")
 sq_worktree=$(shell_quote "$WT")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
@@ -3037,6 +3055,7 @@ LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
 LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
+LAUNCH=${LAUNCH//__PIGUARD__/$sq_piguard}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OMPTURNEND__/$sq_ompturnend}
