@@ -2101,6 +2101,79 @@ reap_task_build_cache() { # <task-id>
 	fi
 	echo "warning: build cache left behind for $id: $recorded ($reason)" >&2
 }
+DESKTOP_ROOT="${FM_DESKTOP_ROOT:-$HOME/.fm-desktops}"
+DESKTOP_DIR=
+[ ! -d "$DESKTOP_ROOT/$ID" ] || DESKTOP_DIR="$DESKTOP_ROOT/$ID"
+reap_desktop_pids() { # <label> <pid>...
+	local label=$1 pid identity i
+	local -a pids=() identities=()
+	shift
+	for pid in "$@"; do
+		identity=$(task_process_identity "$pid") || continue
+		pids+=("$pid")
+		identities+=("$identity")
+	done
+	[ "${#pids[@]}" -gt 0 ] || return 0
+	echo "teardown: stopping $label process(es) for $ID: ${pids[*]}" >&2
+	for pid in "${pids[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
+	sleep 1
+	for i in "${!pids[@]}"; do
+		task_process_identity_matches "${pids[$i]}" "${identities[$i]}" || continue
+		kill -KILL "${pids[$i]}" 2>/dev/null || true
+	done
+}
+stop_task_desktop_display() { # <display-number>
+	local display=$1 socket_dir pid
+	local -a bridge_pids=()
+	socket_dir=${FM_DESKTOP_X_SOCKET_DIR:-/tmp/.X11-unix}
+	while IFS= read -r pid; do
+		[ -n "$pid" ] && bridge_pids+=("$pid")
+	done < <(pgrep -u "$(id -u)" -f "localhost:$((5900 + display))([[:space:]]|\$)" 2>/dev/null || true)
+	reap_desktop_pids "desktop bridge" ${bridge_pids[@]+"${bridge_pids[@]}"}
+	[ -e "$socket_dir/X$display" ] || return 0
+	command -v tigervncserver >/dev/null 2>&1 || {
+		echo "warning: display :$display for $ID is still up and tigervncserver is unavailable to stop it" >&2
+		return 0
+	}
+	tigervncserver -kill ":$display" >/dev/null 2>&1 ||
+		echo "warning: display :$display for $ID could not be stopped" >&2
+}
+reap_profile_processes() { # <label> <dir>
+	local label=$1 dir=$2 pid
+	local -a pids=()
+	[ -n "$dir" ] || return 0
+	while IFS= read -r pid; do
+		[ -n "$pid" ] && pids+=("$pid")
+	done < <(pgrep -u "$(id -u)" -f -- "--user-data-dir=$dir(/|[[:space:]]|\$)" 2>/dev/null || true)
+	reap_desktop_pids "$label" ${pids[@]+"${pids[@]}"}
+}
+reap_task_desktop() { # <task-id>
+	local id=$1 registry display size dir=$DESKTOP_DIR
+	registry="${FM_DESKTOP_LEGACY_REGISTRY:-$DESKTOP_ROOT/registry}"
+	display=$(awk -F'\t' -v a="$id" '$1 == a { print $2; exit }' "$registry" 2>/dev/null) || display=
+	case "$display" in *[!0-9]*) display= ;; esac
+	[ -n "$dir" ] || [ -n "$display" ] || return 0
+	# A browser on a review desktop keeps its working directory at $HOME, so
+	# the cwd reap above cannot see it. The profile path names the owner
+	# instead, and that path is per-task, so a match is proof rather than a
+	# name pattern.
+	[ -z "$dir" ] || reap_profile_processes "desktop browser" "$dir"
+	[ -z "$display" ] || stop_task_desktop_display "$display"
+	if [ -n "$dir" ] && [ -d "$dir" ]; then
+		size=$(du -sh "$dir" 2>/dev/null | cut -f1) || true
+		if rm -rf -- "$dir"; then
+			echo "reaped desktop for $id: $dir (${size:-unknown} reclaimed)"
+		else
+			echo "warning: desktop left behind for $id: $dir (removing it failed)" >&2
+		fi
+	fi
+	if FM_DESKTOP_LEGACY_REGISTRY="$registry" \
+		"$SCRIPT_DIR/fm-desktop.sh" retire "$id" >/dev/null 2>&1; then
+		[ -z "$display" ] || echo "released display :$display for $id"
+	else
+		echo "warning: desktop records for $id remain (registry $registry)" >&2
+	fi
+}
 reap_task_worktree_processes() {  # <label> <dir>...
   local label=$1 pids pid identity current_pids i pass=1 max_passes=3
   local -a tracked_pids tracked_identities remaining_pids remaining_identities
@@ -3469,7 +3542,8 @@ fi
 # not by task-worktree cleanup.
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   conclude_task_no_mistakes_run "$WT"
-  reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
+  reap_task_worktree_processes worktree "$WT" "$TASK_TMP" "$DESKTOP_DIR"
+  reap_profile_processes "worktree browser" "$WT"
 elif [ "$KIND" != secondmate ]; then
   reap_task_worktree_processes tasktmp "$TASK_TMP"
 fi
@@ -3667,6 +3741,7 @@ fi
 # landed-work refusal above has passed and the task's processes are already
 # reaped, so a refused teardown never reaps.
 reap_task_build_cache "$ID"
+reap_task_desktop "$ID"
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 status_retire_presentation_task "$STATE" "$ID" || exit 1
