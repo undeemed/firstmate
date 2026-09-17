@@ -270,6 +270,20 @@ fm_herdr_session_cleanup >/dev/null 2>&1
 [ "$(wc -l < "$CLOSE_LOG" | tr -d ' ')" = 1 ] || fail "matching v2 cleanup did not close exactly once"
 pass "v2 cleanup requires and accepts the exact journal endpoint binding"
 reset_fixture; : > "$FM_STATE_OVERRIDE/$ID.meta"; assert_preserved "current task metadata"
+# The occupied-checkout refusal keeps its projection on purpose and the retry
+# publishes a flat endpoint, so metadata naming a DIFFERENT pane proves this
+# projection is not the task's endpoint and must not immortalize the husk.
+reset_fixture; write_v2 "$FM_HOME" "$WS" "$TAB" "$PANE"
+printf 'window=test:w9:p1\n' > "$FM_STATE_OVERRIDE/$ID.meta"
+fm_herdr_session_cleanup >/dev/null 2>&1
+[ ! -e "$FM_STATE_OVERRIDE/$ID.herdr-presentation" ] || fail "flat-endpoint metadata kept the journal"
+[ "$(wc -l < "$CLOSE_LOG" | tr -d ' ')" = 1 ] || fail "flat-endpoint metadata did not close exactly once"
+pass "metadata naming another endpoint retires the quarantined projection"
+reset_fixture; write_v2 "$FM_HOME" "$WS" "$TAB" "$PANE"
+printf 'window=test:%s\n' "$PANE" > "$FM_STATE_OVERRIDE/$ID.meta"
+assert_preserved "metadata naming this projection's own pane"
+reset_fixture; printf 'window=test:w9:p1\n' > "$FM_STATE_OVERRIDE/$ID.meta"
+assert_preserved "flat-endpoint metadata without an exact v2 binding"
 reset_fixture; printf 'live\n' > "$FIXTURE_DIR/agent"; assert_preserved "registered agent"
 reset_fixture; printf 'unknown\n' > "$FIXTURE_DIR/agent"; assert_preserved "unknown agent"
 reset_fixture; printf '2\n' > "$FIXTURE_DIR/tabs"; printf '2\n' > "$FIXTURE_DIR/panes"; assert_preserved "multiple tabs"
