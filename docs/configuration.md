@@ -643,6 +643,7 @@ The voice handover depends on `note`, so it keeps working in a home that has con
 | `config/inbox-stt-model` | `FM_INBOX_STT_MODEL` | Speech-to-text model id, required by `fm-inbox.sh say`. |
 | `config/inbox-ask-model` | `FM_INBOX_ASK_MODEL` | Side-question model id, required by `fm-inbox.sh ask`. |
 | `config/inbox-profile` | `FM_INBOX_PROFILE` | AWS profile for those two calls; absent, or an explicitly empty variable, means whatever credentials are already in the environment. |
+| `config/spawn-memory-floor-mb` | `FM_SPAWN_MEMORY_FLOOR_MB` | Whole number of MB; a fresh spawn is refused while host `MemAvailable` is below it (free swap is not counted). Absent or `0` disables. Relaunches are exempt; hosts without `/proc/meminfo` skip it. Bounds live-lane concurrency at the spawn instead of relying on the memory guardian, which only reaps stale panes (2026-09-17 incident). |
 
 Each account, model and voice file above is read as its first line that is not blank and not a `#` comment, so a comment above the value is fine.
 The two read files are parsed differently: `config/voice-read-scope` must hold the bare word and nothing but blank space around it, so a comment header there refuses instead of being skipped, while every line of `config/voice-read-deny` that is not blank and not a `#` comment is one more substring.

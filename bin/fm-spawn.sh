@@ -328,6 +328,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-tasktmp-lib.sh"
 # shellcheck source=bin/fm-worktree-claim-lib.sh
 . "$SCRIPT_DIR/fm-worktree-claim-lib.sh"
+# shellcheck source=bin/fm-spawn-memory-floor-lib.sh
+. "$SCRIPT_DIR/fm-spawn-memory-floor-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1041,6 +1043,15 @@ if [ "$RELAUNCH" -eq 0 ]; then
   if [ "$BACKEND" = orca ]; then
     fm_backend_orca_runtime_check || exit 1
   fi
+fi
+# Memory floor (config/spawn-memory-floor-mb): a FRESH spawn is refused while
+# host MemAvailable is below the floor. Live lanes cost 5-8 GB each and the
+# memory guardian only reaps stale panes, so bounding concurrency here - before
+# a worktree is leased or any state is written - is the one place that prevents
+# the 2026-09-17 swap-exhaustion shape without destroying work. Relaunches
+# reuse an existing lane and skip it. See bin/fm-spawn-memory-floor-lib.sh.
+if [ "$RELAUNCH" -eq 0 ]; then
+  fm_spawn_memory_floor_check || exit 1
 fi
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
 if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
