@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>desktop wall</title>
+<style>
+  :root {
+    --bg: #0f1113; --panel: #171a1d; --line: #262b30; --line-hi: #3a424b;
+    --text: #e6e8ea; --dim: #8b949e;
+    --ok: #3fb950; --warn: #d29922; --dead: #f85149; --accent: #1f6feb;
+    --ease: cubic-bezier(.23, 1, .32, 1);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+
+  /* Header: three control groups separated by a hairline, then the count. */
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel);
+           border-bottom: 1px solid var(--line); padding: 12px 16px;
+           display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  h1 { font-size: 14px; margin: 0 4px 0 0; font-weight: 600; letter-spacing: .2px; }
+  .group { display: flex; align-items: center; gap: 6px; padding-right: 10px;
+           border-right: 1px solid var(--line); }
+  .group:last-of-type { border-right: 0; padding-right: 0; }
+  input, select, button { background: #0f1113; color: var(--text); font: inherit;
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; }
+  input:focus-visible, select:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px; }
+  button { cursor: pointer; transition: transform 160ms var(--ease); }
+  button:active { transform: scale(.97); }
+  #live { transition: transform 160ms var(--ease), background-color 150ms ease,
+                      border-color 150ms ease, color 150ms ease; }
+  #live[aria-pressed="true"], .golive[aria-pressed="true"] {
+    background: var(--accent); border-color: var(--accent); color: #fff; }
+  .spacer { flex: 1 1 auto; }
+  .meta { color: var(--dim); font-size: 12px; }
+  .num { font-variant-numeric: tabular-nums;
+         font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  main { padding: 14px 16px 40px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--dim); margin: 18px 0 8px; font-weight: 600; }
+  .grid { display: grid; gap: 12px;
+          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          overflow: hidden; min-width: 0; display: flex; flex-direction: column;
+          transition: transform 160ms var(--ease), border-color 150ms ease;
+          opacity: 1; transform: translateY(0); }
+  /* First render only. Reconciliation keeps nodes across ticks, so an updated
+     tile never replays this. */
+  @starting-style { .tile { opacity: 0; transform: translateY(6px); } }
+  @media (hover: hover) and (pointer: fine) {
+    .tile:hover { transform: translateY(-1px); border-color: var(--line-hi); }
+  }
+
+  .shot { position: relative; aspect-ratio: 16 / 9; background: #000; display: block;
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06); }
+  /* contain, not cover: a desktop is never cropped. Absolute so a tile's height
+     comes from the 16/9 bed, never from the frame's own aspect. */
+  .shot img, .shot iframe { position: absolute; inset: 0; width: 100%; height: 100%;
+                            border: 0; display: block; object-fit: contain;
+                            background: #000; }
+  .shot .empty { position: absolute; inset: 0; display: grid; place-items: center;
+                 color: var(--dim); font-size: 12px; text-align: center; padding: 8px; }
+
+  .bar { display: flex; gap: 8px; align-items: center; padding: 8px 10px;
+         border-top: 1px solid var(--line); min-width: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+         background: var(--dim); box-shadow: 0 0 0 3px rgba(139, 148, 158, .2);
+         transition: background-color 150ms ease, box-shadow 150ms ease; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 3px rgba(63, 185, 80, .2); }
+  .dot.idle { background: var(--warn); box-shadow: 0 0 0 3px rgba(210, 153, 34, .2); }
+  .dot.down { background: var(--dead); box-shadow: 0 0 0 3px rgba(248, 81, 73, .2); }
+  .name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+          white-space: nowrap; }
+  .display { color: var(--dim); font-size: 12px; }
+  .status { color: var(--dim); font-size: 12px; padding: 0 10px 10px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .golive { margin-left: auto; flex: 0 0 auto; height: 28px; padding: 0 10px;
+            font-size: 12px; line-height: 26px;
+            transition: transform 160ms var(--ease), background-color 150ms ease,
+                        border-color 150ms ease, color 150ms ease; }
+
+  .pager { display: flex; gap: 8px; align-items: center; justify-content: center;
+           margin: 22px 0 0; color: var(--dim); }
+
+  @media (max-width: 700px) {
+    .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    h1 { width: 100%; }
+    .group { border-right: 0; padding-right: 0; }
+    /* Narrow tiles wrap the control row under the name, but the dot stays
+       beside the name it belongs to. */
+    .bar { flex-wrap: wrap; }
+    .name { flex: 1 1 auto; }
+    .display { order: 3; }
+    .golive { order: 4; margin-left: auto; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tile, button, .golive, #live { transition: opacity 150ms ease; }
+    .tile:hover, button:active { transform: none; }
+    @starting-style { .tile { opacity: 0; transform: none; } }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>desktop wall</h1>
+  <span class="group">
+    <input id="q" type="search" placeholder="search name, owner, group" size="20">
+    <select id="filter" title="filter">
+      <option value="all">all</option>
+      <option value="up">running</option>
+      <option value="down">stopped</option>
+    </select>
+  </span>
+  <span class="group">
+    <select id="interval" title="snapshot interval">
+      <option value="2">2s</option>
+      <option value="5" selected>5s</option>
+      <option value="10">10s</option>
+      <option value="30">30s</option>
+    </select>
+  </span>
+  <span class="group">
+    <button id="live" aria-pressed="false" title="switch visible tiles to live RFB">Live all</button>
+  </span>
+  <span class="spacer"></span>
+  <span class="meta" id="summary">loading…</span>
+</header>
+<main>
+  <div id="groups"></div>
+  <div class="pager">
+    <button id="prev">prev</button>
+    <span id="pageinfo" class="meta"></span>
+    <button id="next">next</button>
+    <select id="pagesize" title="tiles per page">
+      <option>6</option><option selected>12</option><option>24</option><option>48</option>
+    </select>
+  </div>
+</main>
+<script>
+"use strict";
+const params = new URLSearchParams(location.search);
+const el = (id) => document.getElementById(id);
+// nodes is the reconciliation key: one node per desktop name, kept across ticks.
+// Rebuilding tiles per tick tore down every live RFB session on every refresh.
+const state = { tiles: [], visible: new Set(), liveTiles: new Set(), live: false,
+                nodes: new Map(), page: 0, timer: null };
+
+// The interval is the one control a link can carry: ?interval=10. Any positive
+// value is honoured, not just the presets - the server floors it at 2s anyway.
+const wanted = Number(params.get("interval"));
+if (wanted > 0) {
+  if (![...el("interval").options].some(o => Number(o.value) === wanted)) {
+    el("interval").add(new Option(wanted + "s", String(wanted)));
+  }
+  el("interval").value = String(wanted);
+}
+
+function interval() { return Number(el("interval").value) || 5; }
+function pageSize() { return Number(el("pagesize").value) || 12; }
+function isLive(name) { return state.live || state.liveTiles.has(name); }
+
+function matches(t) {
+  const q = el("q").value.trim().toLowerCase();
+  if (q && ![t.name, t.owner, t.group, t.status]
+            .join(" ").toLowerCase().includes(q)) return false;
+  const f = el("filter").value;
+  if (f === "up") return t.up;
+  if (f === "down") return !t.up;
+  return true;
+}
+
+function activity(t) {
+  if (!t.up) return ["down", "stopped"];
+  if (t.changed_ago === null) return ["idle", "no snapshot yet"];
+  if (t.changed_ago < 30) return ["live", "active " + Math.round(t.changed_ago) + "s ago"];
+  return ["idle", "idle " + Math.round(t.changed_ago / 60) + " min"];
+}
+
+// One IntersectionObserver drives the whole cost model: a tile nobody can see is
+// never reported as visible, so the server never captures it.
+const seen = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    const name = e.target.dataset.name;
+    if (e.isIntersecting) state.visible.add(name); else state.visible.delete(name);
+  }
+}, { rootMargin: "100px" });
+
+function liveUrl(name, viewOnly) {
+  return "/vnc.html?path=" + encodeURIComponent("websockify?token=" + name) +
+         "&autoconnect=true&resize=scale" + (viewOnly ? "&view_only=true" : "");
+}
+
+function createTile(t) {
+  const node = document.createElement("div");
+  node.className = "tile";
+  node.dataset.name = t.name;
+  node.innerHTML =
+    '<a class="shot" target="_blank" rel="noopener"></a>' +
+    '<div class="bar"><span class="dot"></span><span class="name"></span>' +
+    '<span class="display num"></span>' +
+    '<button class="golive" aria-pressed="false"></button></div>' +
+    '<div class="status"></div>';
+  node.querySelector(".shot").href = liveUrl(t.name, false);
+  node.querySelector(".name").textContent = t.name;
+  node.querySelector(".display").textContent = ":" + t.display;
+  node.querySelector(".golive").onclick = (ev) => {
+    ev.preventDefault();
+    if (state.liveTiles.has(t.name)) state.liveTiles.delete(t.name);
+    else state.liveTiles.add(t.name);
+    updateTile(node, t);
+  };
+  seen.observe(node);
+  return node;
+}
+
+function updateTile(node, t) {
+  const [cls, when] = activity(t);
+  const dot = node.querySelector(".dot");
+  if (dot.className !== "dot " + cls) dot.className = "dot " + cls;
+  const status = node.querySelector(".status");
+  const text = t.status || when;
+  if (status.textContent !== text) {
+    status.textContent = text;
+    status.title = t.error || t.status || "";
+  }
+  const live = isLive(t.name);
+  const button = node.querySelector(".golive");
+  button.setAttribute("aria-pressed", String(live));
+  const label = live ? "Live" : "Snapshot";
+  if (button.textContent !== label) button.textContent = label;
+  paintShot(node, t);
+}
+
+function paintShot(node, t) {
+  const shot = node.querySelector(".shot");
+  if (isLive(t.name)) {
+    // Never touch a live panel: replacing it would drop its websocket.
+    if (!shot.querySelector("iframe")) {
+      shot.innerHTML = '<iframe src="' + liveUrl(t.name, true) + '"></iframe>';
+    }
+    return;
+  }
+  if (t.captured_at === null) {
+    const text = t.up ? "waiting for first snapshot…" : "display stopped";
+    if (shot.querySelector(".empty")?.textContent !== text) {
+      shot.innerHTML = '<div class="empty">' + text + "</div>";
+    }
+    return;
+  }
+  const src = "/wall/snap/" + t.name + ".webp?c=" + t.captured_at;
+  let img = shot.querySelector("img");
+  if (!img) {
+    img = document.createElement("img");
+    img.loading = "lazy";
+    img.src = src;
+    shot.replaceChildren(img);
+    return;
+  }
+  if (img.dataset.src === src || img.dataset.loading === src) return;
+  // Decode the next frame before it is shown, so a refresh never flashes.
+  img.dataset.loading = src;
+  const next = new Image();
+  next.src = src;
+  next.decode().then(() => { img.src = src; img.dataset.src = src; })
+    .catch(() => {}).finally(() => { delete img.dataset.loading; });
+}
+
+function render() {
+  const shown = state.tiles.filter(matches);
+  const pages = Math.max(1, Math.ceil(shown.length / pageSize()));
+  state.page = Math.min(state.page, pages - 1);
+  const slice = shown.slice(state.page * pageSize(), (state.page + 1) * pageSize());
+
+  const groups = new Map();
+  for (const t of slice) {
+    if (!groups.has(t.group)) groups.set(t.group, []);
+    groups.get(t.group).push(t);
+  }
+
+  const root = el("groups");
+  const keep = new Set(slice.map(t => t.name));
+  for (const [name, node] of state.nodes) {
+    if (!keep.has(name)) { seen.unobserve(node); node.remove(); state.nodes.delete(name); }
+  }
+
+  // Sections are keyed by group name for the same reason tiles are keyed by
+  // desktop name: moving a node that holds an iframe reloads it.
+  const sections = new Map([...root.children].filter(c => c.dataset.group)
+    .map(c => [c.dataset.group, c]));
+  let position = 0;
+  for (const [group, tiles] of [...groups.entries()].sort()) {
+    let section = sections.get(group);
+    if (!section) {
+      section = document.createElement("section");
+      section.dataset.group = group;
+      section.innerHTML = '<h2></h2><div class="grid"></div>';
+      sections.set(group, section);
+    }
+    section.querySelector("h2").textContent = group + " · " + tiles.length;
+    if (root.children[position] !== section) root.insertBefore(section, root.children[position]);
+    position++;
+
+    const grid = section.querySelector(".grid");
+    tiles.forEach((t, index) => {
+      let node = state.nodes.get(t.name);
+      if (!node) { node = createTile(t); state.nodes.set(t.name, node); }
+      updateTile(node, t);
+      if (grid.children[index] !== node) grid.insertBefore(node, grid.children[index]);
+    });
+  }
+  for (const [group, section] of sections) {
+    if (!groups.has(group)) { section.remove(); sections.delete(group); }
+  }
+
+  // The first tick runs before any tile exists, so nothing is visible yet and
+  // nothing is captured. Kick one more as soon as tiles are on screen.
+  if (!state.kicked) { state.kicked = true; setTimeout(tick, 250); }
+  el("pageinfo").textContent = "page " + (state.page + 1) + " / " + pages +
+    " · " + shown.length + " of " + state.tiles.length + " desktops";
+  el("prev").disabled = state.page === 0;
+  el("next").disabled = state.page >= pages - 1;
+}
+
+async function tick() {
+  try {
+    // One round trip per cycle: the heartbeat says what is on screen and the
+    // answer is the wall state for exactly those desktops.
+    const view = await fetch("/wall/api/view", {
+      method: "POST",
+      body: JSON.stringify({ visible: [...state.visible], interval: interval() }),
+    }).then(r => r.json());
+    state.tiles = view.tiles;
+    const live = state.tiles.filter(t => isLive(t.name)).length;
+    el("summary").textContent = live + " live · " + state.tiles.length + " desktops · " +
+      state.tiles.filter(t => state.visible.has(t.name) && t.up).length +
+      " capturing · every " + view.interval + "s";
+    render();
+  } catch (err) {
+    el("summary").textContent = "wall server unreachable: " + err;
+  }
+}
+
+function restart() {
+  clearInterval(state.timer);
+  state.timer = setInterval(tick, interval() * 1000);
+  tick();
+}
+
+el("q").oninput = () => { state.page = 0; render(); };
+el("filter").onchange = () => { state.page = 0; render(); };
+el("interval").onchange = restart;
+el("pagesize").onchange = () => { state.page = 0; render(); };
+el("prev").onclick = () => { state.page--; render(); };
+el("next").onclick = () => { state.page++; render(); };
+el("live").onclick = () => {
+  state.live = !state.live;
+  el("live").setAttribute("aria-pressed", String(state.live));
+  render();
+};
+restart();
+</script>
+</body>
+</html>
