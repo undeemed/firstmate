@@ -248,6 +248,17 @@
 #   `treehouse return --force` and an ordinary treehouse-subshell exit terminate
 #   every process whose cwd is inside the worktree, which would reap the live
 #   co-tenant's worker. The window is left exactly as found for inspection.
+#   A record is only a claim while its task still exists to be harmed. When the
+#   pool hands back a slot whose claimant's own recorded endpoint is
+#   authoritatively dead, and the checkout is clean with every commit already on
+#   a remote, the claim is a stale leftover and this spawn takes the slot over
+#   instead of refusing (worktree_claim_superseded). Pool allocation is itself
+#   the process proof the refusal wants, since occupancy for a non-leased slot
+#   is process-based: Treehouse would not have offered a slot anything was
+#   running in. The stale record is left untouched for its own teardown, which
+#   already survives reassignment through the slot-owner claim. An endpoint that
+#   merely reads unknown, a dirty tree, or a commit that exists nowhere but this
+#   checkout all keep the refusal, so nothing unlanded is ever reset away.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -2699,12 +2710,66 @@ worktree_meta_claimant() {  # <worktree-raw> <worktree-real> -> prints the confl
 # the authoritative locked re-check stay at the single pre-publication point
 # (assert_worktree_unclaimed below), because that is where the claim lock can
 # span check-to-publication.
+# bin/fm-worktree-claim-lib.sh owns the claim record this reads.
+#
+# A record is only a claim while its task still exists to be harmed. When the
+# pool hands back a slot whose claimant is provably gone, this spawn takes the
+# slot over instead of refusing; otherwise a worker that died without teardown
+# strands its slot until someone tears it down by hand - once per stale record,
+# each attempt also leaving a quarantined presentation projection behind.
+#
+# Three proofs, each required, all offline:
+#   1. The slot came from the pool. Occupancy for a non-leased slot is
+#      PROCESS-based, so allocation is itself the proof that nothing runs with
+#      a cwd inside the checkout - exactly the hazard the refusal guards. A
+#      secondmate home and an Orca worktree never come from the pool, so
+#      neither is ever superseded here.
+#   2. The claimant own recorded endpoint is authoritatively dead; "unknown"
+#      keeps the refusal.
+#   3. The checkout holds nothing adoption would destroy. Taking it over runs
+#      freshen_spawn_worktree_base, which resets --hard onto origin default
+#      branch, so the tree must be clean AND every commit must already exist on
+#      some remote-tracking branch.
+#
+# The superseded record is left exactly as written: bin/fm-teardown.sh already
+# survives reassignment through the slot-owner claim this spawn takes.
+worktree_claim_superseded() {  # <source> <claimant-id>
+  local source=$1 claimant=$2 meta window backend
+  [ "$source" = "treehouse get" ] || return 1
+  meta="$STATE/$claimant.meta"
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  window=$(fm_meta_get "$meta" window)
+  [ -n "$window" ] || return 1
+  backend=$(fm_meta_get "$meta" backend)
+  [ -n "$backend" ] || backend=tmux
+  [ "$(fm_backend_agent_alive "$backend" "$window")" = dead ] || return 1
+  [ -z "$(git -C "$WT" -c core.quotePath=false status --porcelain 2>/dev/null)" ] || return 1
+  git -C "$WT" rev-parse --verify --quiet HEAD >/dev/null 2>&1 || return 1
+  [ -n "$(git -C "$WT" branch -r --contains HEAD 2>/dev/null)" ] || return 1
+}
+# Records this spawn already proved stale, so the locked pre-publication
+# re-check does not re-derive a proof the base refresh in between has erased:
+# once the base is reset the tree reads clean and current whatever it held
+# before, which would turn proof 3 into a tautology.
+SPAWN_SUPERSEDED_CLAIMS=
+spawn_claim_already_superseded() {  # <claimant-id>
+  case " $SPAWN_SUPERSEDED_CLAIMS " in
+  *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
 assert_worktree_meta_unclaimed() {  # <source> <inspect-target>
   local source=$1 inspect_target=$2 wt_real claimant
   wt_real=$(real_path_or_raw "$WT")
   if claimant=$(worktree_meta_claimant "$WT" "$wt_real"); then
+    spawn_claim_already_superseded "$claimant" && return 0
+    if worktree_claim_superseded "$source" "$claimant"; then
+      SPAWN_SUPERSEDED_CLAIMS="$SPAWN_SUPERSEDED_CLAIMS $claimant"
+      echo "note: $source handed back $WT, which task $claimant still records as its worktree ($STATE/$claimant.meta), but that task endpoint is gone and the checkout is clean with every commit already on a remote; $ID takes the slot over and $claimant record is left for its own teardown" >&2
+      return 0
+    fi
     echo "error: $source handed back $WT, which task $claimant already records as its worktree ($STATE/$claimant.meta); refusing to launch $ID into an occupied checkout" >&2
-    echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout, including task $claimant's worker" >&2
+    echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout, including task $claimant worker" >&2
     HERDR_PROJECTION_ABORT_CLEANUP=0
     ORCA_ABORT_CLEANUP=0
     exit 1
@@ -4109,6 +4174,16 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     fi
     SPAWN_SLOT_CLAIMED=1
   fi
+fi
+# Record axis for the pool paths, run BEFORE the base refresh below. The header
+# promises no contested checkout is written to before a refusal, and
+# freshen_spawn_worktree_base resets --hard: reaching the locked re-check first
+# would mean deciding the collision against a checkout whose contents this
+# spawn had already replaced. Deciding here also keeps proof 3 in
+# worktree_claim_superseded meaningful, since it inspects what the claimant
+# actually left behind.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+ assert_worktree_meta_unclaimed "treehouse get" "$T"
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1

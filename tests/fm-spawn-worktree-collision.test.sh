@@ -44,6 +44,15 @@ case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
 esac
 case "${1:-}" in
+  # The windows this fake session still holds, one name per line. A task whose
+  # window is listed reads as a live endpoint (present, foreground unreadable);
+  # a task whose window is absent reads as authoritatively missing, which is
+  # what a worker that died without teardown leaves behind.
+  list-windows)
+    [ -n "${FM_FAKE_TMUX_WINDOWS:-}" ] && [ -f "$FM_FAKE_TMUX_WINDOWS" ] \
+      && cat "$FM_FAKE_TMUX_WINDOWS"
+    exit 0
+    ;;
   display-message) printf 'firstmate\n'; exit 0 ;;
 esac
 exit 0
@@ -100,6 +109,21 @@ SH
   chmod +x "$fakebin/orca"
 }
 
+# write_collision_brief <path> <id>: the two subsections fm-spawn.sh requires of
+# a ship brief. A one-line legacy body is refused before the spawn reaches the
+# occupied-checkout check these cases exercise.
+write_collision_brief() {
+  local path=$1 id=$2
+  cat > "$path" <<BRIEF
+# Task
+## Captain's intent
+brief for $id
+
+## Firstmate spec
+Take the pool worktree and record it.
+BRIEF
+}
+
 # make_collision_case <name> [treehouse-status-json]: a home, a project, and one
 # pool worktree that every spawn in the case is handed.
 make_collision_case() {
@@ -113,6 +137,7 @@ make_collision_case() {
   printf 'codex\n' > "$home/config/crew-harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
+  : > "$case_dir/tmux-windows"
   printf '%s|%s|%s|%s\n' "$home" "$proj" "$wt" "$fakebin"
 }
 
@@ -125,16 +150,37 @@ EOF
 # run_collision_spawn <id> [pane-path]: spawn <id> against the case's project,
 # with the pane landing in [pane-path] (the shared worktree by default).
 run_collision_spawn() {
-  local id=$1 pane=${2:-$WT_DIR}
+  local id=$1 pane=${2:-$WT_DIR} out status windows
+  windows="$(dirname "$HOME_DIR")/tmux-windows"
   mkdir -p "$HOME_DIR/data/$id"
-  printf 'brief for %s\n' "$id" > "$HOME_DIR/data/$id/brief.md"
-  FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+  write_collision_brief "$HOME_DIR/data/$id/brief.md" "$id"
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
     FM_FAKE_PANE_PATH="$pane" \
+    FM_FAKE_TMUX_WINDOWS="$windows" \
     PATH="$FAKEBIN_DIR:$PATH" \
-    "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+    "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1)
+  status=$?
+  # A launched task holds a window from now on, exactly as a real one does, so
+  # a later spawn that collides with it collides with a LIVE endpoint. The
+  # window is registered after the launch because fm-spawn.sh refuses to create
+  # a window that already exists. A case that wants a dead co-tenant drops the
+  # window again with kill_collision_window.
+  [ "$status" -ne 0 ] || printf 'fm-%s\n' "$id" >> "$windows"
+  printf '%s\n' "$out"
+  return "$status"
+}
+
+# kill_collision_window <id>: the co-tenant's worker died without teardown, so
+# its window is gone from the session while its state/<id>.meta still records
+# the pool slot.
+kill_collision_window() {
+  local id=$1 file
+  file="$(dirname "$HOME_DIR")/tmux-windows"
+  grep -v -x "fm-$id" "$file" > "$file.next" || :
+  mv -f "$file.next" "$file"
 }
 
 # run_orca_collision_spawn <id>: spawn <id> on the orca path, where the fake
@@ -143,7 +189,7 @@ run_collision_spawn() {
 run_orca_collision_spawn() {
   local id=$1
   mkdir -p "$HOME_DIR/data/$id"
-  printf 'brief for %s\n' "$id" > "$HOME_DIR/data/$id/brief.md"
+  write_collision_brief "$HOME_DIR/data/$id/brief.md" "$id"
   FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
@@ -260,6 +306,10 @@ test_same_task_relaunch_is_not_a_collision() {
   read_collision_record "$rec"
 
   run_collision_spawn "$id" > /dev/null
+  # Re-spawning a task whose window still exists is refused by the duplicate
+  # endpoint guard long before any collision logic; the case under test is that
+  # the task's OWN worktree record is not treated as somebody else's claim.
+  kill_collision_window "$id"
   out=$(run_collision_spawn "$id")
   status=$?
   expect_code 0 "$status" "relaunching the same task into its own worktree should succeed"
@@ -376,7 +426,7 @@ test_secondmate_collision_refuses_before_touching_the_home() {
   active="$case_dir/active-home"
   mkdir -p "$active/data/$new" "$active/state" "$active/config" "$active/projects"
   touch "$active/state/.last-watcher-beat"
-  printf 'brief for %s\n' "$new" > "$active/data/$new/brief.md"
+  write_collision_brief "$active/data/$new/brief.md" "$new"
   git init -q -b main "$primary"
   printf 'state/\ndata/\nconfig/\nprojects/\n.fm-secondmate-home\n' > "$primary/.gitignore"
   printf 'v1\n' > "$primary/AGENTS.md"
@@ -426,9 +476,92 @@ test_secondmate_collision_refuses_before_touching_the_home() {
   pass "a secondmate collision refuses before the first write into the home"
 }
 
+# The other half of the incident: the co-tenant is GONE. Its worker died
+# without teardown, so Treehouse hands the slot straight back out while the
+# record still claims it. Refusing there strands the slot until someone tears
+# the dead task down by hand, and leaves a quarantined presentation projection
+# behind on every attempt.
+test_dead_claimant_with_landed_work_hands_the_slot_over() {
+  local rec dead new out status
+  dead=collide-dead-c3
+  new=collide-heir-d4
+  rec=$(make_collision_case adopted)
+  read_collision_record "$rec"
+
+  out=$(run_collision_spawn "$dead")
+  expect_code 0 "$?" "the first spawn should take the free worktree"
+  assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$dead.meta" \
+    "the first task did not record the pool worktree"
+  kill_collision_window "$dead"
+
+  out=$(run_collision_spawn "$new")
+  status=$?
+  expect_code 0 "$status" "a slot whose claimant is gone should be handed over, not refused"
+  assert_contains "$out" "takes the slot over" \
+    "the handover was not reported"
+  assert_contains "$out" "$dead" "the handover did not name the stale record"
+  assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$new.meta" \
+    "the adopting task did not record the pool worktree"
+  assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$dead.meta" \
+    "the stale record was rewritten instead of being left for its own teardown"
+  pass "a slot whose claimant is dead and fully pushed is handed over"
+}
+
+# Adoption resets the checkout onto origin's default branch, so a commit that
+# exists nowhere else must keep the refusal even though the claimant is gone.
+test_dead_claimant_with_unpushed_work_still_refuses() {
+  local rec dead new out status
+  dead=collide-unpushed-e5
+  new=collide-heir-f6
+  rec=$(make_collision_case unpushed)
+  read_collision_record "$rec"
+
+  out=$(run_collision_spawn "$dead")
+  expect_code 0 "$?" "the first spawn should take the free worktree"
+  kill_collision_window "$dead"
+  git -C "$WT_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit --quiet --allow-empty -m 'work that exists only here'
+
+  out=$(run_collision_spawn "$new")
+  status=$?
+  expect_code 1 "$status" "a checkout holding unpushed work must not be handed over"
+  assert_contains "$out" "already records as its worktree" \
+    "the refusal did not report the conflicting durable record"
+  assert_absent "$HOME_DIR/state/$new.meta" \
+    "the refused spawn still published metadata"
+  [ -n "$(git -C "$WT_DIR" log --oneline -1 --grep 'exists only here')" ] \
+    || fail "the refused spawn reset away the unpushed commit"
+  pass "a dead claimant holding unpushed work keeps the refusal"
+}
+
+# Same for uncommitted work: the claimant is gone, but its tree is dirty.
+test_dead_claimant_with_dirty_tree_still_refuses() {
+  local rec dead new out status
+  dead=collide-dirty-g7
+  new=collide-heir-h8
+  rec=$(make_collision_case dirty)
+  read_collision_record "$rec"
+
+  out=$(run_collision_spawn "$dead")
+  expect_code 0 "$?" "the first spawn should take the free worktree"
+  kill_collision_window "$dead"
+  printf 'uncommitted\n' > "$WT_DIR/scratch.txt"
+
+  out=$(run_collision_spawn "$new")
+  status=$?
+  expect_code 1 "$status" "a dirty checkout must not be handed over"
+  assert_absent "$HOME_DIR/state/$new.meta" \
+    "the refused spawn still published metadata"
+  [ -f "$WT_DIR/scratch.txt" ] || fail "the refused spawn discarded uncommitted work"
+  pass "a dead claimant with a dirty tree keeps the refusal"
+}
+
 test_second_spawn_onto_occupied_checkout_refuses
 test_refusal_leaves_the_shared_checkout_untouched
 test_secondmate_collision_refuses_before_touching_the_home
+test_dead_claimant_with_landed_work_hands_the_slot_over
+test_dead_claimant_with_unpushed_work_still_refuses
+test_dead_claimant_with_dirty_tree_still_refuses
 test_symlinked_route_to_an_occupied_checkout_refuses
 test_pool_lease_by_another_holder_refuses
 test_orca_collision_refusal_runs_no_armed_cleanup
