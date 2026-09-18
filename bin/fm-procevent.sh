@@ -654,6 +654,7 @@ cmd_reconcile() {
         if fm_procevent_claim_release_locked "$id" "$owner" "$pid" "$token" 2>/dev/null; then
           rm -f -- "$(staging_file "$id" "$token")"
           rm -f -- "$(runner_file "$id")"
+          clear_poll_failure "$id"
           stopped=$((stopped + 1))
         else
           uncertain=$((uncertain + 1))

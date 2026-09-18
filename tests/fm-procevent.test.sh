@@ -1358,6 +1358,41 @@ for _ in $(seq 1 40); do kill -0 "$orphan_pid" 2>/dev/null || break; sleep 0.1; 
 kill -0 "$orphan_pid" 2>/dev/null && fail "reconcile left an orphaned runner alive"
 pass "reconcile reaps a runner whose source registration is gone"
 
+# That same reap is a teardown, so it owes the source's poll-failure record the
+# same collection every other retire path gives it. A runner is stopped by
+# signalling its process group and never runs its own cleanup, and nothing
+# afterwards enumerates the record: sweep-home walks only *.source, *.claim and
+# *.runner. A record left beside a registration that is already gone therefore
+# stays in the home for ever and contradicts "a home with no registered source
+# generates no state".
+HORPHREC="$TMP_ROOT/horphrec"; new_home "$HORPHREC"
+ORPHREC_ART="$TMP_ROOT/orphrec-board.html"
+printf '<h1>orphrec</h1>\n' > "$ORPHREC_ART"
+orphrec_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$ORPHREC_ART")
+PE_TRACKED+=("$HORPHREC|$orphrec_id")
+orphrec_record="$HORPHREC/state/procevent/$orphrec_id.poll-failure"
+orphrec_claim="$FM_PROCEVENT_CLAIM_ROOT/$orphrec_id.claim"
+LAVISH_COUNT="$TMP_ROOT/orphrec-count"; LAVISH_SCRIPT="other-server-error"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HORPHREC" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$ORPHREC_ART" >/dev/null
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HORPHREC" start "$orphrec_id" >/dev/null
+[ -f "$orphrec_record" ] \
+  || fail "the failed poll wrote no poll-failure record, so this fixture proves nothing"
+# The state a runner killed with its process group leaves behind: a claim this
+# home still owns whose leader is gone, and a registration that disappeared by
+# some route other than retire.
+mkdir -p "$FM_PROCEVENT_CLAIM_ROOT"
+printf '%s\n%s\norphrec-token\norphrec-identity\n' "$HORPHREC" 999999 > "$orphrec_claim"
+chmod 0600 "$orphrec_claim"
+rm -f "$HORPHREC/state/procevent/$orphrec_id.source"
+out=$(pe "$HORPHREC" reconcile)
+assert_contains "$out" "stopped=1" \
+  "reconcile did not reap the unregistered source's claim, so this proves nothing"
+assert_absent "$orphrec_claim" "the reaped claim stayed behind"
+assert_absent "$orphrec_record" \
+  "reconcile reaped an unregistered source and left poll-failure residue nothing collects"
+pass "reconcile's reap of an unregistered source collects its poll-failure record"
+
 # --- a stale claim is reclaimable, a live one is not ------------------------
 CLAIM="$FM_PROCEVENT_CLAIM_ROOT/stale-src.claim"
 mkdir -p "$FM_PROCEVENT_CLAIM_ROOT"
