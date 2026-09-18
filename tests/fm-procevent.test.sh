@@ -915,6 +915,36 @@ assert_grep 'ship it' "$HSPIN/state/procevent-inbox/$spin_id.3.result" \
   "the answer captured after repeated failures is the captain's feedback"
 pass "repeated identical failed polls are rate-limited to one capture and one wake"
 
+# The rate limit may only ever suppress a failure the reader was actually
+# handed. If the capture itself fails, that failure reached nobody, so the next
+# identical poll must still be captured rather than dismissed as a repeat of
+# something that never arrived - otherwise the source is permanently silent with
+# no capture, no wake, and no nonzero exit, which is the swallowed answer
+# channel this whole change exists to remove.
+HCAPFAIL="$TMP_ROOT/hcapfail"; new_home "$HCAPFAIL"
+CAPFAIL_ART="$TMP_ROOT/capfail-board.html"
+printf '<h1>capfail</h1>\n' > "$CAPFAIL_ART"
+capfail_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$CAPFAIL_ART")
+PE_TRACKED+=("$HCAPFAIL|$capfail_id")
+LAVISH_COUNT="$TMP_ROOT/capfail-count"; LAVISH_SCRIPT="other-server-error"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HCAPFAIL" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$CAPFAIL_ART" >/dev/null
+mkdir -p "$HCAPFAIL/state/procevent-inbox"
+chmod 0500 "$HCAPFAIL/state/procevent-inbox"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HCAPFAIL" start "$capfail_id" >/dev/null 2>&1 \
+  && fail "a runner that could not durably capture its result still reported success"
+chmod 0700 "$HCAPFAIL/state/procevent-inbox"
+[ "$(count_results "$HCAPFAIL" "$capfail_id")" = 0 ] \
+  || fail "the capture was not actually prevented, so this fixture proves nothing"
+[ "$(wake_payloads "$HCAPFAIL" | grep -c .)" = 0 ] \
+  || fail "a result that was never captured was announced anyway"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HCAPFAIL" start "$capfail_id" >/dev/null
+[ "$(count_results "$HCAPFAIL" "$capfail_id")" = 1 ] \
+  || fail "a failure whose capture never landed was suppressed as an already-reported repeat"
+assert_contains "$(wake_payloads "$HCAPFAIL")" "procevent lavish $capfail_id 1" \
+  "the first failure that actually reached the inbox was never announced"
+pass "a failure whose capture failed is not suppressed as an already-reported repeat"
+
 # Do not change what a real answer does, part one: a LIVE board answering while
 # its session stays open is captured, announced, classifies feedback, and keeps
 # its registration, so the widened retirement path cannot end a board that is

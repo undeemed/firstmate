@@ -561,6 +561,7 @@ In supported steady state, a home with no registered source runs nothing, genera
 
 A poll that keeps failing is rate-limited by the identity of its own output: the first failure is captured, published, and applied exactly as before, while a byte-identical repeat is neither captured nor announced again until any poll exits 0 and clears that private `state/procevent/<id>.poll-failure` record.
 Only the child's exit status is read, so the rule stays adapter-agnostic, the source stays armed and keeps being polled, and a failure carrying anything new still reaches the reader.
+That record is written only once the failure it identifies is durably captured, so a failure that reached no reader is never what a later repeat is suppressed against and a capture path that cannot write stays loud.
 
 Whether a captured result ends its source is adapter knowledge, never the runner's.
 After capture - and after initial `check` publication for the default ordering - the runner calls `bin/fm-procevent-<adapter>.sh terminal <result-file>` and retires the registration on exit 0 alone, dropping only the exact registration generation captured by its claim and releasing that claim only after removal succeeds under one source boundary; a missing command, an error, or any other exit keeps the source armed, so an adapter with no notion of ending needs no change.

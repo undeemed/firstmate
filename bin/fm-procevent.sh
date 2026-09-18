@@ -261,32 +261,45 @@ cmd_register() {
 # wake per poll: four boards whose files were gone produced 41 captured results
 # in about half a minute and kept waking the supervisor.
 #
-# Identity is the whole guard. A failure that says something new is never
-# suppressed, output identical to the failure already captured can carry nothing
-# the reader has not been handed, and any poll that exits 0 clears the record.
-# Only the child's exit status is read, so this stays adapter-agnostic and
-# inspects no result, and a repeating source stays armed and is polled again, so
-# recovery is unchanged and only the duplicate publication stops. Unmeasurable
-# identity reports rather than suppresses.
-poll_failure_streak() {  # <source-id> <output-file>: print this failure's repeat count
-  local id=$1 out=$2 path digest prev_digest='' prev_count=0 count tmp
+# Identity is the whole guard, and the record means exactly one thing: a failure
+# with this digest was durably captured and handed to the reader. It is
+# therefore written only once that capture is durable, so a failure whose
+# capture never happened leaves no record and is never what a later repeat is
+# suppressed against - a capture path that cannot write stays loud instead of
+# going permanently silent. A failure that says something new is never
+# suppressed, and any poll that exits 0 clears the record. Only the child's exit
+# status is read, so this stays adapter-agnostic and inspects no result, and a
+# repeating source stays armed and is polled again, so recovery is unchanged and
+# only the duplicate publication stops. Unmeasurable identity reports rather
+# than suppresses.
+#
+# Print how many times this failure has now repeated one already captured, or 0
+# when it is new and must itself be captured. A repeat advances the count here
+# because the capture it repeats is already durable.
+poll_failure_repeat() {  # <source-id> <digest>
+  local id=$1 digest=$2 path prev_digest='' prev_count=0 count
+  [ -n "$digest" ] || { printf '0\n'; return 0; }
   path=$(fm_procevent_poll_failure_path "$STATE" "$id")
-  digest=$(fm_pr_sha256 "$out" 2>/dev/null) || digest=''
-  [ -n "$digest" ] || { printf '1\n'; return 0; }
   if [ -f "$path" ] && [ ! -L "$path" ]; then
     read -r prev_digest prev_count < "$path" 2>/dev/null || { prev_digest=''; prev_count=0; }
   fi
   case "$prev_count" in ''|*[!0-9]*) prev_count=0 ;; esac
-  [ "$prev_digest" = "$digest" ] || prev_count=0
+  [ "$prev_digest" = "$digest" ] && [ "$prev_count" -ge 1 ] || { printf '0\n'; return 0; }
   count=$((prev_count + 1))
-  tmp=$(umask 077; mktemp "$(fm_procevent_registry_dir "$STATE")/.poll-failure.XXXXXX") \
-    || { printf '1\n'; return 0; }
+  record_poll_failure "$id" "$digest" "$count" || true
+  printf '%s\n' "$count"
+}
+
+record_poll_failure() {  # <source-id> <digest> <count>
+  local id=$1 digest=$2 count=$3 path tmp
+  [ -n "$digest" ] || return 1
+  path=$(fm_procevent_poll_failure_path "$STATE" "$id")
+  tmp=$(umask 077; mktemp "$(fm_procevent_registry_dir "$STATE")/.poll-failure.XXXXXX") || return 1
   if printf '%s %s\n' "$digest" "$count" > "$tmp" && chmod 0600 "$tmp" && mv -f -- "$tmp" "$path"; then
-    printf '%s\n' "$count"
-  else
-    rm -f -- "$tmp"
-    printf '1\n'
+    return 0
   fi
+  rm -f -- "$tmp"
+  return 1
 }
 
 clear_poll_failure() {  # <source-id>
@@ -467,11 +480,12 @@ cmd_start() {
   fi
 
   # A failing poll is rate-limited by the identity of its own output, and any
-  # poll that succeeds clears that record (see poll_failure_streak).
-  local failures
+  # poll that succeeds clears that record (see poll_failure_repeat).
+  local failure_digest='' failures
   if [ "$rc" -ne 0 ]; then
-    failures=$(poll_failure_streak "$id" "$out")
-    if [ "$failures" -gt 1 ]; then
+    failure_digest=$(fm_pr_sha256 "$out" 2>/dev/null) || failure_digest=''
+    failures=$(poll_failure_repeat "$id" "$failure_digest")
+    if [ "$failures" -ne 0 ]; then
       rm -f -- "$out" "$(runner_file "$id")"
       STAGED_OUTPUT=
       printf 'repeat-failure: %s (identical failed poll, %s in a row)\n' "$id" "$failures"
@@ -485,6 +499,9 @@ cmd_start() {
   durable=$(fm_procevent_capture "$STATE" "$id" "$adapter" "$out") || { rm -f -- "$out"; die "cannot durably capture the result"; }
   rm -f -- "$out"
   STAGED_OUTPUT=
+  # Strictly after the capture above, because the record may only stand for a
+  # failure the reader has actually been handed.
+  [ -z "$failure_digest" ] || record_poll_failure "$id" "$failure_digest" 1 || true
   [ "$truncated" -eq 1 ] && printf 'truncated: %s at %s bytes\n' "$id" "$MAX_OUTPUT_BYTES" >&2
 
   # Independent of publication and acknowledgement, so it runs once per capture
@@ -647,9 +664,13 @@ cmd_reconcile() {
           if [ "$owner" = "$FM_HOME" ] \
             && rm -f -- "$(source_file "$id")" \
             && [ ! -e "$(source_file "$id")" ] \
-            && [ ! -L "$(source_file "$id")" ] \
-            && fm_procevent_claim_release_locked "$id" "$owner" "$pid" "$token" 2>/dev/null; then
-            stopped=$((stopped + 1))
+            && [ ! -L "$(source_file "$id")" ]; then
+            clear_poll_failure "$id"
+            if fm_procevent_claim_release_locked "$id" "$owner" "$pid" "$token" 2>/dev/null; then
+              stopped=$((stopped + 1))
+            else
+              uncertain=$((uncertain + 1))
+            fi
           else
             uncertain=$((uncertain + 1))
           fi

@@ -94,7 +94,7 @@ exit=1
 The adapter therefore decides reachability from the artifact rather than from this response, which is a filesystem fact no vendor build can drift: an unreachable board reports the adapter's own `missing` verdict, and `missing` was already terminal, so the source retires on its first failed poll by the same route an ended session takes.
 A gone board is also a swallowed answer channel, which is why the single announced `missing` result matters as much as the silence after it.
 
-Regressions: `tests/fm-procevent.test.sh` pins the gone board end to end (missing classification, terminal verdict, retirement after one failed poll, and no second wake), the repeat-failure rate limit, and the two answer paths that must be unchanged - a live board's feedback stays collected and armed, and an ended session's keyed answer still survives retirement.
+Regressions: `tests/fm-procevent.test.sh` pins the gone board end to end (missing classification, terminal verdict, retirement after one failed poll, and no second wake), the repeat-failure rate limit and its refusal to suppress a failure whose capture never landed, and the two answer paths that must be unchanged - a live board's feedback stays collected and armed, and an ended session's keyed answer still survives retirement.
 Its scripted poll stand-in answers an absent artifact with the exact response measured above, so the fixture reproduces the defect rather than assuming it.
 
 ## Why an ended Lavish review is terminal
