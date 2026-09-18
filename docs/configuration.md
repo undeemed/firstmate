@@ -559,11 +559,15 @@ Discovery is never a timer.
 Each registered source has its own child process blocking on that source, and the watcher's per-cycle `reconcile` republishes every captured result with no durable handled acknowledgement yet - regardless of any earlier publication - restarts a source whose owner is gone, and stops this home's runner when reconciliation runs after its registration disappeared unexpectedly.
 In supported steady state, a home with no registered source runs nothing, generates no state, and keeps its ordinary cadence.
 
+A poll that keeps failing is rate-limited by the identity of its own output: the first failure is captured, published, and applied exactly as before, while a byte-identical repeat is neither captured nor announced again until any poll exits 0 and clears that private `state/procevent/<id>.poll-failure` record.
+Only the child's exit status is read, so the rule stays adapter-agnostic, the source stays armed and keeps being polled, and a failure carrying anything new still reaches the reader.
+
 Whether a captured result ends its source is adapter knowledge, never the runner's.
 After capture - and after initial `check` publication for the default ordering - the runner calls `bin/fm-procevent-<adapter>.sh terminal <result-file>` and retires the registration on exit 0 alone, dropping only the exact registration generation captured by its claim and releasing that claim only after removal succeeds under one source boundary; a missing command, an error, or any other exit keeps the source armed, so an adapter with no notion of ending needs no change.
 A failed terminal removal stays durably terminal and is completed by ordinary reconciliation without restarting its poll, while a concurrently replaced registration survives and becomes independently runnable after the old claim releases.
 A source that has ended therefore captures at most one terminal result, is never restarted, and leaves no recurring poll work, while explicit `retire` stays the supported and idempotent path afterwards.
 For Lavish that verdict covers an ended session, a missing session, and the final feedback of a `Send & End` review, which the published poll marks with `session_ended` before it returns only empty ended sessions.
+A board whose artifact is no longer readable is one of those missing sessions: the adapter checks the board itself rather than the vendor's error text, so a review whose file is gone retires on its first failed poll instead of re-polling forever, and the one announced missing result is how a dead answer channel gets reported.
 
 Applying a captured result is adapter knowledge too, and some results carry no judgement at all: they must simply be applied idempotently to this home's own durable state.
 Leaving that to a handler means it can silently not happen, so immediately after the terminal check above the runner calls `bin/fm-procevent-<adapter>.sh autohandle <source-id> <sequence> <result-file>` and lets the adapter apply and acknowledge its own result.

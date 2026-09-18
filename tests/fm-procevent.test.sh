@@ -617,9 +617,19 @@ cat > "$LAVISH_SCRIPTED_BIN/lavish-axi" <<'SH'
 # names the response for each successive poll, one word per poll, and its last
 # word repeats forever. `interrupt` is the exact transient response the server
 # returns while the board's marks stay available.
+#
+# An absent artifact is answered before the script, with the response the
+# published build really returns for one (measured in
+# docs/verification/process-event-sources.md): the poll fails on realpath, and
+# its code says nothing a reader could map to a lifecycle state.
 n=$(cat "$LAVISH_COUNT" 2>/dev/null || echo 0)
 n=$((n + 1))
 printf '%s\n' "$n" > "$LAVISH_COUNT"
+board=${*: -1}
+if [ ! -e "$board" ]; then
+  printf 'error: "ENOENT: no such file or directory, realpath %s"\ncode: UNKNOWN\n' "'$board'"
+  exit 1
+fi
 read -r -a plan <<< "$LAVISH_SCRIPT"
 i=$((n - 1))
 [ "$i" -ge "${#plan[@]}" ] && i=$((${#plan[@]} - 1))
@@ -644,6 +654,16 @@ case "${plan[$i]}" in
     printf 'error: Lavish Editor session store is unavailable\ncode: SERVER_ERROR\nboard: /tmp/evil-board.html\n'; exit 1 ;;
   feedback)
     printf 'session:\n  file: /board.html\n  status: feedback\n  session_ended: true\n  ended_by: user\nfeedback[1]{text}:\n  ship it\n' ;;
+  open-feedback)
+    # A live board answering while its session stays OPEN: feedback the captain
+    # typed, with no session_ended, so nothing about it may retire the source.
+    printf 'session:\n  file: /board.html\n  status: feedback\n  session_ended: false\nfeedback[1]{text}:\n  keep going\n' ;;
+  answer-ended)
+    # The `Send & End` shape that carries a real keyed answer: the session has
+    # ended and its final response is the captain's choice.
+    printf 'session:\n  file: /board.html\n  status: feedback\n  session_ended: true\n  ended_by: user\n'
+    printf 'prompts[1]{uid,prompt,selector,tag,text}:\n'
+    printf '  "2","Ship it: yes\\n\\nContext data:\\n{\\n  \\"question\\": \\"spin-ship-call\\",\\n  \\"answer\\": \\"yes\\"\\n}","form",choice,"Ship it: yes"\n' ;;
   stream)
     printf 'x%.0s' {1..4096}
     printf 'ready\n' > "$LAVISH_STREAM_READY"
@@ -809,6 +829,143 @@ assert_contains "$(wake_payloads "$HNEAR")" "procevent lavish $near_id 1" \
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HNEAR" \
   "$ROOT/bin/fm-procevent-lavish.sh" retire "$NEAR_ART" >/dev/null
 pass "only the literal two-line interruption enters the quiet retry policy"
+
+# --- end-user-aligned regression: a board whose file is gone must END --------
+# The dogfood defect: boards whose files did not survive a home move produced 41
+# captured results in about half a minute and kept waking the supervisor. The
+# vendor poll fails on realpath for a deleted artifact, and that error landed on
+# `unknown` - neither terminal nor missing - so the source never retired itself,
+# the runner re-polled it at once, and every failure became its own actionable
+# wake. The worse half was silent: a board that still reads as armed but is gone
+# collects nothing the captain types into it.
+HGONE="$TMP_ROOT/hgone"; new_home "$HGONE"
+GONE_ART="$TMP_ROOT/gone-board.html"
+printf '<h1>gone</h1>\n' > "$GONE_ART"
+gone_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$GONE_ART")
+PE_TRACKED+=("$HGONE|$gone_id")
+LAVISH_COUNT="$TMP_ROOT/gone-count"; LAVISH_SCRIPT="feedback"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HGONE" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$GONE_ART" >/dev/null
+rm -f "$GONE_ART"
+gone_poll="$TMP_ROOT/gone-poll.out"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" "$ROOT/bin/fm-procevent-lavish.sh" poll "$GONE_ART" \
+  > "$gone_poll" 2>&1 && fail "polling a board whose file is gone reported a delivered result"
+assert_contains "$("$ROOT/bin/fm-procevent-lavish.sh" classify "$gone_poll")" missing \
+  "a board whose file is gone classifies as missing rather than unknown"
+"$ROOT/bin/fm-procevent-lavish.sh" terminal "$gone_poll" \
+  || fail "a missing board was not terminal, so its source would stay armed and re-poll"
+[ "$(cat "$LAVISH_COUNT" 2>/dev/null || echo 0)" = 0 ] \
+  || fail "an unreachable board was still handed to the published poll"
+# The reproduction end to end, through the real runner: ONE failed poll ends it.
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HGONE" start "$gone_id" >/dev/null
+assert_absent "$HGONE/state/procevent/$gone_id.source" \
+  "the gone board's source retires itself on its first failed poll"
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/$gone_id.claim" \
+  "the retired gone board releases its owned claim"
+[ "$(count_results "$HGONE" "$gone_id")" = 1 ] \
+  || fail "the gone board produced $(count_results "$HGONE" "$gone_id") captured results, not one"
+for _ in $(seq 1 4); do
+  PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HGONE" reconcile >/dev/null
+done
+[ "$(count_results "$HGONE" "$gone_id")" = 1 ] \
+  || fail "a retired gone board was polled again: $(count_results "$HGONE" "$gone_id") captured results"
+[ "$(wake_payloads "$HGONE" | sort -u | grep -c .)" = 1 ] \
+  || fail "the gone board raised more than one distinct wake: $(wake_payloads "$HGONE" | sort -u)"
+assert_contains "$(wake_payloads "$HGONE")" "procevent lavish $gone_id 1" \
+  "the one captured missing result is announced so the dead answer channel is reported"
+pass "a gone board classifies missing, reports terminal, and retires on one failed poll"
+
+# The safety net for every OTHER failure shape: a poll that keeps failing the
+# same way must not publish a capture and a wake per failure. `other-server-error`
+# repeats forever and is deliberately not terminal, so the source stays armed and
+# each cycle re-polls it - which is exactly the unbounded stream, minus the one
+# error shape fixed above.
+HSPIN="$TMP_ROOT/hspin"; new_home "$HSPIN"
+SPIN_ART="$TMP_ROOT/spin-board.html"
+printf '<h1>spin</h1>\n' > "$SPIN_ART"
+spin_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$SPIN_ART")
+PE_TRACKED+=("$HSPIN|$spin_id")
+LAVISH_COUNT="$TMP_ROOT/spin-count"; LAVISH_SCRIPT="other-server-error"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HSPIN" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$SPIN_ART" >/dev/null
+for _ in $(seq 1 5); do
+  PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HSPIN" start "$spin_id" >/dev/null
+done
+[ "$(cat "$LAVISH_COUNT")" = 5 ] \
+  || fail "the failing board was polled $(cat "$LAVISH_COUNT") times instead of five, so the guard changed recovery"
+[ "$(count_results "$HSPIN" "$spin_id")" = 1 ] \
+  || fail "five identical failed polls produced $(count_results "$HSPIN" "$spin_id") captures instead of one"
+[ "$(wake_payloads "$HSPIN" | sort -u | grep -c .)" = 1 ] \
+  || fail "identical failed polls raised more than one distinct wake: $(wake_payloads "$HSPIN" | sort -u)"
+assert_contains "$(wake_payloads "$HSPIN")" "procevent lavish $spin_id 1" \
+  "the first failure is still reported, so a broken channel is never silent"
+[ -f "$HSPIN/state/procevent/$spin_id.source" ] \
+  || fail "the rate limit dropped the registration, so no listener would be restarted"
+# A failure that says something NEW is never suppressed.
+LAVISH_SCRIPT="forged-board"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HSPIN" start "$spin_id" >/dev/null
+[ "$(count_results "$HSPIN" "$spin_id")" = 2 ] \
+  || fail "a failure carrying new information was suppressed as a repeat"
+# And the captain's real answer arriving after all that is still collected.
+LAVISH_SCRIPT="feedback"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HSPIN" start "$spin_id" >/dev/null
+[ "$(count_results "$HSPIN" "$spin_id")" = 3 ] \
+  || fail "feedback after repeated failures was withheld by the rate limit"
+assert_grep 'ship it' "$HSPIN/state/procevent-inbox/$spin_id.3.result" \
+  "the answer captured after repeated failures is the captain's feedback"
+pass "repeated identical failed polls are rate-limited to one capture and one wake"
+
+# Do not change what a real answer does, part one: a LIVE board answering while
+# its session stays open is captured, announced, classifies feedback, and keeps
+# its registration, so the widened retirement path cannot end a board that is
+# still taking answers.
+HLIVE2="$TMP_ROOT/hlive-feedback"; new_home "$HLIVE2"
+LIVE2_ART="$TMP_ROOT/live-feedback-board.html"
+printf '<h1>live feedback</h1>\n' > "$LIVE2_ART"
+live2_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$LIVE2_ART")
+PE_TRACKED+=("$HLIVE2|$live2_id")
+LAVISH_COUNT="$TMP_ROOT/live-feedback-count"; LAVISH_SCRIPT="open-feedback"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HLIVE2" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$LIVE2_ART" >/dev/null
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HLIVE2" start "$live2_id" >/dev/null
+live2_result=$(first_result "$HLIVE2" "$live2_id") \
+  || fail "a live board's feedback produced no captured result"
+assert_contains "$("$ROOT/bin/fm-procevent-lavish.sh" classify "$live2_result")" feedback \
+  "a live board's feedback still classifies as feedback"
+assert_grep 'keep going' "$live2_result" "the captured result is the captain's feedback verbatim"
+assert_contains "$(wake_payloads "$HLIVE2")" "procevent lavish $live2_id 1" \
+  "a live board's feedback is still announced"
+"$ROOT/bin/fm-procevent-lavish.sh" terminal "$live2_result" \
+  && fail "feedback from a still-open session was treated as terminal"
+[ -f "$HLIVE2/state/procevent/$live2_id.source" ] \
+  || fail "a board still taking answers lost its registration"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HLIVE2" \
+  "$ROOT/bin/fm-procevent-lavish.sh" retire "$LIVE2_ART" >/dev/null
+pass "a live board carrying feedback is still collected and stays armed"
+
+# Do not change what a real answer does, part two: a session that genuinely
+# ended carrying a keyed answer still retires AND still yields that answer, so
+# no answer is dropped on the floor by the retirement path.
+HANS="$TMP_ROOT/hanswer"; new_home "$HANS"
+ANS_ART="$TMP_ROOT/answer-board.html"
+printf '<h1>answer</h1>\n' > "$ANS_ART"
+ans_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$ANS_ART")
+PE_TRACKED+=("$HANS|$ans_id")
+LAVISH_COUNT="$TMP_ROOT/answer-count"; LAVISH_SCRIPT="answer-ended"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HANS" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$ANS_ART" >/dev/null
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HANS" start "$ans_id" >/dev/null
+ans_result=$(first_result "$HANS" "$ans_id") \
+  || fail "an ended session carrying an answer produced no captured result"
+assert_contains "$("$ROOT/bin/fm-procevent-lavish.sh" answers "$ans_result")" \
+  "spin-ship-call	yes" "the answer an ended session delivered was lost"
+"$ROOT/bin/fm-procevent-lavish.sh" terminal "$ans_result" \
+  || fail "an ended session carrying an answer did not report terminal"
+assert_absent "$HANS/state/procevent/$ans_id.source" \
+  "the ended session's source did not retire itself"
+assert_contains "$(wake_payloads "$HANS")" "procevent lavish $ans_id 1" \
+  "the answer an ended session delivered was never announced"
+pass "an ended session carrying an answer still yields that answer and retires"
 
 # The public arm boundary refuses invalid retry intervals before it publishes a
 # source registration, rather than arming a listener that can only fail later.

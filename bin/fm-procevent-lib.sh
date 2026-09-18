@@ -38,6 +38,11 @@ fm_procevent_claim_root() {
 fm_procevent_registry_dir() { printf '%s\n' "$1/procevent"; }
 fm_procevent_inbox_dir()    { printf '%s\n' "$1/procevent-inbox"; }
 
+# Private record of a source's last failed poll, beside its registration: the
+# digest of that failure's output and how many times it has repeated unchanged.
+# bin/fm-procevent.sh owns what it means; it is dropped with the registration.
+fm_procevent_poll_failure_path() { printf '%s/%s.poll-failure\n' "$(fm_procevent_registry_dir "$1")" "$2"; }
+
 # A source id names a private file and a bounded wake slug, so it is held to the
 # same path-safe shape as a task id. Adapters derive it from canonical source
 # identity, never from a caller-supplied display string.

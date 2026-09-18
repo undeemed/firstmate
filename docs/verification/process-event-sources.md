@@ -75,6 +75,28 @@ ok - lavish-axi 0.1.52 polls concurrent boards without displacing one another
 ok - lavish-axi 0.1.52's real poll interruption is absorbed and the board keeps listening
 ```
 
+## Why a gone Lavish board is terminal
+
+Measured on 2026-09-18 on Linux (7.0.0-14-generic) with `lavish-axi` 0.1.52 installed, on a scratch artifact so no live board was involved.
+
+The published poll resolves the artifact itself, so a board whose file is gone fails before any session lookup:
+
+```text
+$ printf '<h1>x</h1>' > "$T/b.html"; rm -f "$T/b.html"
+$ lavish-axi poll "$T/b.html"; echo "exit=$?"
+error: "ENOENT: no such file or directory, realpath '.../b.html'"
+code: UNKNOWN
+exit=1
+```
+
+`code: UNKNOWN` is the whole problem: that response classified as neither `missing` nor terminal, so the source stayed armed, the next reconcile re-polled it at once, and every failure became a captured result with its own actionable wake - four gone boards produced 41 captures in about half a minute and had to be retired by hand.
+
+The adapter therefore decides reachability from the artifact rather than from this response, which is a filesystem fact no vendor build can drift: an unreachable board reports the adapter's own `missing` verdict, and `missing` was already terminal, so the source retires on its first failed poll by the same route an ended session takes.
+A gone board is also a swallowed answer channel, which is why the single announced `missing` result matters as much as the silence after it.
+
+Regressions: `tests/fm-procevent.test.sh` pins the gone board end to end (missing classification, terminal verdict, retirement after one failed poll, and no second wake), the repeat-failure rate limit, and the two answer paths that must be unchanged - a live board's feedback stays collected and armed, and an ended session's keyed answer still survives retirement.
+Its scripted poll stand-in answers an absent artifact with the exact response measured above, so the fixture reproduces the defect rather than assuming it.
+
 ## Why an ended Lavish review is terminal
 
 Re-verified on 2026-08-01 against the same installed build.

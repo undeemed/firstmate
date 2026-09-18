@@ -115,6 +115,13 @@
 # stale: reconcile stops that surviving group and releases its generation before
 # any replacement starts, and keeps the claim for a later retry when it cannot.
 #
+# A poll that keeps failing is rate-limited by the identity of its own output:
+# the first failure is captured, published, and applied exactly as before, and a
+# byte-identical repeat is neither captured nor announced again until any poll
+# succeeds. Only the child's exit status is read, so the rule stays
+# adapter-agnostic, the source stays armed and keeps being polled, and a failure
+# that says something new still reaches the reader.
+#
 # Durability boundary: see bin/fm-procevent-lib.sh. This runner proves capture
 # before publication and bounded re-announcement until handled, and nothing
 # about the source side of the handoff.
@@ -136,7 +143,7 @@ REG=$(fm_procevent_registry_dir "$STATE")
 MAX_OUTPUT_BYTES=${FM_PROCEVENT_MAX_OUTPUT_BYTES:-1048576}
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,120p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,127p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 
 adapter_script() { printf '%s/bin/fm-procevent-%s.sh\n' "$FM_ROOT" "$1"; }
 
@@ -244,8 +251,46 @@ cmd_register() {
     fm_procevent_source_lock_release "$id"
     die "cannot publish the registration"
   fi
+  clear_poll_failure "$id"
   fm_procevent_source_lock_release "$id"
   printf 'registered: %s (%s)\n' "$id" "$adapter"
+}
+
+# The rate limit the header states, and why it cannot withhold an answer. It
+# exists because a source that can only fail otherwise mints a capture and a
+# wake per poll: four boards whose files were gone produced 41 captured results
+# in about half a minute and kept waking the supervisor.
+#
+# Identity is the whole guard. A failure that says something new is never
+# suppressed, output identical to the failure already captured can carry nothing
+# the reader has not been handed, and any poll that exits 0 clears the record.
+# Only the child's exit status is read, so this stays adapter-agnostic and
+# inspects no result, and a repeating source stays armed and is polled again, so
+# recovery is unchanged and only the duplicate publication stops. Unmeasurable
+# identity reports rather than suppresses.
+poll_failure_streak() {  # <source-id> <output-file>: print this failure's repeat count
+  local id=$1 out=$2 path digest prev_digest='' prev_count=0 count tmp
+  path=$(fm_procevent_poll_failure_path "$STATE" "$id")
+  digest=$(fm_pr_sha256 "$out" 2>/dev/null) || digest=''
+  [ -n "$digest" ] || { printf '1\n'; return 0; }
+  if [ -f "$path" ] && [ ! -L "$path" ]; then
+    read -r prev_digest prev_count < "$path" 2>/dev/null || { prev_digest=''; prev_count=0; }
+  fi
+  case "$prev_count" in ''|*[!0-9]*) prev_count=0 ;; esac
+  [ "$prev_digest" = "$digest" ] || prev_count=0
+  count=$((prev_count + 1))
+  tmp=$(umask 077; mktemp "$(fm_procevent_registry_dir "$STATE")/.poll-failure.XXXXXX") \
+    || { printf '1\n'; return 0; }
+  if printf '%s %s\n' "$digest" "$count" > "$tmp" && chmod 0600 "$tmp" && mv -f -- "$tmp" "$path"; then
+    printf '%s\n' "$count"
+  else
+    rm -f -- "$tmp"
+    printf '1\n'
+  fi
+}
+
+clear_poll_failure() {  # <source-id>
+  rm -f -- "$(fm_procevent_poll_failure_path "$STATE" "$1")"
 }
 
 # Publish every durably captured result with no handled acknowledgement yet.
@@ -421,6 +466,21 @@ cmd_start() {
     exit 0
   fi
 
+  # A failing poll is rate-limited by the identity of its own output, and any
+  # poll that succeeds clears that record (see poll_failure_streak).
+  local failures
+  if [ "$rc" -ne 0 ]; then
+    failures=$(poll_failure_streak "$id" "$out")
+    if [ "$failures" -gt 1 ]; then
+      rm -f -- "$out" "$(runner_file "$id")"
+      STAGED_OUTPUT=
+      printf 'repeat-failure: %s (identical failed poll, %s in a row)\n' "$id" "$failures"
+      exit 0
+    fi
+  else
+    clear_poll_failure "$id"
+  fi
+
   local durable
   durable=$(fm_procevent_capture "$STATE" "$id" "$adapter" "$out") || { rm -f -- "$out"; die "cannot durably capture the result"; }
   rm -f -- "$out"
@@ -502,6 +562,7 @@ retire_owned_terminal_source() {  # <source-id>
     && [ "$current_identity" = "$CLAIM_REG_IDENTITY" ] \
     && fm_procevent_claim_mark_terminal_locked "$id" "$CLAIM_HOME" "$CLAIM_PID" "$CLAIM_TOKEN"; then
     if rm -f -- "$registration" && [ ! -e "$registration" ] && [ ! -L "$registration" ]; then
+      clear_poll_failure "$id"
       fm_procevent_claim_release_locked "$id" "$CLAIM_HOME" "$CLAIM_PID" "$CLAIM_TOKEN" || status=1
     else
       status=1
@@ -722,6 +783,7 @@ cmd_retire() {
   fi
   rm -f -- "$(source_file "$id")"
   rm -f -- "$(runner_file "$id")"
+  clear_poll_failure "$id"
   fm_procevent_source_lock_release "$id"
   # A retired source produces no further answer, so drop any decision binding it
   # carried. Generic and idempotent: the binding owner is asked to forget this
