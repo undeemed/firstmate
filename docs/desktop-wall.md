@@ -155,3 +155,35 @@ The box itself does not resolve MagicDNS, so verification from the box uses the 
 Keep this file to the design and the operating story.
 Exact flags and defaults belong in each script's header and `--help`.
 When a measured number changes, replace it here with the new measurement and say when it was taken, rather than adding a second number beside it.
+
+## On-demand deployment (serverless)
+
+The wall is a capability, not a resident service: an idle box runs no listener
+process at all. Three user units carry it, and only the socket is enabled.
+
+| Unit | Role |
+| --- | --- |
+| `fm-desktop-wall-proxy.socket` | holds the tailnet listener `100.90.208.62:6090`. `FreeBind=true`, so it binds before the tailnet address exists. Enabled. |
+| `fm-desktop-wall-proxy.service` | `systemd-socket-proxyd --exit-idle-time=5min` to `127.0.0.1:6191`. Socket-activated, exits after five idle minutes. |
+| `fm-desktop-wall.service` | the wall itself, bound to `127.0.0.1:6191`. Pulled in by the proxy, `StopWhenUnneeded=yes` stands it down again. Deliberately not `[Install]`ed. |
+
+The wall binds its own socket and has no idle exit of its own, so it cannot be
+socket-activated directly; the proxy bridges that. The proxy forwards raw TCP,
+so the wall still terminates its own TLS.
+
+Two deployment notes worth keeping:
+
+- The proxy waits for the backend to accept before forwarding (`ExecStartPre`),
+  because systemd starts the two concurrently and the wall needs a moment to
+  bind - otherwise the first viewer is forwarded into a closed port. That check
+  uses `ss`, not `/dev/tcp`: `ExecStartPre` runs under `/bin/sh`, which is dash
+  here, and dash has no `/dev/tcp`.
+- The wall exits silently with status 0 when its port is already bound. A
+  backend port collision therefore looks exactly like a clean shutdown, with
+  nothing in the journal. `6191` was chosen because `6091` is held by
+  `bin/fm-status-bar.py`.
+
+Per-task desktops stay on-demand too: `fm-desktop.sh create` starts a display
+only when a task asks for one, `fm-desktops.service`, `review-desktop.service`
+and `review-desktop-web.service` are all disabled, and teardown reaps the
+display, the profile, and the browser (see `reap_task_desktop`).
