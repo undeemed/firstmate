@@ -101,10 +101,13 @@
 # merges stderr ahead of that line and lands on `unknown` instead, which is
 # equally non-terminal. `poll` therefore checks the board itself before the
 # server and before every retry, and reports this adapter's own `missing`
-# verdict for one it can no longer read. That verdict is terminal, so the
-# runner retires the source on the FIRST failed poll by the same route an ended
-# session takes, instead of re-polling a board that is gone and minting a
-# capture and a wake per failure.
+# verdict for one it can no longer read - but only once a second check, one
+# retry delay later, still cannot read it. That verdict is irreversible and a
+# writer that replaces its artifact leaves a window where a live board reads as
+# absent, so one stat may not end a channel that is still taking answers. Two
+# checks and no more: a board that is really gone is still terminal on the
+# FIRST failed poll, by the same route an ended session takes, instead of
+# re-polling a board that is gone and minting a capture and a wake per failure.
 # Reachability is a filesystem fact, not a message shape, so no vendor string is
 # load-bearing here. A gone board is also a swallowed answer channel: anything
 # the captain typed into it after that point was never collected, which is what
@@ -132,7 +135,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$SCRIPT_DIR/fm-lavish-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,118p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,121p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 
 # Canonical identity is physical, not the path string: Lavish itself keys a
 # session on the realpath of the artifact, so two names for one file are one
@@ -289,6 +292,16 @@ board_reachable() {  # <board>
   [ -f "$1" ] && [ -r "$1" ]
 }
 
+# The GONE BOARD test from the header: unreadable on two checks one retry delay
+# apart, which is the confirm that keeps a momentary absence from minting an
+# irreversible verdict. Nothing is remembered between polls, and a board that
+# reads fine costs no delay at all.
+board_gone() {  # <board> <retry-delay>
+  board_reachable "$1" && return 1
+  sleep "$2"
+  ! board_reachable "$1"
+}
+
 # Seconds between retries. FM_LAVISH_POLL_RETRY_DELAY is a bounded test
 # override; a malformed or out-of-range value is refused rather than quietly
 # rounded, because silently changing a retry cadence is how a bound stops
@@ -313,14 +326,14 @@ cmd_poll() {
   [ -n "$artifact" ] || usage
   [ "$#" -eq 1 ] || usage
   command -v lavish-axi >/dev/null 2>&1 || die "lavish-axi is not installed"
+  delay=$(poll_retry_delay) || exit 1
   # Checked before the server is touched, and again before every retry below:
-  # an unreachable board is reported as missing, which is terminal, so the
-  # runner retires the source instead of polling a board that is gone.
-  board_reachable "$artifact" || { poll_missing_board_report "$artifact"; return 1; }
+  # a board confirmed unreachable is reported as missing, which is terminal, so
+  # the runner retires the source instead of polling a board that is gone.
+  board_gone "$artifact" "$delay" && { poll_missing_board_report "$artifact"; return 1; }
   # Clears a server whose host allowlist went stale so the poll below respawns
   # the corrected one; bin/fm-lavish-lib.sh's header owns the mechanism.
   fm_lavish_prepare_server
-  delay=$(poll_retry_delay) || exit 1
   response=$(mktemp "${TMPDIR:-/tmp}/fm-lavish-poll.XXXXXX") || die "cannot stage the poll response"
   printf -v cleanup_command 'rm -f -- %q' "$response"
   # shellcheck disable=SC2064 # $cleanup_command must expand now, while the staged path is still set.
@@ -335,7 +348,7 @@ cmd_poll() {
     trap "$cleanup_command; trap - $signal; kill -$signal $$" "$signal"
   done
   while :; do
-    board_reachable "$artifact" || { poll_missing_board_report "$artifact"; return 1; }
+    board_gone "$artifact" "$delay" && { poll_missing_board_report "$artifact"; return 1; }
     lavish-axi poll "$artifact" | poll_response_filter "$response"
     pipeline_status=("${PIPESTATUS[@]}")
     rc=${pipeline_status[0]}

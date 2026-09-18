@@ -560,6 +560,7 @@ Each registered source has its own child process blocking on that source, and th
 In supported steady state, a home with no registered source runs nothing, generates no state, and keeps its ordinary cadence.
 
 A poll that keeps failing is rate-limited by the identity of its own output: the first failure is captured, published, and applied exactly as before, while a byte-identical repeat is neither captured nor announced again until any poll exits 0 and clears that private `state/procevent/<id>.poll-failure` record.
+A suppressed repeat writes nothing, and a record that does not read back in the exact shape this runner writes suppresses nothing.
 Only the child's exit status is read, so the rule stays adapter-agnostic, the source stays armed and keeps being polled, and a failure carrying anything new still reaches the reader.
 That record is written only once the failure it identifies is durably captured, so a failure that reached no reader is never what a later repeat is suppressed against and a capture path that cannot write stays loud.
 It is staged under one path per source rather than a fresh temporary name, so a runner stopped between that staging write and its rename leaves at most that single file, and every path that clears the record clears it too.
@@ -571,6 +572,7 @@ A failed terminal removal stays durably terminal and is completed by ordinary re
 A source that has ended therefore captures at most one terminal result, is never restarted, and leaves no recurring poll work, while explicit `retire` stays the supported and idempotent path afterwards.
 For Lavish that verdict covers an ended session, a missing session, and the final feedback of a `Send & End` review, which the published poll marks with `session_ended` before it returns only empty ended sessions.
 A board whose artifact is no longer readable is one of those missing sessions: the adapter checks the board itself rather than the vendor's error text, so a review whose file is gone retires on its first failed poll instead of re-polling forever, and the one announced missing result is how a dead answer channel gets reported.
+That verdict is irreversible, so it is minted only once a second check one retry delay later still cannot read the board: a writer that replaces its artifact rather than rewriting it in place leaves a window where a live board reads as absent, and a board still inside that window keeps its listener.
 
 Applying a captured result is adapter knowledge too, and some results carry no judgement at all: they must simply be applied idempotently to this home's own durable state.
 Leaving that to a handler means it can silently not happen, so immediately after the terminal check above the runner calls `bin/fm-procevent-<adapter>.sh autohandle <source-id> <sequence> <result-file>` and lets the adapter apply and acknowledge its own result.

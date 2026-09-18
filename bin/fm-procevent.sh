@@ -277,32 +277,30 @@ cmd_register() {
 # than suppresses. The record is staged under one path per source rather than a
 # fresh temporary name, because a runner is stopped by signalling its process
 # group and cannot clean up after itself: at most that one file is ever left
-# behind, and whatever clears the record clears it too.
+# behind, and whatever clears the record clears it too. A repeat writes nothing
+# at all, so a source that can only fail reopens that staging window once rather
+# than on every cycle.
 #
-# Print how many times this failure has now repeated one already captured, or 0
-# when it is new and must itself be captured. A repeat advances the count here
-# because the capture it repeats is already durable.
-poll_failure_repeat() {  # <source-id> <digest>
-  local id=$1 digest=$2 path prev_digest='' prev_count=0 count
-  [ -n "$digest" ] || { printf '0\n'; return 0; }
+# The record is exactly `<digest> 1`, and both fields must read back clean for
+# it to suppress anything: a record whose trailing field is not that literal is
+# not a record this runner wrote, so the failure is captured again rather than
+# dismissed against something unreadable.
+poll_failure_reported() {  # <source-id> <digest>
+  local id=$1 digest=$2 path recorded='' marker=''
+  [ -n "$digest" ] || return 1
   path=$(fm_procevent_poll_failure_path "$STATE" "$id")
-  if [ -f "$path" ] && [ ! -L "$path" ]; then
-    read -r prev_digest prev_count < "$path" 2>/dev/null || { prev_digest=''; prev_count=0; }
-  fi
-  case "$prev_count" in ''|*[!0-9]*) prev_count=0 ;; esac
-  [ "$prev_digest" = "$digest" ] && [ "$prev_count" -ge 1 ] || { printf '0\n'; return 0; }
-  count=$((prev_count + 1))
-  record_poll_failure "$id" "$digest" "$count" || true
-  printf '%s\n' "$count"
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  read -r recorded marker < "$path" 2>/dev/null || return 1
+  [ "$recorded" = "$digest" ] && [ "$marker" = 1 ]
 }
 
-record_poll_failure() {  # <source-id> <digest> <count>
-  local id=$1 digest=$2 count=$3 path staged
+record_poll_failure() {  # <source-id> <digest>
+  local id=$1 digest=$2 path staged
   [ -n "$digest" ] || return 1
   path=$(fm_procevent_poll_failure_path "$STATE" "$id")
   staged=$(poll_failure_staging_file "$id")
   [ ! -L "$staged" ] || return 1
-  if (umask 077; printf '%s %s\n' "$digest" "$count" > "$staged") \
+  if (umask 077; printf '%s 1\n' "$digest" > "$staged") \
     && chmod 0600 "$staged" && mv -f -- "$staged" "$path"; then
     return 0
   fi
@@ -488,12 +486,11 @@ cmd_start() {
   fi
 
   # A failing poll is rate-limited by the identity of its own output, and any
-  # poll that succeeds clears that record (see poll_failure_repeat).
-  local failure_digest='' failures
+  # poll that succeeds clears that record (see poll_failure_reported).
+  local failure_digest=''
   if [ "$rc" -ne 0 ]; then
     failure_digest=$(fm_pr_sha256 "$out" 2>/dev/null) || failure_digest=''
-    failures=$(poll_failure_repeat "$id" "$failure_digest")
-    if [ "$failures" -ne 0 ]; then
+    if poll_failure_reported "$id" "$failure_digest"; then
       rm -f -- "$(runner_file "$id")"
       # Suppression withholds a duplicate capture and wake, never the end of a
       # source. A terminal verdict is derived from output, so identical output
@@ -509,7 +506,7 @@ cmd_start() {
       fi
       rm -f -- "$out"
       STAGED_OUTPUT=
-      printf 'repeat-failure: %s (identical failed poll, %s in a row)\n' "$id" "$failures"
+      printf 'repeat-failure: %s (identical failed poll, already reported)\n' "$id"
       exit 0
     fi
   else
@@ -522,7 +519,7 @@ cmd_start() {
   STAGED_OUTPUT=
   # Strictly after the capture above, because the record may only stand for a
   # failure the reader has actually been handed.
-  [ -z "$failure_digest" ] || record_poll_failure "$id" "$failure_digest" 1 || true
+  [ -z "$failure_digest" ] || record_poll_failure "$id" "$failure_digest" || true
   [ "$truncated" -eq 1 ] && printf 'truncated: %s at %s bytes\n' "$id" "$MAX_OUTPUT_BYTES" >&2
 
   # Independent of publication and acknowledgement, so it runs once per capture

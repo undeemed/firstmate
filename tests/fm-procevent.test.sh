@@ -887,6 +887,59 @@ assert_contains "$(wake_payloads "$HGONE")" "procevent lavish $gone_id 1" \
   "the one captured missing result is announced so the dead answer channel is reported"
 pass "a gone board classifies missing, reports terminal, and retires on one failed poll"
 
+# The other half of that verdict: it cannot be taken back, so a board that is
+# only momentarily unreadable must NOT be ended. A writer that replaces its
+# artifact with `rm` then a fresh write leaves exactly that window, and a live
+# session inside it would otherwise stop collecting the captain's answers for
+# good - the harm this whole change exists to remove. The stub `sleep` restores
+# the board during the adapter's own retry delay, which is the span the confirm
+# covers, so the window is reproduced deterministically rather than raced.
+HFLICKER="$TMP_ROOT/hflicker"; new_home "$HFLICKER"
+FLICKER_ART="$TMP_ROOT/flicker-board.html"
+printf '<h1>flicker</h1>\n' > "$FLICKER_ART"
+flicker_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$FLICKER_ART")
+PE_TRACKED+=("$HFLICKER|$flicker_id")
+FLICKER_BIN=$(fm_fakebin "$TMP_ROOT/restore-on-sleep-stub")
+cat > "$FLICKER_BIN/sleep" <<SH
+#!/usr/bin/env bash
+printf '<h1>flicker</h1>\n' > "$FLICKER_ART"
+exit 0
+SH
+chmod +x "$FLICKER_BIN/sleep"
+LAVISH_COUNT="$TMP_ROOT/flicker-count"; LAVISH_SCRIPT="open-feedback"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HFLICKER" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$FLICKER_ART" >/dev/null
+rm -f "$FLICKER_ART"
+flicker_poll="$TMP_ROOT/flicker-poll.out"
+PATH="$FLICKER_BIN:$LAVISH_SCRIPTED_BIN:$PATH" \
+  "$ROOT/bin/fm-procevent-lavish.sh" poll "$FLICKER_ART" > "$flicker_poll" 2>&1 \
+  || fail "a board restored inside the confirm was still reported as a failed poll"
+[ -f "$FLICKER_ART" ] \
+  || fail "the fixture never restored the board, so this proves nothing"
+[ "$(cat "$LAVISH_COUNT" 2>/dev/null || echo 0)" = 1 ] \
+  || fail "a board restored inside the confirm was never handed to the published poll"
+flicker_verdict=$("$ROOT/bin/fm-procevent-lavish.sh" classify "$flicker_poll")
+[ "$flicker_verdict" = feedback ] \
+  || fail "a board restored inside the confirm classified as $flicker_verdict, not the answer it returned"
+"$ROOT/bin/fm-procevent-lavish.sh" terminal "$flicker_poll" \
+  && fail "a board restored inside the confirm was ended anyway"
+PATH="$FLICKER_BIN:$LAVISH_SCRIPTED_BIN:$PATH" pe "$HFLICKER" start "$flicker_id" >/dev/null
+assert_present "$HFLICKER/state/procevent/$flicker_id.source" \
+  "a momentarily absent board retired its source, so nothing typed there afterwards is collected"
+assert_grep 'keep going' "$HFLICKER/state/procevent-inbox/$flicker_id.1.result" \
+  "the answer from the restored board was not the one collected"
+# Same fixture, no restore: unreadable on BOTH checks still ends the source.
+rm -f "$FLICKER_ART"
+flicker_gone="$TMP_ROOT/flicker-gone.out"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" "$ROOT/bin/fm-procevent-lavish.sh" poll "$FLICKER_ART" \
+  > "$flicker_gone" 2>&1 && fail "a board unreadable on both checks reported a delivered result"
+assert_contains "$("$ROOT/bin/fm-procevent-lavish.sh" classify "$flicker_gone")" missing \
+  "a board unreadable on both checks no longer classifies as missing"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HFLICKER" start "$flicker_id" >/dev/null
+assert_absent "$HFLICKER/state/procevent/$flicker_id.source" \
+  "the confirm stopped a genuinely gone board from retiring on its first failed poll"
+pass "a board restored inside the confirm keeps its listener; one gone on both checks still retires"
+
 # The safety net for every OTHER failure shape: a poll that keeps failing the
 # same way must not publish a capture and a wake per failure. `other-server-error`
 # repeats forever and is deliberately not terminal, so the source stays armed and
@@ -926,6 +979,51 @@ PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HSPIN" start "$spin_id" >/dev/null
 assert_grep 'ship it' "$HSPIN/state/procevent-inbox/$spin_id.3.result" \
   "the answer captured after repeated failures is the captain's feedback"
 pass "repeated identical failed polls are rate-limited to one capture and one wake"
+
+# A suppressed repeat writes nothing, and a record that does not read back in
+# the shape this runner writes suppresses nothing. The first keeps a source that
+# can only fail from reopening the stage-then-rename window on every cycle; the
+# second is why an unreadable record re-captures rather than silencing a channel
+# against something nobody can vouch for. The stub `mv` below fails and kills
+# the runner if a poll-failure rename is attempted at all, so the first is a
+# behaviour, not an inspection.
+HRECORD="$TMP_ROOT/hrecord"; new_home "$HRECORD"
+RECORD_ART="$TMP_ROOT/record-board.html"
+printf '<h1>record</h1>\n' > "$RECORD_ART"
+record_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$RECORD_ART")
+PE_TRACKED+=("$HRECORD|$record_id")
+record_file="$HRECORD/state/procevent/$record_id.poll-failure"
+RECORD_BIN=$(fm_fakebin "$TMP_ROOT/refuse-record-move-stub")
+RECORD_REAL_MV=$(command -v mv)
+cat > "$RECORD_BIN/mv" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *poll-failure*) kill -KILL "\$PPID"; exit 1 ;;
+esac
+exec $RECORD_REAL_MV "\$@"
+SH
+chmod +x "$RECORD_BIN/mv"
+LAVISH_COUNT="$TMP_ROOT/record-count"; LAVISH_SCRIPT="other-server-error"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HRECORD" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$RECORD_ART" >/dev/null
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HRECORD" start "$record_id" >/dev/null
+[ -f "$record_file" ] \
+  || fail "the first failure wrote no record, so this fixture proves nothing"
+record_digest=$(awk '{print $1; exit}' "$record_file")
+[ -n "$record_digest" ] || fail "the record carries no digest, so this fixture proves nothing"
+PATH="$RECORD_BIN:$LAVISH_SCRIPTED_BIN:$PATH" pe "$HRECORD" start "$record_id" >/dev/null \
+  || fail "a suppressed repeat rewrote its record instead of leaving it alone"
+[ "$(count_results "$HRECORD" "$record_id")" = 1 ] \
+  || fail "the repeat was not actually suppressed, so this fixture proves nothing"
+assert_present "$record_file" "the suppressed repeat dropped the record it was suppressed against"
+# A trailing field this runner would never write means the record cannot be
+# vouched for, so the failure is reported again rather than silently dropped.
+printf '%s corrupted\n' "$record_digest" > "$record_file"
+chmod 0600 "$record_file"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HRECORD" start "$record_id" >/dev/null
+[ "$(count_results "$HRECORD" "$record_id")" = 2 ] \
+  || fail "an unreadable poll-failure record suppressed a failure instead of re-capturing it"
+pass "a suppressed repeat rewrites nothing and an unreadable record never suppresses"
 
 # The rate limit may only ever suppress a failure the reader was actually
 # handed. If the capture itself fails, that failure reached nobody, so the next

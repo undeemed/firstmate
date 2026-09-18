@@ -92,9 +92,10 @@ exit=1
 `code: UNKNOWN` is the whole problem: that response classified as neither `missing` nor terminal, so the source stayed armed, the next reconcile re-polled it at once, and every failure became a captured result with its own actionable wake - four gone boards produced 41 captures in about half a minute and had to be retired by hand.
 
 The adapter therefore decides reachability from the artifact rather than from this response, which is a filesystem fact no vendor build can drift: an unreachable board reports the adapter's own `missing` verdict, and `missing` was already terminal, so the source retires on its first failed poll by the same route an ended session takes.
+Because that verdict cannot be taken back, it is confirmed by a second check one retry delay later, so a board that is only momentarily absent - a writer that replaces its file instead of rewriting it in place - keeps its listener instead of being ended.
 A gone board is also a swallowed answer channel, which is why the single announced `missing` result matters as much as the silence after it.
 
-Regressions: `tests/fm-procevent.test.sh` pins the gone board end to end (missing classification, terminal verdict, retirement after one failed poll, and no second wake), the repeat-failure rate limit and its refusal to suppress a failure whose capture never landed, and the two answer paths that must be unchanged - a live board's feedback stays collected and armed, and an ended session's keyed answer still survives retirement.
+Regressions: `tests/fm-procevent.test.sh` pins the gone board end to end (missing classification, terminal verdict, retirement after one failed poll, and no second wake), the confirming re-check that keeps a board restored inside that delay armed and unreported, the repeat-failure rate limit and its refusal to suppress a failure whose capture never landed, and the two answer paths that must be unchanged - a live board's feedback stays collected and armed, and an ended session's keyed answer still survives retirement.
 Its scripted poll stand-in answers an absent artifact with the exact response measured above, so the fixture reproduces the defect rather than assuming it.
 
 ## Why an ended Lavish review is terminal
