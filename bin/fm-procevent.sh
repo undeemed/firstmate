@@ -175,6 +175,7 @@ adapter_self_announcing() {  # <adapter>
 source_file()  { printf '%s/%s.source\n' "$REG" "$1"; }
 runner_file()  { printf '%s/%s.runner\n' "$REG" "$1"; }
 staging_file() { printf '%s/.%s.%s.output\n' "$REG" "$1" "$2"; }
+poll_failure_staging_file() { printf '%s/.%s.poll-failure\n' "$REG" "$1"; }
 
 # Let the source's own adapter apply and acknowledge one captured result. See
 # the header for why this exists and what each exit means. An already
@@ -273,7 +274,10 @@ cmd_register() {
 # status is read, so this stays adapter-agnostic and inspects no result, and a
 # repeating source stays armed and is polled again, so recovery is unchanged and
 # only the duplicate publication stops. Unmeasurable identity reports rather
-# than suppresses.
+# than suppresses. The record is staged under one path per source rather than a
+# fresh temporary name, because a runner is stopped by signalling its process
+# group and cannot clean up after itself: at most that one file is ever left
+# behind, and whatever clears the record clears it too.
 #
 # Print how many times this failure has now repeated one already captured, or 0
 # when it is new and must itself be captured. A repeat advances the count here
@@ -293,19 +297,21 @@ poll_failure_repeat() {  # <source-id> <digest>
 }
 
 record_poll_failure() {  # <source-id> <digest> <count>
-  local id=$1 digest=$2 count=$3 path tmp
+  local id=$1 digest=$2 count=$3 path staged
   [ -n "$digest" ] || return 1
   path=$(fm_procevent_poll_failure_path "$STATE" "$id")
-  tmp=$(umask 077; mktemp "$(fm_procevent_registry_dir "$STATE")/.poll-failure.XXXXXX") || return 1
-  if printf '%s %s\n' "$digest" "$count" > "$tmp" && chmod 0600 "$tmp" && mv -f -- "$tmp" "$path"; then
+  staged=$(poll_failure_staging_file "$id")
+  [ ! -L "$staged" ] || return 1
+  if (umask 077; printf '%s %s\n' "$digest" "$count" > "$staged") \
+    && chmod 0600 "$staged" && mv -f -- "$staged" "$path"; then
     return 0
   fi
-  rm -f -- "$tmp"
+  rm -f -- "$staged"
   return 1
 }
 
 clear_poll_failure() {  # <source-id>
-  rm -f -- "$(fm_procevent_poll_failure_path "$STATE" "$1")"
+  rm -f -- "$(fm_procevent_poll_failure_path "$STATE" "$1")" "$(poll_failure_staging_file "$1")"
 }
 
 # Publish every durably captured result with no handled acknowledgement yet.

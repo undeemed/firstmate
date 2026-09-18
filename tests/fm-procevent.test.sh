@@ -992,6 +992,41 @@ assert_absent "$HTERMRETRY/state/procevent/$termretry_id.poll-failure" \
   || fail "retrying the retirement raised a second wake: $(wake_payloads "$HTERMRETRY" | sort -u)"
 pass "a terminal verdict whose retirement failed is retried without a duplicate capture"
 
+# A runner is stopped by signalling its process group, so it never runs its own
+# exit cleanup: anything it staged has to be named by a path the retire paths
+# already collect, or it stays in the home for ever and contradicts "a home with
+# no registered source generates no state". The stub `mv` below kills the runner
+# inside the one window where its poll-failure record is staged but not yet
+# renamed into place, which is exactly how that residue is left behind.
+HRESID="$TMP_ROOT/hresid"; new_home "$HRESID"
+RESID_ART="$TMP_ROOT/resid-board.html"
+printf '<h1>resid</h1>\n' > "$RESID_ART"
+resid_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$RESID_ART")
+PE_TRACKED+=("$HRESID|$resid_id")
+RESID_BIN=$(fm_fakebin "$TMP_ROOT/kill-on-move-stub")
+RESID_REAL_MV=$(command -v mv)
+cat > "$RESID_BIN/mv" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *poll-failure*) kill -KILL "\$PPID"; exit 1 ;;
+esac
+exec $RESID_REAL_MV "\$@"
+SH
+chmod +x "$RESID_BIN/mv"
+resid_residue() { find "$HRESID/state/procevent" -maxdepth 1 -name '*poll-failure*' 2>/dev/null; }
+LAVISH_COUNT="$TMP_ROOT/resid-count"; LAVISH_SCRIPT="other-server-error"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HRESID" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$RESID_ART" >/dev/null
+PATH="$RESID_BIN:$LAVISH_SCRIPTED_BIN:$PATH" pe "$HRESID" start "$resid_id" >/dev/null 2>&1
+[ "$(count_results "$HRESID" "$resid_id")" = 1 ] \
+  || fail "the killed runner never reached its poll-failure record, so this fixture proves nothing"
+[ "$(resid_residue | grep -c .)" -ge 1 ] \
+  || fail "the killed runner staged no poll-failure file at all, so this fixture proves nothing"
+pe "$HRESID" retire "$resid_id" >/dev/null
+[ "$(resid_residue | grep -c .)" = 0 ] \
+  || fail "a retired source left poll-failure residue nothing collects: $(resid_residue)"
+pass "a runner killed mid-write leaves no uncollectable poll-failure residue"
+
 # Do not change what a real answer does, part one: a LIVE board answering while
 # its session stays open is captured, announced, classifies feedback, and keeps
 # its registration, so the widened retirement path cannot end a board that is
