@@ -846,10 +846,10 @@ pass "only the literal two-line interruption enters the quiet retry policy"
 # The dogfood defect: boards whose files did not survive a home move produced 41
 # captured results in about half a minute and kept waking the supervisor. The
 # vendor poll fails on realpath for a deleted artifact, and that error landed on
-# `unknown` - neither terminal nor missing - so the source never retired itself,
-# the runner re-polled it at once, and every failure became its own actionable
-# wake. The worse half was silent: a board that still reads as armed but is gone
-# collects nothing the captain types into it.
+# `poll-error` - neither terminal nor missing - so the source never retired
+# itself, the runner re-polled it at once, and every failure became its own
+# actionable wake. The worse half was silent: a board that still reads as armed
+# but is gone collects nothing the captain types into it.
 HGONE="$TMP_ROOT/hgone"; new_home "$HGONE"
 GONE_ART="$TMP_ROOT/gone-board.html"
 printf '<h1>gone</h1>\n' > "$GONE_ART"
@@ -863,7 +863,7 @@ gone_poll="$TMP_ROOT/gone-poll.out"
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" "$ROOT/bin/fm-procevent-lavish.sh" poll "$GONE_ART" \
   > "$gone_poll" 2>&1 && fail "polling a board whose file is gone reported a delivered result"
 assert_contains "$("$ROOT/bin/fm-procevent-lavish.sh" classify "$gone_poll")" missing \
-  "a board whose file is gone classifies as missing rather than unknown"
+  "a board whose file is gone classifies as missing rather than poll-error"
 "$ROOT/bin/fm-procevent-lavish.sh" terminal "$gone_poll" \
   || fail "a missing board was not terminal, so its source would stay armed and re-poll"
 [ "$(cat "$LAVISH_COUNT" 2>/dev/null || echo 0)" = 0 ] \

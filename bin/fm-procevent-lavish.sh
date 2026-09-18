@@ -95,12 +95,16 @@
 #
 # GONE BOARD. The artifact can disappear under a live listener - a home move, a
 # cleanup - and the vendor poll then fails on realpath with an error code this
-# adapter cannot read, so it used to land on `unknown`: neither terminal nor
-# missing. `poll` therefore checks the board itself before the server and before
-# every retry, and reports this adapter's own `missing` verdict for one it can
-# no longer read. That verdict is terminal, so the runner retires the source on
-# the FIRST failed poll by the same route an ended session takes, instead of
-# re-polling a board that is gone and minting a capture and a wake per failure.
+# adapter cannot read, so it used to land on `poll-error`: neither terminal nor
+# missing. The runner sends the child's stderr to /dev/null, so that response
+# reaches `classify` with its `error:` line first; only a `2>&1` reproduction
+# merges stderr ahead of that line and lands on `unknown` instead, which is
+# equally non-terminal. `poll` therefore checks the board itself before the
+# server and before every retry, and reports this adapter's own `missing`
+# verdict for one it can no longer read. That verdict is terminal, so the
+# runner retires the source on the FIRST failed poll by the same route an ended
+# session takes, instead of re-polling a board that is gone and minting a
+# capture and a wake per failure.
 # Reachability is a filesystem fact, not a message shape, so no vendor string is
 # load-bearing here. A gone board is also a swallowed answer channel: anything
 # the captain typed into it after that point was never collected, which is what
@@ -128,7 +132,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$SCRIPT_DIR/fm-lavish-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,114p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,118p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 
 # Canonical identity is physical, not the path string: Lavish itself keys a
 # session on the realpath of the artifact, so two names for one file are one
