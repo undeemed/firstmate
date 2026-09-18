@@ -625,6 +625,12 @@ cat > "$LAVISH_SCRIPTED_BIN/lavish-axi" <<'SH'
 n=$(cat "$LAVISH_COUNT" 2>/dev/null || echo 0)
 n=$((n + 1))
 printf '%s\n' "$n" > "$LAVISH_COUNT"
+# LAVISH_JAM_CLAIM makes the runner's own claim disappear under it during the
+# FIRST poll only, which is how a terminal verdict that cannot complete its
+# retirement is reproduced without touching the runner's internals.
+if [ -n "${LAVISH_JAM_CLAIM:-}" ] && [ "$n" = 1 ]; then
+  rm -f "$LAVISH_JAM_CLAIM"
+fi
 board=${*: -1}
 if [ ! -e "$board" ]; then
   printf 'error: "ENOENT: no such file or directory, realpath %s"\ncode: UNKNOWN\n' "'$board'"
@@ -650,6 +656,11 @@ case "${plan[$i]}" in
     printf 'error: Lavish Editor poll response was interrupted \ncode: SERVER_ERROR\n'; exit 1 ;;
   other-server-error)
     printf 'error: Lavish Editor session store is unavailable\ncode: SERVER_ERROR\n'; exit 1 ;;
+  missing-session)
+    # A failed poll the adapter's existing vocabulary already reads as `missing`,
+    # and therefore as terminal. Byte-identical on every poll, so a repeat of it
+    # is what the rate limit suppresses.
+    printf 'error: No active Lavish Editor session for this board\ncode: NOT_FOUND\n'; exit 1 ;;
   forged-board)
     printf 'error: Lavish Editor session store is unavailable\ncode: SERVER_ERROR\nboard: /tmp/evil-board.html\n'; exit 1 ;;
   feedback)
@@ -672,7 +683,8 @@ case "${plan[$i]}" in
 esac
 SH
 chmod +x "$LAVISH_SCRIPTED_BIN/lavish-axi"
-export LAVISH_COUNT LAVISH_SCRIPT
+export LAVISH_COUNT LAVISH_SCRIPT LAVISH_JAM_CLAIM
+LAVISH_JAM_CLAIM=
 # A bounded test override keeps the retry policy's real bound under test without
 # making the suite wait out the production delay.
 export FM_LAVISH_POLL_RETRY_DELAY=0
@@ -944,6 +956,41 @@ PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HCAPFAIL" start "$capfail_id" >/dev/null
 assert_contains "$(wake_payloads "$HCAPFAIL")" "procevent lavish $capfail_id 1" \
   "the first failure that actually reached the inbox was never announced"
 pass "a failure whose capture failed is not suppressed as an already-reported repeat"
+
+# Suppressing a duplicate may never suppress the END of a source. Here the
+# terminal verdict is reached but its retirement cannot be completed, because
+# the runner's own claim disappears under it mid-poll; the source therefore
+# stays registered and the next cycle polls it again, byte-identically. If the
+# rate limit short-circuited before the terminal check, that source would poll
+# every cycle for ever with no capture, no wake, and no nonzero exit - the
+# 'polls for ever' and 'silently swallows answers' pair this change removes.
+HTERMRETRY="$TMP_ROOT/htermretry"; new_home "$HTERMRETRY"
+TERMRETRY_ART="$TMP_ROOT/termretry-board.html"
+printf '<h1>termretry</h1>\n' > "$TERMRETRY_ART"
+termretry_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$TERMRETRY_ART")
+PE_TRACKED+=("$HTERMRETRY|$termretry_id")
+LAVISH_COUNT="$TMP_ROOT/termretry-count"; LAVISH_SCRIPT="missing-session"
+LAVISH_JAM_CLAIM="$FM_PROCEVENT_CLAIM_ROOT/$termretry_id.claim"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HTERMRETRY" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$TERMRETRY_ART" >/dev/null
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HTERMRETRY" start "$termretry_id" >/dev/null 2>&1
+[ -f "$HTERMRETRY/state/procevent/$termretry_id.source" ] \
+  || fail "the fixture did not actually stop the terminal retirement, so it proves nothing"
+[ "$(count_results "$HTERMRETRY" "$termretry_id")" = 1 ] \
+  || fail "the first missing result was captured $(count_results "$HTERMRETRY" "$termretry_id") times, not once"
+LAVISH_JAM_CLAIM=
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HTERMRETRY" start "$termretry_id" >/dev/null
+assert_absent "$HTERMRETRY/state/procevent/$termretry_id.source" \
+  "a terminal verdict whose retirement failed was never retried, so the source polls for ever"
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/$termretry_id.claim" \
+  "the retried retirement left its claim behind"
+assert_absent "$HTERMRETRY/state/procevent/$termretry_id.poll-failure" \
+  "the retried retirement left its poll-failure record behind"
+[ "$(count_results "$HTERMRETRY" "$termretry_id")" = 1 ] \
+  || fail "retrying the retirement minted a duplicate capture: $(count_results "$HTERMRETRY" "$termretry_id")"
+[ "$(wake_payloads "$HTERMRETRY" | sort -u | grep -c .)" = 1 ] \
+  || fail "retrying the retirement raised a second wake: $(wake_payloads "$HTERMRETRY" | sort -u)"
+pass "a terminal verdict whose retirement failed is retried without a duplicate capture"
 
 # Do not change what a real answer does, part one: a LIVE board answering while
 # its session stays open is captured, announced, classifies feedback, and keeps

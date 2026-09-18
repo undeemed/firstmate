@@ -120,7 +120,9 @@
 # byte-identical repeat is neither captured nor announced again until any poll
 # succeeds. Only the child's exit status is read, so the rule stays
 # adapter-agnostic, the source stays armed and keeps being polled, and a failure
-# that says something new still reaches the reader.
+# that says something new still reaches the reader. A suppressed repeat still
+# asks the adapter whether that output ends the source, so rate limiting a
+# failure never keeps a source that has ended alive.
 #
 # Durability boundary: see bin/fm-procevent-lib.sh. This runner proves capture
 # before publication and bounded re-announcement until handled, and nothing
@@ -143,7 +145,7 @@ REG=$(fm_procevent_registry_dir "$STATE")
 MAX_OUTPUT_BYTES=${FM_PROCEVENT_MAX_OUTPUT_BYTES:-1048576}
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,127p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,129p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 
 adapter_script() { printf '%s/bin/fm-procevent-%s.sh\n' "$FM_ROOT" "$1"; }
 
@@ -486,7 +488,20 @@ cmd_start() {
     failure_digest=$(fm_pr_sha256 "$out" 2>/dev/null) || failure_digest=''
     failures=$(poll_failure_repeat "$id" "$failure_digest")
     if [ "$failures" -ne 0 ]; then
-      rm -f -- "$out" "$(runner_file "$id")"
+      rm -f -- "$(runner_file "$id")"
+      # Suppression withholds a duplicate capture and wake, never the end of a
+      # source. A terminal verdict is derived from output, so identical output
+      # keeps re-deriving it: a retirement that could not be completed on the
+      # cycle that first captured this failure is retried on every later one,
+      # and a source that has ended still stops polling.
+      if adapter_result_is_terminal "$adapter" "$out"; then
+        if retire_owned_terminal_source "$id"; then
+          printf 'retired: %s (adapter classified the repeated failed poll terminal)\n' "$id"
+        else
+          printf 'cannot retire terminal source; it remains registered: %s\n' "$id" >&2
+        fi
+      fi
+      rm -f -- "$out"
       STAGED_OUTPUT=
       printf 'repeat-failure: %s (identical failed poll, %s in a row)\n' "$id" "$failures"
       exit 0
