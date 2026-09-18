@@ -923,7 +923,13 @@ flicker_verdict=$("$ROOT/bin/fm-procevent-lavish.sh" classify "$flicker_poll")
   || fail "a board restored inside the confirm classified as $flicker_verdict, not the answer it returned"
 "$ROOT/bin/fm-procevent-lavish.sh" terminal "$flicker_poll" \
   && fail "a board restored inside the confirm was ended anyway"
+# The runner half has to enter that same window rather than poll a board that is
+# already back, so the artifact is absent again when its poll starts and the stub
+# restores it inside the confirm.
+rm -f "$FLICKER_ART"
 PATH="$FLICKER_BIN:$LAVISH_SCRIPTED_BIN:$PATH" pe "$HFLICKER" start "$flicker_id" >/dev/null
+[ "$(cat "$LAVISH_COUNT" 2>/dev/null || echo 0)" = 2 ] \
+  || fail "the runner never reached the published poll for a board restored inside the confirm"
 assert_present "$HFLICKER/state/procevent/$flicker_id.source" \
   "a momentarily absent board retired its source, so nothing typed there afterwards is collected"
 assert_grep 'keep going' "$HFLICKER/state/procevent-inbox/$flicker_id.1.result" \
