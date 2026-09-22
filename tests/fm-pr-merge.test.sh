@@ -230,14 +230,16 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
-  cat > "$case_dir/fakebin/gh" <<SH
+  printf '%s\n' "$head" > "$case_dir/head.sha"
+  cat > "$case_dir/fakebin/gh" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
-if [ "\${1:-}" = api ]; then
-  case " \$* " in
+printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+fm_case_dir=$(dirname "$FM_TEST_GH_LOG")
+if [ "${1:-}" = api ]; then
+  case " $* " in
     *" --jq .head.sha "*)
-      [ ! -e "$case_dir/gh-api-fails" ] || exit 1
-      printf '%s\n' '$head'
+      [ ! -e "$fm_case_dir/gh-api-fails" ] || exit 1
+      cat "$fm_case_dir/head.sha"
       exit 0
       ;;
     *" --jq .body"*)
@@ -245,39 +247,91 @@ if [ "\${1:-}" = api ]; then
       # deliberately NOT gated on gh-api-fails: that marker exists to make the
       # COUNT unreadable, and a case about the squash guard must still get past
       # the audience contract to reach it.
-      cat "$case_dir/pr-body"
+      cat "$fm_case_dir/pr-body"
       exit 0
       ;;
   esac
-  case "\${2:-}" in
+  case "${2:-}" in
     */pulls/*)
-      [ ! -e "$case_dir/gh-api-fails" ] || exit 1
-      cat "$case_dir/pull.json"
+      [ ! -e "$fm_case_dir/gh-api-fails" ] || exit 1
+      cat "$fm_case_dir/pull.json"
       exit 0
       ;;
   esac
 fi
-case "\${1:-} \${2:-}" in
+case "${1:-} ${2:-}" in
   "pr view")
-    case " \$* " in
-      *headRefOid*) printf '%s\n' '$head' ; exit 0 ;;
+    case " $* " in
+      *statusCheckRollup*)
+        cat "$FM_TEST_GH_VIEW_JSON"
+        if [ -f "${FM_TEST_AWAY_RECORD_AFTER_VIEW:-}" ]; then
+          if [ -s "${FM_TEST_AWAY_RECORD_AFTER_VIEW}" ]; then
+            cp "$FM_TEST_AWAY_RECORD_AFTER_VIEW" "$FM_STATE_OVERRIDE/.afk-contract"
+          else
+            rm -f "$FM_STATE_OVERRIDE/.afk-contract"
+          fi
+        fi
+        exit 0
+        ;;
+      *headRefOid*)
+        cat "$FM_TEST_GH_HEAD"
+        exit 0
+        ;;
+      *isDraft*)
+        cat "$FM_TEST_GH_VIEW_JSON"
+        exit 0
+        ;;
     esac
     ;;
+  "pr merge")
+    if [ -n "${FM_TEST_META_AT_MERGE:-}" ] && [ -f "${FM_STATE_OVERRIDE:-}/task-x1.meta" ]; then
+      cat "$FM_STATE_OVERRIDE/task-x1.meta" > "$FM_TEST_META_AT_MERGE"
+    fi
+    # The forge call runs inside the merge's critical section, so a real
+    # away-record change attempted from here is the TOCTOU itself: whatever
+    # happens to it happens between the authority read and the merge.
+    if [ -x "${FM_TEST_AWAY_MUTATE_AT_MERGE:-}" ]; then
+      away_rc=0
+      "$FM_TEST_AWAY_MUTATE_AT_MERGE" > "$FM_TEST_AWAY_MUTATE_OUT" 2>&1 || away_rc=$?
+      printf '%s\n' "$away_rc" > "$FM_TEST_AWAY_MUTATE_RC"
+      "$FM_TEST_ROOT/bin/fm-afk-contract.sh" words \
+        > "$FM_TEST_AWAY_WORDS_AT_MERGE" 2>/dev/null \
+        || printf 'no-live-record\n' > "$FM_TEST_AWAY_WORDS_AT_MERGE"
+    fi
+    if [ -n "${FM_TEST_GH_MERGE_OUTPUT:-}" ]; then
+      printf '%s\n' "$FM_TEST_GH_MERGE_OUTPUT"
+    else
+      printf 'merged:\n  number: %s\n  status: ok\n' "${3:-}"
+    fi
+    merge_rc=0
+    if [ -f "${FM_TEST_GH_MERGE_RC_FILE:-}" ]; then
+      merge_rc=$(cat "$FM_TEST_GH_MERGE_RC_FILE")
+    fi
+    exit "$merge_rc"
+    ;;
   "api graphql")
-    cat "\$FM_TEST_GH_OUTCOME"
+    if [ -f "${FM_TEST_GH_GRAPHQL_FAIL:-}" ]; then
+      echo 'error: could not reach the GitHub API' >&2
+      exit 1
+    fi
+    cat "$FM_TEST_GH_OUTCOME"
     exit 0
     ;;
   api\ *)
-    cat "\$FM_TEST_GH_RULES"
+    if [ -f "${FM_TEST_GH_RULES_FAIL_BODY:-}" ]; then
+      cat "$FM_TEST_GH_RULES_FAIL_BODY" >&2
+      exit 1
+    fi
+    if [ -f "${FM_TEST_GH_RULES_FAIL:-}" ]; then
+      exit 1
+    fi
+    cat "$FM_TEST_GH_RULES"
     exit 0
     ;;
 esac
 exit 0
 SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
-  : > "$case_dir/gh.log"
-  printf '%s\n' 'Adds the thing, described for the repository that receives it.' > "$case_dir/pr-body"
-  write_pull_json "$case_dir"
 }
 
 # gh-axi mock that fails the merge call but succeeds everything else, so a
@@ -511,7 +565,7 @@ glab_merge_line() {
 run_pr_merge() {
   local case_dir=$1 rc; shift
   FM_ROOT_OVERRIDE="$ROOT" \
-  FM_HOME="${FM_TEST_HOME:-$case_dir}" \
+  FM_HOME="${FM_TEST_HOME:-$case_dir/home}" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_TEST_AUDIT_SNAPSHOT="${FM_TEST_AUDIT_SNAPSHOT:-}" \
   FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
