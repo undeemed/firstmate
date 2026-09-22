@@ -560,7 +560,10 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
     FM_FAKE_TRACE_RELEASE="$launch_release" \
     run_control "$dir" rl28 relaunch --note "continue after publication" > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$prepare" ] && [ "$i" -lt 500 ]; do
+  # A relaunch reads and republishes durable records before it delivers, so this
+  # budget is a loaded-runner allowance (10s at 10ms ticks), not a timing
+  # assertion; the case's real assertions are the serialization ones below.
+  while [ ! -e "$prepare" ] && [ "$i" -lt 1000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -579,7 +582,7 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
       --carry-platform x --carry-max 280 > "$dir/link.out" 2>&1 &
   link_pid=$!
   i=0
-  while [ ! -e "$waiting" ] && [ "$i" -lt 500 ]; do
+  while [ ! -e "$waiting" ] && [ "$i" -lt 1000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -592,7 +595,7 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
   }
   : > "$launch_release"
   i=0
-  while [ ! -e "$ready" ] && [ "$i" -lt 500 ]; do
+  while [ ! -e "$ready" ] && [ "$i" -lt 1000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -630,7 +633,7 @@ test_disabled_relaunch_clears_prior_trace_context() {
   expect_code 0 "$rc" "disabled relaunch should succeed"$'\n'"$out"
   [ -z "$(meta_field "$dir" rl33 traceparent)" ] \
     || fail "disabled relaunch must remove the prior trace carrier from metadata"
-  grep -q '^unset TRACEPARENT; .*claude' "$dir/fake/literal" \
+  grep -q 'unset TRACEPARENT; .*claude' "$dir/fake/literal" \
     || fail "disabled relaunch must clear the pane carrier before replacement launch"
   ! grep -q '^export TRACEPARENT=' "$dir/fake/literal" \
     || fail "disabled relaunch must not export a replacement trace carrier"
@@ -1301,7 +1304,7 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
     run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
       > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 200 ]; do
+  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 1000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done

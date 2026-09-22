@@ -95,6 +95,9 @@ emit "$real" opened
 exit 0
 SH
   chmod +x "$fakebin/lavish-axi"
+  # No tailnet identity, so the board's allowlist repair stays inert here and
+  # never reconciles a real Lavish server (bin/fm-lavish-lib.sh).
+  fm_fake_exit0 "$fakebin" tailscale
   printf '%s\n' "$home"
 }
 

@@ -181,6 +181,16 @@ fm_backend_agent_state tmux museliv:zsh
 alive
 ```
 
+The omp (Oh My Pi) 17.3.4 adapter was verified on 2026-08-15 against tmux 3.6 on Linux x86_64, through the same live drift guard.
+omp is the second harness after Claude Code whose title does not attribute it at all: bun launches the bundle, so `#{pane_current_command}` reads `bun` and only the foreground `comm` carries `omp`.
+Nothing in the classifier names omp directly; the verdict comes from the exact harness path component owned by `bin/fm-session-lock-lib.sh`, which is why `composer` and `docker-compose` stay ambiguous.
+This liveness result is Linux-only; [`supervision.md`](supervision.md) owns the measured omp process shapes and records omp identity on macOS as unverified pending measurement.
+
+```text
+# omp omp/17.3.4: title='bun' foreground=[omp ]
+ok - harness liveness: omp omp/17.3.4 classifies alive
+```
+
 `#{pane_current_command}` and foreground `ps -o comm=` read different name fields, but which one preserves executable identity is platform-dependent.
 On macOS the pane command reflected the rewritable title while the full install path could survive in `ps -o comm=`; in the Linux portable regression those roles reversed for the version-named native executable, with the identifying path retained in argv[0].
 The classifier therefore accepts a harness basename first, then an exact harness path component in the full executable path, then the same component in argv[0], without depending on which field carries it on a given platform.
@@ -1446,6 +1456,9 @@ Real captures verified these active distinctions:
 - Pi uses content between complete separator rows and requires exact native Pi identity.
 - Dim or faint suggestion text is ghost content, while normally styled text is pending input.
 - Grok dark truecolor placeholders are ghost content, while bright truecolor typed input remains pending.
+- omp uses a half-open rounded box whose content row opens with `│` and never closes it, with no placeholder and no prompt glyph; captured live on 2026-08-21 against omp 17.3.5 on Herdr 0.8.0, as `ESC[0m ESC[38;2;224;193;255m │ + 2 spaces ESC[0m` when empty and the same prefix followed by default-colored text when typed.
+  Before the shape was owned, every live omp pane classified `unknown` and every `bin/fm-send.sh` to one exited non-zero with `verdict=pending` while the text had in fact been submitted.
+  After it, the four live second-mate panes classify `empty` and a real send exits 0.
 - A bare shell prompt has no safe agent-composer container and is unknown.
 - Codex 0.154's idle braille starfield rows are composer furniture, with the dated Herdr evidence and refresh command in [Composer classification matrix](#composer-classification-matrix).
 
@@ -1965,6 +1978,30 @@ Refresh this harness-dependent proof before accepting a cursor upgrade:
 
 ```sh
 FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
+```
+
+## CodeGraph search seatbelt
+
+The user-level CodeGraph search guard (`extensions/fm-codegraph-guard.ts` driving `bin/fm-codegraph-pretool-check.sh`) was verified live under pi 0.84.2 on 2026-08-22.
+Every case ran a real non-interactive pi session against a throwaway Git working tree carrying a `.codegraph/` index and a `src/user.rs` containing `fn createUser() {}`, with `FM_CODEGRAPH_CHECKER` pinning the checker under test so no shared installed copy was touched.
+
+```sh
+FM_CODEGRAPH_CHECKER=<checker under test> pi -ne -e extensions/fm-codegraph-guard.ts --no-session -nc -ns -p '<one bash command>'
+```
+
+Observed per case:
+
+- `cd <indexed repo> && grep -rn createUser src/` with the per-command checker was refused, and the agent relayed the `codegraph explore "createUser"` alternative and the escape hatch.
+- A checker without per-command classification ran that same command to completion and returned `src/user.rs:1:fn createUser() {}`, which is the enforcement gap the per-command classification closes.
+- With the checker pinned to a script exiting 7, the same search was refused with a reason naming that the guard could not run, while `cat src/user.rs` ran normally, so ordinary work is not wedged.
+- `cd <indexed repo> && FM_ALLOW_RAW_SEARCH=1 grep -rn createUser src/` ran the search, so the inline escape hatch releases the call.
+- The same search inside a Git working tree with no `.codegraph/` index ran unchanged.
+
+omp loads the same guard file but has not been exercised live, so its enforcement is recorded as not yet verified rather than assumed from the pi result.
+Refresh this record after a pi or omp upgrade, or after changing the guard or checker, with the opt-in live guard:
+
+```sh
+FM_CODEGRAPH_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-codegraph-guard-live-e2e.test.sh
 ```
 
 ## Pi supervision branch

@@ -14,6 +14,7 @@ install_pi_watch_extension_fixture() {
   local repo=$1
   mkdir -p \
     "$repo/.pi/extensions/lib" \
+    "$repo/extensions/lib" \
     "$repo/node_modules/@earendil-works/pi-coding-agent" \
     "$repo/node_modules/@earendil-works/pi-tui" \
     "$repo/node_modules/typebox" \
@@ -23,7 +24,7 @@ install_pi_watch_extension_fixture() {
   cp "$ROOT/.pi/extensions/lib/fm-native-contract.ts" "$repo/.pi/extensions/lib/fm-native-contract.ts"
   cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$repo/.pi/extensions/lib/fm-async-exec.ts"
   cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$repo/.pi/extensions/lib/fm-calm-visibility.ts"
-  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
+  cp "$ROOT/extensions/lib/fm-operational-input.ts" "$repo/extensions/lib/fm-operational-input.ts"
   cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
   chmod +x "$repo/bin/fm-operational-input.sh"
   cat > "$repo/node_modules/@earendil-works/pi-coding-agent/package.json" <<'JSON'
@@ -195,7 +196,10 @@ test_handling_successor_does_not_go_blind() {
   printf 'done: crew finished its task\n' >> "$state/crew.status"
   event_start=$(date +%s)
   now=0
-  while [ "$now" -lt 20 ]; do
+  # A generous ceiling on a loaded runner: the property is that the successor
+  # surfaces the event at all rather than sitting on it, and one poll's real
+  # cost is not the assertion.
+  while [ "$now" -lt 30 ]; do
     if grep -q '^signal:' "$out" 2>/dev/null; then
       break
     fi

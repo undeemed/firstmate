@@ -18,6 +18,9 @@
 #            session on that board and PROVE it is live BEFORE binding and
 #            arming its answer source, so a registered poll can never race a
 #            session that does not exist or attach to one that has ended.
+#            The shared Lavish server's host allowlist is repaired first
+#            (fm_lavish_prepare_server in fm-lavish-lib.sh, which may restart
+#            a stale server).
 #            Bind to the keyed-answer intake (bin/fm-captain-hold.sh) ALWAYS
 #            precedes arm, so the board can never produce an answer that has
 #            nowhere to go (captain-hold-lifecycle's ordering rule, enforced
@@ -90,6 +93,9 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# shellcheck source=bin/fm-lavish-lib.sh
+. "$SCRIPT_DIR/fm-lavish-lib.sh"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 
 TEMPLATE="${FM_BEARINGS_BOARD_TEMPLATE:-$SCRIPT_DIR/../.agents/skills/bearings/assets/board-template.html}"
@@ -406,6 +412,8 @@ command_build() {
   printf 'board: %s\n' "$board"
 
   command -v lavish-axi >/dev/null 2>&1 || fail "lavish-axi is not installed"
+  fm_lavish_prepare_server
+
   sid=$("$SCRIPT_DIR/fm-procevent-lavish.sh" source-id "$board") \
     || fail "cannot derive the board source id"
   pre_reopen_owner=$(source_owner "$sid")

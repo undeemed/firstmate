@@ -14,7 +14,8 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only>
+#          [--herdr-lab] [--pr-body-required <file>]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -52,14 +53,55 @@
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
+# Every ship mode also carries AGENTS.md's ponytail lean gate, worded for that
+# mode's own delivery point (the PR body for the PR modes, the branch handoff for
+# local-only), and no scaffold states a size number because the gate replaced the
+# line cap. Scouts and charters never carry it.
+# LEAN_GATE below owns the invocation, the exit codes, and the three-round bound
+# for all three modes.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns merge decisions, so yolo is
 # a spawn-time and firstmate-side input only (AGENTS.md section 7).
+# --pr-body-required <file> declares content the PUBLISHED pull request body must
+# end with, for a repository whose own policy requires it (an AI-assistance
+# disclosure, for example). It applies only to the two PR-publishing ship modes,
+# because local-only publishes nothing. The file's content is stored at
+# data/<task-id>/pr-body-required.md, and bin/fm-pr-check.sh carries it into the
+# published body and verifies it there over REST; that script's header owns the
+# publication contract. The brief tells the worker the content is declared and
+# that it must not hand-write it, because the pipeline composes the body itself
+# and a hand-written copy would be dropped or duplicated. Without this flag a
+# generated brief is unchanged and no body is ever read or written.
 # Every scaffold's status protocol distinguishes the configured
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
 # blocked when firstmate must act.
+# Ship and scout status protocols also require the worker to DECLARE that it is
+# stopping - pause or blocked, including a finished block with nothing queued -
+# before it goes quiet, because a still pane with no declared state costs
+# supervision a deep inspection to tell apart from a wedge.
+# Every scaffold also carries the same status-honesty contract: `done:` is a
+# claim that the deliverable its definition of done names exists, so it must
+# name that evidence, and work that is only intended, committed locally, or
+# analyzed stays `working:` or `blocked:`.
+# Every scaffold also carries the same progress-visibility contract: stacked
+# ASCII progress bars in the worker's OWN output, every percentage derived from
+# a real done/total count it can name, and no bar at all when there is no
+# countable denominator. It does not loosen the status protocol: a status append
+# stays one sparse supervisor-actionable line, a bar is never a reason to
+# append, and a stacked bar block must never be appended to a status file,
+# because every supervisor reads that file's LAST line
+# (bin/fm-classify-lib.sh last_status_line) and trailing bar lines would hide
+# the done:/blocked:/needs-decision: verb the append exists to deliver.
+# Every scaffold's status protocol also teaches the stated decision-key position
+# (needs-decision [key=<slug>]: <summary>), because a key written later in the
+# line folds under the shared "default" bucket and cannot be answered by its own
+# key; bin/fm-classify-lib.sh owns that grammar and the drain warning that
+# catches a misplaced one.
+# Every worker scaffold's rules also forbid waiting on a forge by polling it in a
+# shell loop and point at firstmate's armed merge poll (bin/fm-pr-check.sh)
+# instead; FORGE_POLL_RULE below owns that text and the measured reason for it.
 # Emission-time syntax and legacy unknown-time handling are owned by
 # bin/fm-classify-lib.sh; each scaffold renders the stamp as a literal <epoch>
 # placeholder the worker replaces with a numeric Unix time as it appends, so a
@@ -140,6 +182,7 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
+PR_BODY_REQUIRED=
 MODE=
 MODE_SET=0
 POS=()
@@ -151,6 +194,9 @@ for a in "$@"; do
     esac
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
+      pr_body_required)
+        [ -n "$a" ] || { echo "error: --pr-body-required requires a value" >&2; exit 1; }
+        PR_BODY_REQUIRED=$a ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -163,6 +209,11 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
+    --pr-body-required) want_value=pr_body_required ;;
+    --pr-body-required=*)
+      PR_BODY_REQUIRED=${a#--pr-body-required=}
+      [ -n "$PR_BODY_REQUIRED" ] || { echo "error: --pr-body-required requires a value" >&2; exit 1; }
+      ;;
     # yolo never reaches the worker: it is firstmate's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -202,6 +253,19 @@ if [ "$NO_PROJECTS" -eq 1 ] && [ "$KIND" != secondmate ]; then
   exit 1
 fi
 
+# Declared body content is only meaningful where a body is published, and a
+# blank file is refused here rather than becoming a declaration the publication
+# gate later refuses.
+if [ -n "$PR_BODY_REQUIRED" ]; then
+  case "$KIND:$MODE" in
+    ship:no-mistakes|ship:direct-PR) ;;
+    *) echo "error: --pr-body-required applies only to a ship brief in a mode that publishes a PR (no-mistakes, direct-PR)" >&2; exit 1 ;;
+  esac
+  [ -f "$PR_BODY_REQUIRED" ] || { echo "error: --pr-body-required file not found: $PR_BODY_REQUIRED" >&2; exit 1; }
+  grep -q '[^[:space:]]' "$PR_BODY_REQUIRED" \
+    || { echo "error: --pr-body-required file is blank: $PR_BODY_REQUIRED" >&2; exit 1; }
+fi
+
 # The optional home-local include is read before anything is written, so an
 # unusable file never leaves a partial scaffold behind.
 BRIEF_INCLUDE_FILE="$CONFIG/brief-include.md"
@@ -231,6 +295,9 @@ BRIEF="$DATA/$ID/brief.md"
 [ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
 mkdir -p "$DATA/$ID"
 
+PR_BODY_FILE="$DATA/$ID/pr-body-required.md"
+[ -z "$PR_BODY_REQUIRED" ] || cp -- "$PR_BODY_REQUIRED" "$PR_BODY_FILE" || exit 1
+
 ASK_USER_BLOCK=
 if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
   ASK_USER_BLOCK=$(fm_ask_user_escalation_block "$DATA" "$ID")
@@ -257,6 +324,76 @@ When a terminal message says an instruction is waiting there - and at any natura
 The move IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
 EOF
 INBOX_SECTION=${INBOX_SECTION%$'\n'}
+
+# Progress-visibility contract, byte-identical in every scaffold so a worker's
+# progress reporting never depends on which kind of brief it received. Built
+# with a QUOTED heredoc so its backticks, braces, and box-drawing cells reach
+# the reading agent verbatim; the interpolating brief heredocs below expand
+# "$PROGRESS_SECTION" once and never rescan its bytes.
+IFS= read -r -d '' PROGRESS_SECTION <<'EOF' || true
+# Progress - do not be a black box
+The status protocol above owns WHEN you append a status line.
+This owns what your own working output shows in between, so a supervisor can see where the work actually is without asking.
+
+While working on anything with more than a couple of steps, print ASCII progress bars in your own output.
+Exact format, fixed width so stacked lines read as a table:
+
+```
+Agent repair   [██░░░░░░░░░░░░]  10%
+Batch 7        [████████████░░]  88%
+Whole build    [████░░░░░░░░░░]  34%
+```
+
+- Label left-aligned and padded to the widest label in the group.
+- Bar is exactly 14 cells between `[` and `]`, `█` filled and `░` empty, filled cells = `round(percent * 14 / 100)`.
+- Percent right-aligned in 3 characters, then `%`, separated from the bar by two spaces.
+- Show the tracks that exist, innermost first: the unit of work in hand, its parent batch, then the whole job. One track is fine; never invent a hierarchy to fill lines.
+
+Print a group when progress genuinely moves - a step completing, a batch finishing - not on every line, and not on a timer.
+Re-print the whole group each time rather than a single changed line, so the latest block always shows the full picture.
+A bar never replaces the substance: it sits with the sentence that says what happened and what is next.
+
+**Every percentage must come from a real count you can name**: tests passed over total, files migrated over total, steps done over planned, subtasks merged over opened.
+Derive it as `done / total`, and be ready to say what the two numbers were.
+
+**Never invent a number to look busy.** A fabricated 34% is worse than no bar, because it reads as measurement and a supervisor will act on it.
+When there is no countable denominator, print the honest shape instead and omit the bar entirely:
+
+```
+Root cause     step 3, total unknown - still narrowing
+```
+
+Bars never change WHEN you append status, and a bar is never a reason to append one: status stays sparse supervisor-actionable events.
+Keep the append itself ONE line, and never append a stacked bar block to the status file: supervision reads the LAST line of that file, so trailing bar lines would hide the `done:`, `blocked:`, or `needs-decision:` verb the append exists to deliver.
+A status line you were already going to append may end with one compact inline bar built from the same real count, for example:
+`working: fix implemented, tests 34/40 [████████████░░]  85%`
+EOF
+PROGRESS_SECTION=${PROGRESS_SECTION%$'\n'}
+
+# Status-honesty contract, byte-identical in every scaffold so no delivery mode
+# can be the one variant a worker reads as permission to report an intention.
+# Quoted heredoc for the same reason as PROGRESS_SECTION above: its backticks
+# must reach the reading agent verbatim.
+IFS= read -r -d '' STATUS_HONESTY <<'EOF' || true
+# Status honesty
+Append `done:` ONLY when the deliverable your definition of done names provably exists, and name that evidence in the line: the pull request URL, the report path, the merged commit, or the committed branch it requires.
+Reporting `done:` for work you have not finished - no PR where your definition of done requires one, no report written, an unpushed commit, or an analysis you are about to turn into the deliverable - is a false report, not a status update.
+If you intend to finish but have not finished, the line is `working:`, or `blocked:` when you need help - never `done:`.
+EOF
+STATUS_HONESTY=${STATUS_HONESTY%$'\n'}
+
+# Forge-poll prohibition, byte-identical in every worker scaffold, quoted for the
+# same backtick reason as the two blocks above. A hand-written wait loop re-reads
+# the PR through GraphQL on every iteration: `gh-axi pr view` costs 2 points, so a
+# 45-second loop spends 160 of the fleet's shared 5,000 points per hour per PR
+# waited on. The armed merge poll bin/fm-pr-check.sh spends none of that budget.
+IFS= read -r -d '' FORGE_POLL_RULE <<'EOF' || true
+   Never wait on a forge by polling it in a shell loop - no `while ...; do gh pr view ...; sleep ...; done`
+   and no `gh pr checks` variant of it. Every iteration spends the fleet's shared GraphQL budget, and one
+   hour of waiting can empty it for every other task. Report the PR URL and stop instead: firstmate arms
+   the merge poll (`bin/fm-pr-check.sh`), which watches the PR on the supervision sweep at no GraphQL cost.
+EOF
+FORGE_POLL_RULE=${FORGE_POLL_RULE%$'\n'}
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -337,9 +474,15 @@ Never append \`working:\` merely to acknowledge receipt or announce that a marke
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>] [at=<epoch>]: {why it is no longer active}\`.
+An escalation is keyed the same way: \`needs-decision [key=<slug>]: {summary}\` and \`blocked [key=<slug>]: {why}\`.
+Every \`[key=...]\` token must sit BEFORE the colon; written later in the line it is read as message text, so the event files under the shared \`default\` key and cannot be answered by its own key.
 \`resolved\` separately closes an escalated decision or blocker, and only a \`resolved\` line carrying that decision's exact key closes it: a later \`done\` or \`working\` event never does, even when the answer is what started that work.
-The main firstmate's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main firstmate, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (keyed with \`[key=<slug>]\` if you opened it with one) as your domain resumes.
+The main firstmate's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main firstmate, append \`resolved [key=<slug>] [at=<epoch>]: {how it cleared}\` yourself (the same key you opened it with, or a bare \`resolved [at=<epoch>]: {how it cleared}\` when you opened it unkeyed) as your domain resumes.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
+
+$STATUS_HONESTY
+
+$PROGRESS_SECTION
 
 # Definition of done
 You are persistent by default. Do not exit just because your queue is empty.
@@ -423,6 +566,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 1. Never push to any remote and never open a PR.
 2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+$FORGE_POLL_RULE
 4. Report status by appending one line:
    \`echo "{state} [at=<epoch>]: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
@@ -439,11 +583,18 @@ The report is the only thing that survives, so anything worth keeping must be in
    treating it as a possible wedge. When you know when the wait clears, say so in the line with
    \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) and firstmate rechecks at that time instead.
    Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
+   Declare every stop before you go quiet: whenever you stop making progress, append
+   \`$PAUSED_VERB: {why}\` or \`blocked: {why}\` first. Finishing a block with nothing queued
+   counts as stopping - say what is ready and where it sits rather than idling silently.
+   A still pane with no declared state is indistinguishable from a wedge, and supervision
+   must spend a deep inspection to tell them apart.
+   5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision [key=<slug>] [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   The \`[key=<slug>]\` token names that decision and must sit BEFORE the colon; \`blocked [key=<slug>]: {why}\` names a blocker the same way.
+   A token written later in the line is read as message text, so the decision files under the shared \`default\` key, cannot be answered by its own key, and shares that key with every other unkeyed decision on this task.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
-   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>] [at=<epoch>]: {how it cleared}\` yourself (the same key you opened it with) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
    manages the daemon.
@@ -456,6 +607,10 @@ The report is the only thing that survives, so anything worth keeping must be in
    going. A drive-call error, timeout, slow read, or generic unreachability is NOT a daemon error:
    the daemon accepts \`respond\` immediately and runs the round in the background, so a killed or
    timed-out call was only waiting for a read while the run kept working.
+
+$STATUS_HONESTY
+
+$PROGRESS_SECTION
 
 $INBOX_SECTION
 
@@ -492,6 +647,18 @@ esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID") || exit 1
 DOD=$(fm_dod_block "$MODE" "$ID") || exit 1
 
+# Declared body content is prepended to the delivery contract rather than
+# emitted as its own template line, so a brief that declares nothing stays
+# byte-identical to a brief scaffolded before the flag existed.
+if [ -n "$PR_BODY_REQUIRED" ]; then
+  DOD="# Required pull-request body content
+This task declares content the PUBLISHED pull request body must END with. It is stored at \`$PR_BODY_FILE\`.
+Do not write it into the body, a commit message, or the pipeline intent yourself: in no-mistakes mode the pipeline composes the body and drops a hand-written copy, and in direct-PR mode you open the PR yourself and a hand-written copy risks being duplicated.
+Firstmate carries the declared content into the published body when it records your PR, reads the body back from the forge to confirm it, and refuses loudly if the forge does not publish it.
+
+$DOD"
+fi
+
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
@@ -512,6 +679,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 $RULE1
 2. Stay inside this worktree; modify nothing outside it.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+$FORGE_POLL_RULE
 4. Report status by appending one line:
    \`echo "{state} [at=<epoch>]: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
@@ -529,12 +697,19 @@ $RULE1
    known external wait you expect to clear on its own ($CREWMATE_PAUSE_WAIT_EXAMPLES):
    firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
+   Declare every stop before you go quiet: whenever you stop making progress, append
+   \`$PAUSED_VERB: {why}\` or \`blocked: {why}\` first. Finishing a block with nothing queued
+   counts as stopping - say what is ready and where it sits rather than idling silently.
+   A still pane with no declared state is indistinguishable from a wedge, and supervision
+   must spend a deep inspection to tell them apart.
+   5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
-   append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision [key=<slug>] [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   The \`[key=<slug>]\` token names that decision and must sit BEFORE the colon; \`blocked [key=<slug>]: {why}\` names a blocker the same way.
+   A token written later in the line is read as message text, so the decision files under the shared \`default\` key, cannot be answered by its own key, and shares that key with every other unkeyed decision on this task.
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
-   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>] [at=<epoch>]: {how it cleared}\` yourself (the same key you opened it with) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
    manages the daemon.
@@ -547,6 +722,10 @@ $ASK_USER_BLOCK
    going. A drive-call error, timeout, slow read, or generic unreachability is NOT a daemon error:
    the daemon accepts \`respond\` immediately and runs the round in the background, so a killed or
    timed-out call was only waiting for a read while the run kept working.
+
+$STATUS_HONESTY
+
+$PROGRESS_SECTION
 
 $INBOX_SECTION
 

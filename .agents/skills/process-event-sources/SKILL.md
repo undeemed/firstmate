@@ -20,6 +20,7 @@ metadata:
 # process-event-sources
 
 Load this before arming a long-polling source, before registering a deterministic condition->action watch, whenever a `check:` wake carries `procevent <adapter> <source-id> <sequence>`, and whenever the watcher headlines a `process-event source stranded` or `process-event source failed to start` wake.
+Load this before arming a long-polling source, before registering a deterministic condition->action watch, and whenever a `check:` wake carries `procevent <adapter> <source-id> <sequence>` or `lavish board stopped listening`.
 
 The runner exists so a blocking external process never holds firstmate's conversational turn.
 Firstmate registers a source, keeps working, and is woken when that process completes.
@@ -46,6 +47,16 @@ A source `list` reports as `orphaned` is one reconcile will not relaunch, becaus
 If the claim's recorded pid is alive under a different identity, `bin/fm-procevent.sh start <source-id>` takes the source back once you have checked nothing is still polling it - provided the dead generation's reservation records can still be tidied; otherwise it refuses with `cannot claim source`.
 If the runner itself died and its process group survives, `start` reports `already owned` and takes nothing back: verify whether the dead runner's polling child is still attached to the source, and once that group is empty the next reconcile reclaims the source on its own.
 Nothing signals that group automatically.
+
+Armed is not listening.
+Before telling the captain a board is ready for answers - and after any wake saying its channel broke - prove it:
+
+```sh
+bin/fm-procevent-lavish.sh listening <artifact.html>
+```
+
+Exit 0 means the board is being polled right now, exit 3 means the listener is alive between bounded retries (wait and re-run), and exit 1 means nothing is reading that page.
+`bin/fm-procevent.sh alive <source-id>` is the adapter-neutral form for any other source.
 
 When a source carries captain answers to captain-held tasks, bind it BEFORE arming it, so it can never produce an answer that has nowhere to go:
 
@@ -94,6 +105,9 @@ Two rules the commands cannot enforce for you:
 
 ## Handling a wake
 
+`lavish board stopped listening: <board> (source <source-id> sequence <sequence>)`
+: The Lavish adapter's own wake: that board's answer channel broke and bounded recovery failed, so anything the captain typed into it after that point was never read. It is already acknowledged, so no generic acknowledgement is owed. Prove the board with `bin/fm-procevent-lavish.sh listening <board>`; a source stays armed through this, so ordinary supervision starts a fresh listener and the check is how you confirm it did. Tell the captain the board stopped taking answers and what to do about it, never the server payload the report quotes.
+
 `procevent <adapter> <source-id> <sequence>`
 : The named durable result is waiting at `state/procevent-inbox/<source-id>.<sequence>.result`. Read that exact result; separate wakes identify later results independently.
 : **When the adapter owns applying the result, run the adapter, not the generic acknowledgement below.** The `<adapter>` field of the wake decides this, and `remote-reply` is such an adapter: a captured delta is applied only by
@@ -113,7 +127,10 @@ Two rules the commands cannot enforce for you:
 : Ask the adapter what the result means rather than parsing it yourself.
   `bin/fm-procevent.sh classify <result-file>` routes through the immutable built-in or extension identity captured with that result; for Lavish, its existing direct command returns `feedback`, `ended`, `waiting`, `disconnected`, `missing`, or `unknown`.
   Consume a Lavish capture with `bin/fm-procevent-lavish.sh read <result-file>` rather than grepping the raw file: that command reports declared and presented item counts plus a completeness verdict, enumerates every captured queued item while retaining supplied element identity, and surfaces a `tag=message` freeform message as its own field, labeling it as session-ending only when the session ended.
+  `bin/fm-procevent.sh classify <result-file>` routes through the immutable built-in or extension identity captured with that result; for Lavish, its existing direct command returns `feedback`, `ended`, `waiting`, `missing`, `poll-error`, or `unknown`.
+  Consume a Lavish capture with `bin/fm-procevent-lavish.sh read <result-file>` rather than grepping the raw file: that command reports declared and presented item counts plus a completeness verdict, enumerates every captured queued item while retaining supplied element identity, and surfaces a `tag=message` session-ending message as its own field.
   `answers` remains the keyed-choice extractor and never treats freeform prose as a decision key.
+  A `poll-error` is a failed poll and never something the captain said: report the board, never the payload, and prove the listener with `listening` before promising anyone that page is read again.
   A `feedback` result can still be the last one a review ever produces, so never assume another wake is coming just because the state is not `ended`.
 The crew-hosted recovery ordering and arm-and-acknowledge rule are owned by the [crew-hosted Lavish board contract](../../../docs/configuration.md#crew-hosted-lavish-review-boards); `bin/fm-brief.sh` emits its instruction at the point of use.
 : A routine no-op an adapter positively identifies never becomes a firstmate wake - it is recorded as handled and stays silent, so you never see it.

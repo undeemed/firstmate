@@ -1,56 +1,38 @@
 # omp (Oh My Pi)
 
-Verified for crew, scout, secondmate, and primary work on Herdr on 2026-09-05 with omp 18.1.11, building on the 2026-09-02 adapter investigation against 18.1.2.
-omp is a Pi fork, so `references/harness/pi.md` is the nearest relative; every difference from Pi is stated here.
-Cross-harness provider and credential identity is owned by `references/common/model-and-effort.md`.
+omp is a Pi fork distributed as the npm package `@oh-my-pi/pi-coding-agent` and executed by bun.
+It is a CREWMATE, SCOUT, and SECONDMATE adapter.
+Liveness was verified on 2026-08-15 with omp 17.3.4, and the half-open composer read plus Herdr send acknowledgement on 2026-08-21 with omp 17.3.5 and Herdr 0.8.0.
+Every other fact below is STATIC EVIDENCE read from the installed binary's `--help`, its shipped TypeScript declarations, and its bundle, not from a live supervised session.
+Treat the dialog row, and composer and submission behavior on any backend other than Herdr, as UNVERIFIED until a real omp crewmate has been supervised end to end.
 
 ## Operating facts
 
 | Fact | Value |
 |---|---|
-| Binary | `omp`, a single Bun-compiled executable resolved from `PATH` by `../../../bin/fm-spawn.sh`; a missing binary refuses the spawn. |
-| Launch | Foreign markers cleared (`CLAUDECODE`, `PI_CODING_AGENT`, `GROK_AGENT`, `FM_PI_HARNESS`, `GEMINI_CLI`, Cursor's), `FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1`, then `omp --config <.omp/fm-worker-overlay.yml> --auto-approve --cwd <worktree> [--model] [--thinking] -e state/<id>.omp-ext.ts <one positional brief>`; a secondmate passes no `-e` and relies on auto-discovery. |
-| Busy state | `../../../bin/fm-busy-lib.sh` source `omp-ext`: the per-task extension marks busy at `agent_start` and idle at `agent_end` only when `willContinue` is not true; `ctx.isIdle()` is deliberately not consulted because it reads false at a natural TUI `agent_end` (`session_stop` is awaited before settle). |
-| Exit command | `/quit` (`/exit` and `/q` are aliases). |
-| Interrupt | Single Escape; the composer is left empty, no clear key. |
-| Skill invocation | No separate verified form beyond normal command behavior; use natural language when the exact command is uncertain. |
-| Model flag | `--model <provider>/<id>` (fuzzy patterns are accepted by omp but bypass Firstmate's pre-launch check). |
-| Effort flag | `--thinking <off\|minimal\|low\|medium\|high\|xhigh\|max\|auto>`, a superset of the shared vocabulary, so every level including `max` maps straight across. |
-| Model discovery | `omp models [--json]` lists built-in and auto-discovered providers only; extension-registered providers such as `claude-bridge` never appear, so those models pass through the spawn unvalidated with a stderr notice. `omp usage` shows provider windows; `quota-axi` covers the `claude` provider when the bridge is in use. |
-| Marker | None of omp's own (verified: `PI_CODING_AGENT` absent from the binary, no `PI_CODING_AGENT_DIR` or `OMP_PROFILE` in the default profile). `FM_OMP_HARNESS=omp` is Firstmate's launch marker; ancestry matches the exact process name `omp`. |
-| Composer | Pinned to `composer.shape: borderless` by the overlay, a bare `❯` (U+276F) row the shared classifier already reads; busy text is `Working…` (U+2026), the only spelling the omp busy regex accepts (the three-dot form its headless `-p` mode writes never reaches a supervised pane), with the status row's braille spinner plus elapsed cell as the second signal. |
-| Autonomy | `--auto-approve` owns approval (omp forces `tools.approvalMode: yolo` for the session under it); the overlay pins `plan.defaultOnStartup: false`, `prewalk.enabled: false`, `retry.usageReservePolicy: auto`. |
-| Trust | No project-trust gate at all; a fresh profile shows a provider-login wizard instead, suppressed by `OMP_SKIP_SETUP=1`. |
-| Resume | `-c/--continue` and `-r/--resume` exist but carry no verified pane-resume contract; use deterministic relaunch. |
+| Binary | `omp` on `PATH`, a bun launcher for `@oh-my-pi/pi-coding-agent/dist/cli.js`. Measured live: the pane title reads `bun` and only the foreground `comm` reads `omp`, so supervision attributes an omp pane from the foreground name alone. |
+| Launch | Positional prompt, the Pi shape, so the instructions ride the launch command. Keep them as ONE positional argument. |
+| Autonomy | `--auto-approve`, with `--approval-mode yolo` as the equivalent long form. |
+| Busy state | The Firstmate-owned extension's `agent_start` marks busy and `agent_end` marks idle. omp has NO `agent_settled`, so idle requires all three of its own settle signals to agree: `event.willContinue` false, `ctx.isIdle()` true, and `ctx.hasPendingMessages()` false. Known failure mode: if `ctx.isIdle()` is present but returns false inside `agent_end`, the handler returns early and no idle record is ever written, and because `../../../bin/fm-busy-lib.sh` has no age expiry the task keeps classifying `busy omp-ext` until control, recovery, or cleanup writes another record. Confirm that `agent_end` timing on the first supervised omp crewmate. |
+| Turn-end | The same extension's `turn_end`, loaded with `-e` from `state/<id>.omp-ext.ts` outside the worktree. |
+| Exit command | `/exit`, or `/quit` (alias `/q`); both resolve to the same handler. `Ctrl-D` is the `app.exit` keybind. |
+| Interrupt | Single Escape (`app.interrupt`, default key `escape`). |
+| Skill invocation | `/skill:<skill>`, for example `/skill:no-mistakes`. The `skill:` prefix is part of the registered command name, so the bare Claude form is not a registered omp command; use natural language when the exact form is uncertain. |
+| Environment marker | `OMPCODE=1`, exported to children ALONGSIDE `CLAUDECODE=1`; the router's Detection section owns the precedence this forces. omp does NOT set `PI_CODING_AGENT`, so there is no collision with the Pi marker. |
+| Model flag | `--model <model>`. |
+| Effort flag | `--thinking <low\|medium\|high\|xhigh\|max>`, verified 2026-08-15 against installed omp 17.3.4 `--help`. The flag also accepts `off\|minimal\|auto`, which sit outside the shared vocabulary and stay unreachable rather than remapped. |
+| Model discovery | Run `omp models`, or open the running session's `/model` picker. `--model` fuzzy-matches, so quote the listing's exact identifier rather than an abbreviation. |
+| Resume | `-c` / `--continue` for the previous session, `-r` / `--resume <id-prefix\|path>` for a specific one; bare `-r` opens a picker. |
+| Trust dialog | None found. omp 17.3.4 ships no `trust.json` store and none exists under `~/.omp/agent/`, unlike Pi. This is a bundle-level negative, not an observed first run, and the launch path does not depend on it because the extension is loaded from `state/` by absolute path. |
 
-Keep the instructions as one positional argument; a second positional never surfaced as a submitted message.
-The openai-codex models reach an extension-registered tool through omp's `xd://` virtual-file bridge: the model reads `xd://fm_watch_arm_omp` for the description and writes `xd://fm_watch_arm_omp` to invoke it, so a transcript or rpc stream shows a `write` to that path rather than a direct `fm_watch_arm_omp` call; both are the same invocation (verified 18.1.11).
-omp cold start is roughly twenty seconds to the first agent turn, paid once per worker.
-
-## Detection
-
-`../../../bin/fm-harness.sh` tests `FM_OMP_HARNESS=omp` before `CLAUDECODE`, like Cursor's markers, and its ancestry walk matches the anchored process name `omp` above the interpreter fallback.
-The omp template in `../../../bin/fm-spawn.sh` clears every foreign marker at its own launch boundary, and `FM_OMP_HARNESS=omp` counts only under a real `omp` ancestor, so the marker inherited by any other launch is inert: an omp secondmate's workers keep their own identity and an inherited `CLAUDECODE` cannot outrank a worker that omp launched.
-`../../../bin/fm-session-lock-lib.sh` matches the same anchored name for session-lock ownership, and `../../../bin/backends/tmux.sh` classifies it `agent` for liveness.
-The optional claude-bridge extension runs a nested executable literally named `claude` as a sibling of tool execution, never an ancestor of it, so omp's own tool calls detect as omp; that subtree is never walked by a Firstmate script.
-
-## Worker posture overlay
-
-The captain's own `~/.omp/agent/config.yml` is never written; the tracked `.omp/fm-worker-overlay.yml` is passed with `--config` for the one session and pins only the settings whose captain-level values would park an unattended worker on a prompt, change its pinned model, or make its composer unreadable.
-`../../../bin/fm-spawn.sh`'s header owns the exact list and the reason for each pin.
-
-## Extension loading
-
-omp auto-discovers `<cwd>/.omp/extensions/*.ts` (top level only, cwd only, no ancestor walk, no trust dialog) and the active profile's `agent/extensions/`; `.pi/extensions/` is not a discovery root.
-A file that is both auto-discovered and named with `-e` loads twice, so the per-task worker extension lives in `state/` and a secondmate launch names no `-e` at all.
-There is no `agent_settled` event; `agent_end` plus `willContinue` replaces it.
+`--extension`/`-e` loads an extension by explicit path even when `--no-extensions` disables discovery, so the Firstmate extension survives a discovery-disabled profile.
 
 ## Primary integration
 
-The omp primary follows the Pi extension-owned watcher model through `../../../docs/supervision-protocols/omp.md`: `.omp/extensions/fm-primary-omp-watch.ts` arms `bin/fm-watch-arm.sh --restart` through the `fm_watch_arm_omp` tool and owns every successor, and `.omp/extensions/fm-primary-turnend-guard.ts` answers omp's blocking `session_stop` hook by forcing one continuation when `../../../bin/fm-turnend-guard.sh` returns 2, bounded per turn by omp's `stop_hook_active` flag.
-The same file ports the `tool_call` seatbelts and delivers the session-start digest through `before_agent_start` on the Run tier; omp's `session_start` carries no reason, so the source is derived (first start `startup` or `resume` from the launch line, later in-process starts `clear`, `session_compact` as `compact`).
-omp has no asynchronous Stop-hook equivalent, so the Claude auto-arm model does not apply; `fm_supervision_model` classifies omp as `extension`, and `fm_omp_extension_owns_supervision` in `../../../bin/fm-wake-lib.sh` is the ownership proof that tolerates the extension's own watcher hand-off.
-The Pi supervision branch is out of scope for omp; every actionable wake is delivered to main.
-Launch a primary with plain `omp` inside the home (`FM_OMP_HARNESS=omp omp` when starting from a Claude pane); `../../../bin/fm-session-start.sh` prints `OMP_WATCH_EXTENSION: not loaded` when the running session has not loaded both tracked extensions.
-`FM_OMP_LIVE_E2E=1 ../../../tests/fm-omp-primary-live-e2e.test.sh` is the opt-in live guard; `../../../tests/fm-omp-harness.test.sh` is the portable regression.
-A secondmate registered with `remote=1` in `data/secondmates.md`, spawned through the ordinary `../../../bin/fm-spawn.sh <id> <home> --secondmate` path, is refused on omp until a remote host verifies it, as is `../../../bin/fm-remote-secondmate-control.sh launch`; there is no `--remote` flag.
+The Pi primary supervision pair is ported as the tracked `.omp/extensions/fm-primary-turnend-guard.ts` and `.omp/extensions/fm-primary-omp-watch.ts`.
+Because omp emits no `agent_settled`, the ported guard fires on `agent_end` only when omp's settle triple agrees the run is idle, the same triple the busy-state row above uses.
+The PreToolUse-equivalent watcher-arm seatbelt returns `{block: true}` from the guard extension's `tool_call` event.
+The model arms through the `fm_watch_arm_omp` tool, and `../../../docs/supervision-protocols/omp.md` owns the tool result and clean-exit fallback.
+
+`../../../bin/fm-spawn.sh --secondmate` on omp launches with both extensions via `-e`, `../../../bin/fm-supervision-instructions.sh` maps omp to that protocol, and `../../../bin/fm-session-start.sh` reports when a live omp primary has not loaded both.
+`tests/fm-omp-turnend-guard.test.sh`, `tests/fm-omp-watch-extension.test.sh`, and `tests/fm-omp-harness.test.sh` cover the port, but no live supervised omp secondmate has run yet, so the supervision port remains STATIC EVIDENCE.

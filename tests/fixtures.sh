@@ -102,13 +102,35 @@ fm_test_fake_gh_axi() {
 # The pane path defaults to empty when FM_FAKE_PANE_PATH is unset. Window
 # cleanup and option operations are no-ops. Launch logging is env-gated, so
 # suites that do not set FM_FAKE_LAUNCH_LOG keep a silent send-keys.
+#
+# Pool emulation: with FM_FAKE_POOL_FILE set (one worktree path per line), every
+# `treehouse get` this fake sees moves FM_FAKE_POOL_CURSOR to the next pool
+# entry, so a batch of spawns gets a distinct worktree each, exactly like a real
+# pool. With it unset the pane simply reports FM_FAKE_PANE_PATH.
 fm_test_fake_tmux_spawn() {
   local fakebin=$1
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
+fake_pane_path() {
+  local n=1
+  if [ -z "${FM_FAKE_POOL_FILE:-}" ]; then
+    printf '%s\n' "${FM_FAKE_PANE_PATH:-}"
+    return 0
+  fi
+  [ -f "${FM_FAKE_POOL_CURSOR:-}" ] && n=$(cat "$FM_FAKE_POOL_CURSOR")
+  [ "$n" -ge 1 ] || n=1
+  sed -n "${n}p" "$FM_FAKE_POOL_FILE"
+}
+fake_pool_advance() {
+  local n=0
+  [ -n "${FM_FAKE_POOL_CURSOR:-}" ] || return 0
+  [ -f "$FM_FAKE_POOL_CURSOR" ] && n=$(cat "$FM_FAKE_POOL_CURSOR")
+  printf '%s\n' "$((n + 1))" > "$FM_FAKE_POOL_CURSOR"
+}
 case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+  *"#{pane_current_path}"*) fake_pane_path; exit 0 ;;
+  *"treehouse get"*) fake_pool_advance; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;

@@ -33,6 +33,18 @@
 # restating the rule.
 # Every heredoc here stays outside a command substitution: `VAR=$(cat <<EOF ...)`
 # breaks parsing of the whole file on Bash 3.2 (tests/fm-brief.test.sh).
+# The ponytail lean gate is identical for every mode, so the invocation and the
+# exit-code meanings have one owner here. It is single-quoted so its backticks
+# reach the reading agent verbatim; the interpolating heredocs below expand
+# "$FM_DOD_LEAN_GATE" once and never rescan its bytes.
+# It teaches only the diff-against-base forms: on committed work, which is what
+# every ship delivery point has, the bare form reviews an empty diff and exits 1.
+# shellcheck disable=SC2016  # single quotes are deliberate: these backticks are literal brief text
+FM_DOD_LEAN_GATE='run `ponytail-review <base>` against the branch base you started from (for example `ponytail-review main`; `git diff <base>... | ponytail-review --stdin` also works), cut everything it names, and re-run it until it passes - size alone is never the test.
+Exit 0 is `Lean already. Ship.` and the gate passes; exit 2 means findings remain, so cut them and run it again; exit 1 means the gate COULD NOT RUN (missing plugin, missing agent, or empty diff), which you report with `blocked:` and never as a pass.
+The loop is bounded at THREE rounds because the gate does not always converge, so never run a fourth round, and never obey a finding that reverses what an earlier round ruled on the same code - record that contradiction and leave the earlier ruling standing.
+When the third round still exits 2, its remaining findings and every contradiction you recorded belong in the verdict you report below as named keeps, not in another round of cutting.'
+
 # fm_brief_worker_role owns the ship/scout role scope. bin/fm-spawn.sh is its one
 # emitter, supplying it first in every ship/scout launch brief and never to a
 # secondmate charter. It names the one task-owned steering inbox without
@@ -247,36 +259,42 @@ EOF
 fm_dod_block() {  # <mode> <task-id>
   local mode=$1 id=$2
   case "$mode" in
-    direct-PR)
-      cat <<EOF
+  direct-PR)
+    cat <<EOF
 # Definition of done
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
+Before you open the PR, $FM_DOD_LEAN_GATE
+Report that verdict in the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\` that is ready for review, not a draft.
-Before you report done, read the PR back from the forge and confirm it is not a draft (\`gh pr view <url> --json isDraft\` must print false); if it is a draft, mark it ready with \`gh-axi pr ready\`.
+Before you report done, read the PR back from the forge and confirm it is not a draft (\`gh pr view <url> --json isDraft\` must print false)
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
-      ;;
-    local-only)
-      cat <<EOF
+    ;;
+  local-only)
+    cat <<EOF
 # Definition of done
 Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$id\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+Before you hand the branch off, $FM_DOD_LEAN_GATE
+Record that verdict in your handoff, and name any finding you deliberately did not cut with the reason it earns its place.
 When it is implemented and committed, append \`done [at=<epoch>]: ready in branch fm/$id\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
-      ;;
-    no-mistakes)
-      cat <<EOF
+    ;;
+  no-mistakes)
+    cat <<EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
+Before the PR is opened, $FM_DOD_LEAN_GATE
+Carry that verdict into the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
 When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 
@@ -290,6 +308,8 @@ Do not include \`## Firstmate spec\`, later Firstmate build constraints, or your
 The \`--intent\` string you pass must be self-sufficient: that string plus the codebase must let a reader reconstruct roughly the same specification, without depending on a separate report, a PR, or context that lives only in this conversation.
 When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into \`--intent\` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.
+The pipeline publishes that \`--intent\` text verbatim as the published pull request body's \`## Intent\` section, so write it for the repository's own public audience: put every requirement in the project's vocabulary, and never carry fleet-internal vocabulary (firstmate, crewmate, secondmate, captain, ponytail, treehouse, \`fm-*.sh\` script names) or any path from this worktree into it.
+Firstmate reads the published body back and refuses to record a pull request whose body carries that vocabulary, so a body written for the fleet stops the task instead of shipping.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
 One drive call blocks until the next gate or outcome, which routinely outlives what your harness lets a single command run: Claude Code kills a command at ten minutes maximum, while one fix round is capped around thirty minutes and up to three rounds chain.
@@ -310,9 +330,10 @@ A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 EOF
-      ;;
-    *)
-      echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2
-      return 1 ;;
+    ;;
+  *)
+    echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2
+    return 1
+    ;;
   esac
 }

@@ -161,12 +161,7 @@
 #   For omp (Oh My Pi), fm-spawn resolves the `omp` executable from PATH once and
 #   refuses when it is absent. Every omp launch clears the foreign harness
 #   markers (omp publishes none of its own), sets the Firstmate-owned
-#   FM_OMP_HARNESS=omp detection marker, suppresses the first-run provider
-#   wizard with OMP_SKIP_SETUP=1, forces --auto-approve, pins the working
-#   directory with --cwd, and passes the tracked worker posture overlay
-#   .omp/fm-worker-overlay.yml through --config. That overlay pins composer
-#   shape, plan mode off, prewalk off, and the non-interactive usage-reserve
-#   policy for the one session only (--auto-approve alone owns approval); the
+#   FM_OMP_HARNESS=omp detection marker, and forces --auto-approve; the
 #   captain's own ~/.omp/agent/config.yml (model roles, providers, theme) is
 #   never written.
 #   A model written as <provider>/<id> is validated against `omp models --json`
@@ -326,11 +321,11 @@
 #                  written by this script; outside the worktree to avoid pi's trust gate)
 #     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
 #     __PIWATCH__   absolute path to .pi/extensions/fm-primary-pi-watch.ts in a pi secondmate home
-#     __OMPBIN__   quoted concrete omp executable path resolved from PATH
+#     __OMPTURNEND__ absolute path to .omp/extensions/fm-primary-turnend-guard.ts in an omp secondmate home
+#     __OMPWATCH__   absolute path to .omp/extensions/fm-primary-omp-watch.ts in an omp secondmate home
 #     __OMPEXT__   absolute path to state/<task-id>.omp-ext.ts (omp busy-state and
 #                  turn-end extension, written by this script; outside the worktree so
 #                  omp's cwd-only auto-discovery cannot load it a second time)
-#     __OMPWORKERCFG__ absolute path to the tracked .omp/fm-worker-overlay.yml posture overlay
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
 #     __WORKTREE__  absolute path to the task worktree
 #     __CURSORBIN__ resolved, cursor-verified executable for a cursor launch
@@ -1334,8 +1329,12 @@ spawn_herdr_presentation_order_lock_acquire() {
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
   lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") || return 1
   HERDR_PRESENTATION_ORDER_LOCK="$lock_path"
+  # The holder keeps this lock for a whole projection recovery, which also
+  # republishes the task's durable records, so the wait is sized for that work
+  # rather than for the lock handoff alone: a five-second ceiling turned a
+  # normal concurrent resume into a refusal.
   attempt=0
-  while [ "$attempt" -lt 50 ]; do
+  while [ "$attempt" -lt 300 ]; do
     if fm_lock_try_acquire "$HERDR_PRESENTATION_ORDER_LOCK"; then
       HERDR_PRESENTATION_ORDER_LOCK_HELD=1
       return 0
@@ -2817,7 +2816,7 @@ if [ "$KIND" = secondmate ]; then
   }
   PROJ_ABS=$(validate_firstmate_home_for_spawn "$ID" "$FIRSTMATE_HOME")
   if [ -e "$DATA/secondmates.md" ] || [ -L "$DATA/secondmates.md" ]; then
-    if ! secondmate_registry_validate_bindings "$DATA/secondmates.md" resolve_path "$ID" "$FIRSTMATE_HOME"; then
+    if ! secondmate_registry_validate_bindings "$DATA/secondmates.md" fm_worktree_real_path "$ID" "$FIRSTMATE_HOME"; then
       echo "error: $SECONDMATE_REGISTRY_ERROR" >&2
       exit 1
     fi
@@ -4086,11 +4085,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # proven instead is that the adopted endpoint's shell is actually sitting in
   # that worktree, so the replacement agent starts where the work is rather
   # than wherever the pane happened to drift.
-  relaunch_wt_real=$(real_path_or_raw "$WT")
+  relaunch_wt_real=$(fm_worktree_real_path "$WT")
   relaunch_seen=
   for _ in $(seq 1 10); do
     relaunch_seen=$(spawn_current_path "$WT_TARGET" || true)
-    [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ] || break
+    [ -z "$relaunch_seen" ] || [ "$(fm_worktree_real_path "$relaunch_seen")" != "$relaunch_wt_real" ] || break
     sleep 0.5
   done
   if [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ]; then
@@ -4156,7 +4155,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     p=$(spawn_current_path "$WT_TARGET" || true)
     [ -z "$p" ] || last_seen="$p"
     if [ -n "$p" ] && spawn_worktree_isolated "$p"; then
-      p_real=$(real_path_or_raw "$p")
+      p_real=$(fm_worktree_real_path "$p")
       last_reason="it is an isolated worktree, but no second read agreed with it"
       if [ -n "$candidate" ] && [ "$p_real" = "$candidate" ]; then
         WT="$p"
@@ -4538,8 +4537,10 @@ const busyEvent = (state: string, event: string) =>
   });
 export default function (pi: any) {
   pi.on("agent_start", () => busyEvent("busy", "agent-start"));
-  pi.on("agent_end", (event: any) => {
-    if (event && event.willContinue === true) return;
+  pi.on("agent_end", (event: any, ctx: any) => {
+    if (event && event.willContinue) return;
+    if (ctx && typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
+    if (ctx && typeof ctx.hasPendingMessages === "function" && ctx.hasPendingMessages()) return;
     return busyEvent("idle", "agent-end");
   });
   pi.on("turn_end", () => execFile("touch", ["$TURNEND"]));
@@ -4891,10 +4892,11 @@ fi
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
+sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
-sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
-sq_ompcfg=$(shell_quote "${OMP_WORKER_CFG:-$FM_ROOT/.omp/fm-worker-overlay.yml}")
+sq_ompturnend=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-turnend-guard.ts")
+sq_ompwatch=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-omp-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
@@ -4914,8 +4916,9 @@ LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
+LAUNCH=${LAUNCH//__OMPTURNEND__/$sq_ompturnend}
+LAUNCH=${LAUNCH//__OMPWATCH__/$sq_ompwatch}
 LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
-LAUNCH=${LAUNCH//__OMPWORKERCFG__/$sq_ompcfg}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
 case "$HARNESS" in
 pi | pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;
@@ -4926,9 +4929,9 @@ agy) LAUNCH=${LAUNCH//__AGYBIN__/"$(shell_quote "$AGY_BIN")"} ;;
 esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
 case "$HARNESS" in
-claude | codex | opencode | pi | pi-signed | grok | kimi | gemini | muse | rovo | agy)
-  LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
-  ;;
+  claude | codex | opencode | omp | pi | pi-signed | grok | kimi | gemini | muse | rovo | agy)
+    LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
+    ;;
 esac
 # Crewmate panes are created by a long-lived tmux/herdr daemon that does not
 # inherit firstmate's current environment, so a bare `claude` in the pane falls
@@ -5009,6 +5012,7 @@ spawn_record_traceparent() {
   return "$status"
 }
 
+LAUNCH="unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; $LAUNCH"
 # Export TMPDIR and GOTMPDIR into the crewmate pane shell so the agent and every
 # child process (cargo, rustc, cc, ld, sort, go build, go test, ...) inherit them
 # and keep their scratch on disk. Sent before the launch command so the env is set

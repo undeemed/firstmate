@@ -29,7 +29,9 @@
 # task's recorded harness classifies unknown, so one adapter's writer can
 # never classify another adapter):
 #   pi-ext           Pi/pi-signed per-task extension (agent_start/agent_settled)
-#   omp-ext          omp (Oh My Pi) per-task extension (agent_start/agent_end without willContinue)
+#   omp-ext          omp per-task extension (agent_start/agent_end); omp emits no
+#                    agent_settled, so its idle edge needs willContinue, isIdle(),
+#                    and hasPendingMessages() to agree
 #   opencode-plugin  OpenCode per-task plugin (session.status)
 #   claude-hook      Claude lifecycle hooks (UserPromptSubmit/Stop/StopFailure/SessionEnd)
 #   gemini-hook      Gemini agent hooks (BeforeAgent opens; AfterAgent and

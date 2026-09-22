@@ -33,6 +33,7 @@ fi
 # harness still cannot fire a real notification: the daemon defaults the seam to
 # "discard" whenever it is sourced (its library-mode guard).
 _fm_wedge_rec_dir=$(fm_test_tmproot fm-wedge-rec)
+[ -n "$_fm_wedge_rec_dir" ] || fail "no fixture root for the wedge-alarm recorder"
 cat > "$_fm_wedge_rec_dir/rec" <<'REC'
 #!/usr/bin/env bash
 printf '%s\t%s\n' "${1:-}" "${2:-}" >> "${FM_WEDGE_ALARM_LOG:-/dev/null}"
@@ -53,8 +54,26 @@ append_wake() {
   ' _ "$lib" "$kind" "$key" "$payload"
 }
 
+# retire_task_state <state> <id> [window...]: run the production retirement sweep
+# (bin/fm-retire-lib.sh) for a task whose identity records have just been
+# removed, in a subshell scoped to <state>. This is exactly what
+# bin/fm-teardown.sh calls at the moment it retires a task.
+retire_task_state() {
+  local state=$1 lib="$ROOT/bin/fm-retire-lib.sh"
+  shift
+  FM_STATE_OVERRIDE="$state" bash -c '
+    # shellcheck disable=SC1090,SC1091
+    . "$1"
+    shift
+    fm_retire_task_wake_state "$@"
+  ' _ "$lib" "$state" "$@"
+}
+
 make_case() {
   local name=$1 dir fakebin
+  # Never compose a case path from an empty base: that builds the whole fixture
+  # at / (see fm_test_tmproot in tests/lib.sh).
+  [ -n "${TMP_ROOT:-}" ] || fail "make_case called with no TMP_ROOT - refusing to build a fixture at /"
   dir="$TMP_ROOT/$name"
   fakebin="$dir/fakebin"
   mkdir -p "$dir/state" "$fakebin"

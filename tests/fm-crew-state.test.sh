@@ -35,6 +35,9 @@
 #       This is the direct regression pair for the 2026-07-02 herdr incident,
 #       proving the watcher's own absorb-only-when-provably-working predicate
 #       benefits from the fix in both directions.
+#   (l) run SELECTION: the branch's newest run is the only candidate, an
+#       unbindable candidate reads unknown instead of an older run's verdict,
+#       and a genuinely failed current run still reads failed.
 #   (l) coarse runs-ledger fallback: a terminal failed record with the daemon
 #       provably down (explicit daemon-status probe fails) reads unknown -
 #       "unverified", never failed; the same record with the daemon up stays
@@ -739,6 +742,14 @@ run:
     review,completed,0,0
     push,completed,0,0
     ci,fixing,0,0
+EOF
+}
+
+run_ci_waiting_on_checks() {  # <branch> <last-activity>
+  run_running "$1"
+  cat <<EOF
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,45m41s,"$2 ago: log: CI checks running, waiting for results...","",starting
 EOF
 }
 
@@ -2620,6 +2631,64 @@ test_torn_down_worktree() {
   pass "torn-down worktree is handled gracefully"
 }
 
+# --- a secondmate is a SUPERVISOR: its home's live work is part of its state -
+# Regression for the incident bin/fm-secondmate-home-lib.sh records. The shapes
+# pinned here: an empty home still reads from the mate's own log, a home with
+# live children never reads idle or done, and a home that is also not consuming
+# its own queue reads `unattended`.
+test_secondmate_live_children_are_part_of_its_state() {
+  reset_fakes
+  local d out gen
+  d=$(new_case unattended-home)
+  mkdir -p "$d/wt" "$d/mate/state"
+  make_fakebin "$d" >/dev/null
+  printf 'mate\n' > "$d/mate/.fm-secondmate-home"
+  fm_write_meta "$d/state/mate.meta" "window=fm:fm-mate" "worktree=$d/wt" \
+    "kind=secondmate" "harness=pi" "backend=tmux" "home=$d/mate"
+  printf 'done: last item shipped, PR https://example.invalid/pr/9 checks green\n' \
+    > "$d/state/mate.status"
+
+  # Control: a home holding no live child work still reads from the mate's log.
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: done" "an empty secondmate home still reads the mate's own terminal event"
+
+  # One live child record in the mate's own home, queue drained: it is
+  # supervising, and its own terminal event no longer answers for the tree.
+  fm_write_meta "$d/mate/state/p3.meta" "window=fm:fm-p3" \
+    "worktree=$d/mate/wt-p3" "kind=ship" "harness=pi" "backend=tmux"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: working" "a mate with a live child must not read done"
+  assert_contains "$out" "source: secondmate-home" "the live-child verdict names its own source"
+  assert_contains "$out" "supervising 1 live child task record(s)" "the verdict counts the live child work"
+
+  # ... and its own wake queue left unconsumed past the shared bound is the
+  # incident itself: live work, nobody consuming its events.
+  printf '%s\t7\tsignal\tp3\tsignal: state/p3.status\n' "$(( $(date +%s) - 600 ))" \
+    > "$d/mate/state/.wake-queue"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: unattended" "an unconsumed queue with live children reads unattended"
+  assert_contains "$out" "1 live child task record(s)" "the unattended verdict names the live child work"
+  assert_not_contains "$out" "state: done" "an unattended home is never reported done"
+
+  # A mate that is provably mid-turn cannot reach its own queue yet, so those
+  # rows are not evidence that nobody is watching them.
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" mate) || fail "could not arm the mate busy record"
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" mate busy --gen "$gen" \
+    --source pi-ext --event agent-start >/dev/null || fail "could not record the mate as mid-turn"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: working" "a mid-turn mate is not reported unattended"
+  assert_not_contains "$out" "state: unattended" "a mid-turn mate is not reported unattended"
+
+  # A registered secondmate of that home is not child work: it is idle by default
+  # and its own parent routes to it.
+  rm "$d/mate/state/p3.meta"
+  fm_write_meta "$d/mate/state/nested.meta" "window=fm:fm-nested" \
+    "worktree=$d/mate/wt-nested" "kind=secondmate" "harness=pi" "backend=tmux"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: done" "a nested secondmate record is not live child work"
+  pass "a secondmate with live children is never read as idle or done"
+}
+
 # --- remote secondmate arm ---------------------------------------------------
 # A meta recording remote_host= must never be read through the local worktree
 # probe or a local backend adapter: the recorded worktree and pane live on the
@@ -2859,6 +2928,179 @@ test_local_advanced_past_run_head_invalidates() {
   pass "local work advanced past run head invalidates attribution"
 }
 
+# --- superseded-run selection (2026-08-24 false-failed incident) ------------
+#
+# no-mistakes builds its pipeline commits in its OWN managed clone
+# (~/.no-mistakes/repos/<repo>.git, checked out under
+# ~/.no-mistakes/worktrees/<repo>/<run-id>), so from the review step onward a
+# run's reported head is a commit the crew's repository has never seen - it
+# arrives only after the push step pushes it and the crew's repo fetches it
+# back. make_pipeline_commit reproduces exactly that: a sha that is real, is a
+# descendant of the crew's head, and is unresolvable inside the crew worktree.
+make_pipeline_commit() {  # <worktree> -> echoes a sha only the managed clone has
+  local wt=$1 clone="$1.nm-managed-clone"
+  git clone -q "$wt" "$clone"
+  git -C "$clone" commit -q --allow-empty -m 'no-mistakes(document): pipeline commit'
+  git -C "$wt" cat-file -e "$(git -C "$clone" rev-parse HEAD)^{commit}" 2>/dev/null \
+    && fail "pipeline commit must not be resolvable in the crew worktree"
+  git -C "$clone" rev-parse HEAD
+}
+
+# `axi status` for THIS branch's current run, whose head is the managed-clone
+# commit above, plus the branch_sync block the real CLI emits (verified against
+# no-mistakes v1.48.0): its pipeline.submitted_head is the head the run started
+# from, i.e. the crew worktree's own head.
+run_pipeline_head_unresolvable() {  # <branch> <pipeline-head> <submitted-head>
+  cat <<EOF
+run:
+  id: "01RUNNEW"
+  branch: $1
+  status: running
+  head: "$2"
+  pr: ""
+  findings: none
+  steps[3]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,completed,0,0
+    test,running,0,0
+branch_sync:
+  state: pipeline_ahead
+  local:
+    branch: $1
+    head: $3
+    clean: true
+  pipeline:
+    run: "01RUNNEW"
+    status: running
+    submitted_head: $3
+    current_head: $2
+EOF
+}
+
+# The incident, end to end through the runs list: the branch's newest run is
+# still validating with a managed-clone head, an OLDER run on the same branch
+# failed at the head this worktree is still sitting on, and the crew is
+# demonstrably working. The reader must never answer with the superseded failed
+# run.
+test_superseded_failed_run_is_not_current() {
+  reset_fakes
+  local d local_short pipeline_head gen out
+  d=$(new_case superseded-failed)
+  make_repo_on_branch "$d/wt" fm/feat-superseded
+  local_short=$(git -C "$d/wt" rev-parse --short=8 HEAD)
+  pipeline_head=$(make_pipeline_commit "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/sup.meta" "window=fm:fm-sup" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validation under way\n' > "$d/state/sup.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  2026-08-25 01:08
+  running    fm/feat-superseded ${pipeline_head:0:8}  2026-08-25 00:04
+  failed     fm/feat-superseded ${local_short}  2026-08-24 23:54
+EOF
+)"
+  FM_FAKE_BUSY=1
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" sup)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" sup busy --gen "$gen" \
+    --source claude-hook --event user-prompt-submit
+  out=$(run_crew_state "$d" sup)
+  assert_not_contains "$out" "state: failed" "a superseded failed run must never be the current state"
+  assert_contains "$out" "state: working" "a demonstrably busy crew reads working"
+  # The ledger anchor below (the failed row at this worktree's own head,
+  # immediately older than the active row) is exactly what proves the active
+  # fix round belongs to this task, so the merged reader attributes it instead
+  # of falling back to the pane. An UNANCHORED unverifiable row still cannot
+  # outrank the pane: test_unanchored_unfetched_active_row_does_not_match owns
+  # that case.
+  assert_contains "$out" "source: run-step" "the anchored active fix round must be attributed"
+  pass "a superseded failed run is not reported as current"
+}
+
+# The same selection with no live evidence to fall back on: an unbindable
+# current run is reported as unknown WITH its reason. A truthful unknown is the
+# required answer - never the older failed run, and never a confident pass.
+test_unbindable_current_run_reports_unknown() {
+  reset_fakes
+  local d pipeline_head out
+  d=$(new_case unbindable-unknown)
+  make_repo_on_branch "$d/wt" fm/feat-unbindable
+  pipeline_head=$(make_pipeline_commit "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/unb.meta" "window=fm:fm-unb" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validation under way\n' > "$d/state/unb.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  # Deliberately UNANCHORED: the row immediately older than the active one did
+  # not end at this worktree's head, so nothing proves whose run the active row
+  # is and the answer must stay a truthful unknown. The anchored variant is
+  # test_active_fix_round_unfetched_pipeline_head_reports_current.
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/feat-unbindable ${pipeline_head:0:8}  2026-08-25 00:04
+  failed     fm/feat-unbindable bbbbbbb  2026-08-24 23:54
+EOF
+)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" unb
+  out=$(run_crew_state "$d" unb)
+  assert_not_contains "$out" "state: failed" "ambiguity must not resolve to a false failure"
+  assert_not_contains "$out" "state: done" "ambiguity must not resolve to a false pass"
+  assert_contains "$out" "state: unknown" "an unbindable current run reads unknown"
+  assert_contains "$out" "cannot tell which run is current" "the unknown states why"
+  pass "an unbindable current run reports a truthful unknown"
+}
+
+# The same shape read through `axi status` instead of the runs list: the CLI
+# answers for this branch with the run's managed-clone head, and its branch_sync
+# block reports the submitted head this worktree is on. That binds the run, so
+# the crew reads as the validating run it is - not as the earlier failure.
+test_pipeline_head_binds_via_submitted_head() {
+  reset_fakes
+  local d local_head local_short pipeline_head out
+  d=$(new_case submitted-head-binding)
+  make_repo_on_branch "$d/wt" fm/feat-submitted
+  local_head=$(git -C "$d/wt" rev-parse HEAD)
+  local_short=$(git -C "$d/wt" rev-parse --short=8 HEAD)
+  pipeline_head=$(make_pipeline_commit "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/sub.meta" "window=fm:fm-sub" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validation under way\n' > "$d/state/sub.status"
+  FM_FAKE_AXI_STATUS="$(run_pipeline_head_unresolvable fm/feat-submitted "$pipeline_head" "$local_head")"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/feat-submitted ${pipeline_head:0:8}  2026-08-25 00:04
+  failed     fm/feat-submitted ${local_short}  2026-08-24 23:54
+EOF
+)"
+  out=$(run_crew_state "$d" sub)
+  assert_not_contains "$out" "state: failed" "the superseded failed run must not win"
+  assert_contains "$out" "state: working" "the current run binds through its submitted head"
+  assert_contains "$out" "source: run-step" "a bound current run stays run-step authoritative"
+  pass "a pipeline head absent locally still binds through the submitted head"
+}
+
+# The other direction, which the fix must never break: when the branch's NEWEST
+# run is the failed one and it binds to this worktree, failed is the truth and
+# is still reported.
+test_genuinely_failed_current_run_still_reports_failed() {
+  reset_fakes
+  local d local_short out
+  d=$(new_case genuinely-failed)
+  make_repo_on_branch "$d/wt" fm/feat-redstays
+  local_short=$(git -C "$d/wt" rev-parse --short=8 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/red.meta" "window=fm:fm-red" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validation under way\n' > "$d/state/red.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  2026-08-25 01:08
+  failed     fm/feat-redstays ${local_short}  2026-08-25 00:20
+  completed  fm/feat-redstays ${local_short}  2026-08-24 23:00  https://github.com/o/r/pull/9
+EOF
+)"
+  out=$(run_crew_state "$d" red)
+  assert_contains "$out" "state: failed" "a bound failed current run still reads failed"
+  assert_contains "$out" "source: run-step" "the failed verdict stays run-step sourced"
+  pass "a genuinely failed current run is still reported as failed"
+}
+
 # --- Run-attribution precedence for pipeline-owned lane heads ----------------
 # A live run whose pipeline OWNS the branch (branch_sync.state=pipeline_owned)
 # can report a lane head that is not a git object in the task worktree.
@@ -3090,6 +3332,12 @@ branch_sync:
     assert_contains "$out" "source: status-log" "$fixture: the status log answers for the unbound parked run"
     pass "$fixture keeps the strict head rule despite its live status word"
   done
+  # Without the exemption the head rule decides, and an unresolvable head is
+  # UNDETERMINED rather than a proven mismatch, so this reader reports the
+  # ambiguity instead of attributing the run or guessing from an older one.
+  assert_contains "$out" "state: unknown" "a non-pipeline-owned unresolvable head must not bind"
+  assert_contains "$out" "cannot tell which run is current" "the unbound run says why it could not be attributed"
+  pass "the exemption requires branch_sync.state=pipeline_owned"
 }
 
 # Negative control: the exemption also requires an ACTIVE run - a terminal run
@@ -3108,8 +3356,9 @@ outcome: failed"
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" feat-f10e
   local out; out=$(run_crew_state "$d" feat-f10e)
-  assert_not_contains "$out" "source: run-step" "a terminal run must not bind through the exemption"
-  assert_contains "$out" "source: status-log" "falls back to the status log for a terminal unresolvable head"
+  assert_not_contains "$out" "state: failed" "a terminal run must not bind through the exemption"
+  assert_contains "$out" "state: unknown" "a terminal unresolvable head reports the ambiguity, not the run"
+  assert_contains "$out" "cannot tell which run is current" "the unbound terminal run says why"
   pass "the exemption never applies to a terminal run"
 }
 
@@ -3132,6 +3381,7 @@ test_missing_run_head_falls_back_to_current_state() {
   pass "missing run head falls back instead of matching by branch"
 }
 
+# (aa) the active step's own progress record rides the same read
 # Mint a descendant of <repo>'s HEAD in a separate clone, echoing its full sha.
 # The task copy never receives the new object, which is exactly the incident
 # shape: the pipeline committed its fix round in its own checkout, so the run
@@ -3214,6 +3464,13 @@ EOF
   assert_contains "$out" "state: working" "the live run reads working"
   assert_not_contains "$out" "state: failed" "neither the older failed row nor the stale status-log event answers"
   pass "unanchored unverifiable active row is attributed because it is live"
+  # Never attributed - and in this fork an unattributable run answers with a
+  # stated unknown rather than the status log's older verb, so the assertions
+  # below read the ambiguity contract instead of a historical fallback.
+  assert_contains "$out" "state: unknown" "an unanchored unverifiable active row must not be attributed"
+  assert_contains "$out" "cannot tell which run is current" "the unknown must name the ambiguity"
+  assert_not_contains "$out" "state: failed" "an unattributable run must not answer with an older failed row"
+  pass "unanchored unverifiable active row is never attributed"
 }
 
 # Negative control: a TERMINAL row whose commit object is gone from the task
@@ -3242,9 +3499,12 @@ EOF
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" hist
   out=$(run_crew_state "$d" hist)
-  assert_not_contains "$out" "source: run-step" "an unresolvable terminal row is history, not current state"
-  assert_contains "$out" "source: status-log" "historical fallback answers after an unresolvable terminal row"
-  assert_contains "$out" "state: working" "the rewritten worktree's own log stays current"
+  # Not current - and in this fork an unattributable run answers with a stated
+  # unknown rather than the status log, so the terminal row is neither adopted
+  # nor replaced by the log's own verb.
+  assert_contains "$out" "state: unknown" "an unresolvable terminal row must not be adopted as current state"
+  assert_contains "$out" "cannot tell which run is current" "the unknown must name the ambiguity"
+  assert_not_contains "$out" "state: failed" "a historical failed row must never answer for current state"
   pass "unresolvable terminal row never reads as current"
 }
 
@@ -4882,7 +5142,45 @@ test_captured_axi_status_shapes
 test_captured_inventory_replay
 test_captured_authority_transition
 test_captured_completed_history
+test_active_step_activity_is_reported() {
+  reset_fakes
+  local d; d=$(new_case activity)
+  make_repo_on_branch "$d/wt" fm/feat-act
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-act.meta" "window=fm:fm-feat-act" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_waiting_on_checks fm/feat-act 8m1s)"
+  local out; out=$(run_crew_state "$d" feat-act)
+  assert_contains "$out" "state: working" "a ci step waiting on checks is working"
+  assert_contains "$out" "activity: ci 481" "the active step and its activity age are reported"
+  # An hour-scale silence is reported just as faithfully: this reader measures the
+  # age, it never judges it.
+  FM_FAKE_AXI_STATUS="$(run_ci_waiting_on_checks fm/feat-act 1h2m3s)"
+  out=$(run_crew_state "$d" feat-act)
+  assert_contains "$out" "activity: ci 3723" "a long silence is reported with its real age"
+  pass "an active step's recorded activity age rides the run-step read"
+}
+
+# (ab) no active step, no activity claim. A run whose steps are all done, and the
+# coarse runs-list fallback that has no step detail at all, must report nothing
+# rather than an invented or stale progress record.
+test_no_active_step_reports_no_activity() {
+  reset_fakes
+  local d; d=$(new_case no-activity)
+  make_repo_on_branch "$d/wt" fm/feat-noact
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-noact.meta" "window=fm:fm-feat-noact" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-noact)"
+  local out; out=$(run_crew_state "$d" feat-noact)
+  assert_contains "$out" "source: run-step" "the run is still authoritative"
+  case "$out" in
+    *"activity: "*) fail "a run with no active step claimed an activity record: $out" ;;
+  esac
+  pass "a run reporting no active step makes no activity claim"
+}
+
 test_active_run_is_authoritative
+test_active_step_activity_is_reported
+test_no_active_step_reports_no_activity
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
 test_daemon_claim_over_live_run_reads_run_alive
@@ -4954,6 +5252,7 @@ test_no_run_idle_pane_uses_keyed_log
 test_no_run_idle_pane_paused
 test_no_run_idle_pane_custom_paused_verb
 test_no_run_idle_secondmate_resolved_event_not_state
+test_secondmate_live_children_are_part_of_its_state
 test_dead_window_ignores_stale_status_log
 test_no_run_tmux_unreadable_reads_unreachable_not_gone
 test_dead_window_still_reports_terminal_run_step
@@ -4972,6 +5271,10 @@ test_usage_error
 test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
+test_superseded_failed_run_is_not_current
+test_unbindable_current_run_reports_unknown
+test_pipeline_head_binds_via_submitted_head
+test_genuinely_failed_current_run_still_reports_failed
 test_pipeline_owned_active_run_beats_superseded_failed_row
 test_failed_run_with_no_later_run_still_surfaces
 test_coarse_unresolvable_active_row_never_falls_to_older_row

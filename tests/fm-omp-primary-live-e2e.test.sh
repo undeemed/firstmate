@@ -192,7 +192,7 @@ mkfifo "$RPC_IN" || fail "could not create the rpc fifo"
       -u FM_HOME -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_DATA_OVERRIDE \
       FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=600 \
       FM_GUARD_GRACE="$GUARD_GRACE" \
-      omp --mode rpc --no-session --cwd "$PROJECT" --config "$PROJECT/.omp/fm-worker-overlay.yml" --auto-approve \
+      omp --mode rpc --no-session --cwd "$PROJECT" --auto-approve \
         --model "$MODEL" --thinking low < "$RPC_IN" > "$RPC_LOG" 2> "$RPC_ERR"
 ) &
 OMP_PID=$!

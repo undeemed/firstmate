@@ -2,8 +2,8 @@
 name: secondmate-provisioning
 description: >-
   Agent-only reference for persistent secondmate setup and retirement.
-  Use when creating, seeding, validating, launching, recovering, handing backlog to, pushing inherited local material into, or retiring a secondmate home, or when editing data/secondmates.md.
-  Covers local leases, whole-home remote routes, transactional seeding, record intake for an existing or inherited domain, project clone restrictions, secondmate harness pins, inherited local-material push, idle charter, handoff helper, and teardown safety.
+  Use when creating, seeding, validating, launching, recovering, handing backlog to, pushing inherited local material into, renaming, or retiring a secondmate home, or when editing data/secondmates.md.
+  Covers local leases, whole-home remote routes, transactional seeding, record intake for an existing or inherited domain, project clone restrictions, secondmate harness pins, inherited local-material push, idle charter, handoff helper, offline rename, and teardown safety.
 user-invocable: false
 metadata:
   internal: true
@@ -11,7 +11,7 @@ metadata:
 
 # secondmate-provisioning
 
-Use this reference before creating, seeding, validating, launching, handing backlog to, recovering, pushing inherited local material into, or retiring a persistent secondmate, and before editing `data/secondmates.md`.
+Use this reference before creating, seeding, validating, launching, handing backlog to, recovering, pushing inherited local material into, renaming, or retiring a persistent secondmate, and before editing `data/secondmates.md`.
 
 Keep the always-inline routing rules in `AGENTS.md` authoritative: route by natural-language `scope:`, local-only projects stay with the main firstmate, and secondmates are idle by default.
 
@@ -235,6 +235,15 @@ Each secondmate is a firstmate in its own home, so it runs recovery on startup a
 A secondmate's recovery reconciles only work that is already its own and then idles.
 It never initiates a survey or audit during recovery.
 
+## Renaming
+
+A second mate's id is written into records with different owners: its task metadata and watcher sidecars, the pending reread nudge, the charter directory, the home's own identity marker, the routing record in `data/secondmates.md`, and the durable treehouse lease that keeps the pool slot reserved.
+Renaming by hand leaves some of them behind, and a half-renamed mate routes under a name whose lease, marker, and metadata still carry the old one.
+
+`bin/fm-secondmate-rename.sh` is the single owner of that rename; its header owns the flags, the full record list, what it refuses, and what it never rewrites.
+Renaming is offline, so the sequence is always: stop the mate with `bin/fm-control.sh <old-id> exit`, run the rename, then relaunch with `bin/fm-spawn.sh <new-id> <home> --secondmate`.
+Run it with `--dry-run` first, before the mate is stopped.
+
 ## Retirement and teardown
 
 A secondmate is persistent by default.
@@ -244,7 +253,7 @@ Run `bin/fm-teardown.sh <id>` for `kind=secondmate` only when the captain or mai
 The safety check is the secondmate's own home.
 Teardown refuses while its `state/*.meta` contains in-flight work.
 Non-forced retirement also refuses while any parent pending-reply for that id is still unresolved.
-A remote route delegates the in-flight guard to its configured host and additionally refuses while the primary has a pending handoff outbox.
+A remote route delegates the in-flight guard to its configured host and additionally refuses while the primary has a pending handoff outbox or a routed reply that is not yet settled (`bin/fm-pending-reply-lib.sh`).
 SSH exit 255 preserves the route and local records because remote completion is unknown.
 When retirement proceeds, teardown kills the direct endpoint, removes every parent pending-reply record for that id including resolved leftovers and its delivery confirmation, removes the `data/secondmates.md` route, clears the main home metadata, and removes the retired secondmate home.
 An endpoint close that could not be made stops the retirement before any record naming that endpoint is removed, so a cleanup never reports success for an agent that may still be live with nothing left on disk naming it.

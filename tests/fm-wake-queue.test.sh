@@ -69,7 +69,12 @@ test_signal_catchup_without_running_watcher() {
   # tested.
   printf 'blocked: first\n' > "$status_file"
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
-  wait_for_exit "$!" 40 || fail "watcher did not exit for first signal"
+  # Every wait_for_exit budget in this file is 100 ticks (10s), matching
+  # fm-watch-triage.test.sh: a tighter budget reaps a watcher still doing its
+  # bounded startup work and reports a spurious failure. A generous budget can
+  # only remove that false negative - a watcher that never exits still fails
+  # the assertion when the budget runs out.
+  wait_for_exit "$!" 100 || fail "watcher did not exit for first signal"
   grep -F "signal: $status_file" "$out" >/dev/null || fail "watcher did not print first signal"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" || fail "drain after first signal failed"
   grep "$(printf '\tsignal\t')" "$drain_out" | grep -F "$status_file" >/dev/null || fail "first signal was not queued"
@@ -81,7 +86,7 @@ test_signal_catchup_without_running_watcher() {
   printf 'done: second\n' >> "$status_file"
   : > "$out"
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
-  wait_for_exit "$!" 40 || fail "watcher did not exit for second signal"
+  wait_for_exit "$!" 100 || fail "watcher did not exit for second signal"
   grep -F "signal: $status_file" "$out" >/dev/null || fail "signal written with no watcher was not caught"
   pass "signal written while no watcher runs is caught on next run"
 }
@@ -108,7 +113,7 @@ test_stale_enqueue_before_suppressor() {
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
-  wait_for_exit "$!" 40 || fail "watcher did not exit for stale pane"
+  wait_for_exit "$!" 100 || fail "watcher did not exit for stale pane"
   grep -Fx "stale: $window" "$out" >/dev/null || fail "watcher did not print stale wake"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" || fail "drain after stale wake failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "stale wake was not queued"
@@ -145,7 +150,7 @@ test_not_working_stale_enqueue_before_suppressor() {
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
     FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
-  wait_for_exit "$!" 40 || fail "watcher did not surface a not-provably-working stale"
+  wait_for_exit "$!" 100 || fail "watcher did not surface a not-provably-working stale"
   grep -Fx "stale: $window" "$out" >/dev/null || fail "watcher did not print the immediate stale wake"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" || fail "drain after the immediate stale wake failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "immediate stale wake was not queued"
@@ -170,7 +175,7 @@ SH
   FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-check-register.sh" task >/dev/null \
     || fail "could not register queue custom check"
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
-  wait_for_exit "$!" 40 || fail "watcher did not exit for check output"
+  wait_for_exit "$!" 100 || fail "watcher did not exit for check output"
   grep -F "check: $check_file: merged: https://example.test/pr/1" "$out" >/dev/null || fail "watcher did not print check wake"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" || fail "drain after check wake failed"
   grep "$(printf '\tcheck\t')" "$drain_out" | grep -F "$check_file" | grep -F 'merged: https://example.test/pr/1' >/dev/null || fail "check wake was not queued"
@@ -227,13 +232,185 @@ test_drain_dedupes_obvious_duplicates() {
   pass "drain collapses obvious duplicate heartbeat and signal records"
 }
 
+# --- retired-worker records are dropped at delivery, live ones never are ------
+# The teardown-time purge (bin/fm-retire-lib.sh) removes everything queued for a
+# retiring task, but a watcher cycle racing that teardown can still append one
+# last record. Delivering it alarms a home that has nothing left to clear, so the
+# drain drops it - and drops it ONLY on this home's own retirement tombstone, so
+# a task this home never retired, and a task that is live again, are unaffected.
+test_drain_drops_only_tombstoned_retired_records() {
+  local dir state out
+  dir=$(make_case retired-drop)
+  state="$dir/state"
+  out="$dir/drain.out"
+
+  # Never retired here: exactly today's behavior, delivered untouched.
+  append_wake "$state" stale 'test:fm-never' 'stale: test:fm-never' || fail "append failed"
+  append_wake "$state" signal never.status "signal: $state/never.status" || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed"
+  grep -F 'test:fm-never' "$out" >/dev/null || fail "a stale record for a task this home never retired was dropped"
+  grep -F 'never.status' "$out" >/dev/null || fail "a signal record for a task this home never retired was dropped"
+
+  # Retired here, records gone: dropped, both kinds.
+  retire_task_state "$state" gone 'test:fm-gone' || fail "retirement sweep failed"
+  append_wake "$state" stale 'test:fm-gone' 'stale: test:fm-gone' || fail "append failed"
+  append_wake "$state" signal gone.status "signal: $state/gone.status" || fail "append failed"
+  append_wake "$state" signal gone.turn-ended "signal: $state/gone.turn-ended" || fail "append failed"
+  append_wake "$state" heartbeat heartbeat heartbeat || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after retirement failed"
+  grep -F 'gone' "$out" >/dev/null && fail "a retired worker's record was delivered: $(cat "$out")"
+  grep "$(printf '\theartbeat\t')" "$out" >/dev/null || fail "a heartbeat record was dropped as task-scoped"
+
+  # Retired, then live again under the same id: its wakes are live wakes.
+  printf 'window=test:fm-gone\nkind=ship\n' > "$state/gone.meta"
+  printf 'working: back in service\n' > "$state/gone.status"
+  append_wake "$state" stale 'test:fm-gone' 'stale: test:fm-gone' || fail "append failed"
+  append_wake "$state" signal gone.status "signal: $state/gone.status" || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after respawn failed"
+  grep -F $'\tstale\ttest:fm-gone\t' "$out" >/dev/null || fail "a respawned task's stale wake was suppressed by its old tombstone"
+  grep -F $'\tsignal\tgone.status\t' "$out" >/dev/null || fail "a respawned task's signal wake was suppressed by its old tombstone"
+
+  # A tombstoned PANE reused by a different live task stays live too.
+  rm -f "$state/gone.meta" "$state/gone.status"
+  printf 'window=test:fm-gone\nkind=ship\n' > "$state/reuser.meta"
+  printf 'working: inherited the pane\n' > "$state/reuser.status"
+  append_wake "$state" stale 'test:fm-gone' 'stale: test:fm-gone' || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after pane reuse failed"
+  grep -F $'\tstale\ttest:fm-gone\t' "$out" >/dev/null \
+    || fail "a live task that inherited a retired pane lost its alarm"
+  pass "the drain drops a retired worker's records and never a live worker's"
+}
+
+# --- both orphan marker classes are reaped, live markers are not --------------
+# Retirement leaves two distinct classes behind, both observed in a live main
+# home: PANE-keyed markers (.hash-/.count-/.stale-/.stale-since-/.paused-/
+# .wedge-escalations-) that no file named after the task ever matches, and
+# TASK-ID-keyed markers (.seen-<id>_status, .seen-<id>_turn-ended,
+# .hb-surfaced-<id>, .subsuper-*). A retiring task's own markers go at teardown;
+# this covers the ones earlier retirements already left to rot, including the
+# .stale-<pane> suppressor, which holds the pane hash already classified and can
+# silence the FIRST alarm of whichever task next inherits that pane target.
+test_orphan_marker_sweep_reaps_both_classes() {
+  local dir state sweep old m
+  dir=$(make_case orphan-sweep)
+  state="$dir/state"
+  old=$(( $(date +%s) - 2592000 ))
+
+  # A live worker: its pane-keyed and task-keyed markers must survive.
+  printf 'window=default:wLIVE:p2\nkind=ship\n' > "$state/live.meta"
+  printf 'working: going\n' > "$state/live.status"
+  for m in .hash-default_wLIVE_p2 .count-default_wLIVE_p2 .stale-default_wLIVE_p2 \
+    .seen-live_status .hb-surfaced-live; do
+    printf 'v' > "$state/$m"
+  done
+
+  # The live pane's pause-cadence markers, aged past the gate: their nested
+  # prefixes (.paused-rechecked-, .paused-resurfaced-) must still resolve to the
+  # live pane's key, so the live-pane condition keeps them despite their age.
+  for m in .paused-rechecked-default_wLIVE_p2 .paused-resurfaced-default_wLIVE_p2; do
+    printf 'v' > "$state/$m"
+    touch -d "@$old" "$state/$m" 2>/dev/null || touch -t "$(date -r "$old" +%Y%m%d%H%M.%S)" "$state/$m"
+  done
+
+  # Long-orphaned markers from earlier retirements, both classes.
+  for m in .hash-default_wA0_p2 .count-default_wA0_p2 .stale-default_wA0_p2 \
+    .stale-since-default_wA0_p2 .wedge-escalations-default_wA0_p2 .paused-default_wA0_p2 \
+    .herdr-escalated-default_wA0_p2 .paused-rechecked-default_wA0_p2 \
+    .paused-resurfaced-default_wA0_p2 .seen-scout-s3_status .seen-scout-s3_turn-ended \
+    .hb-surfaced-scout-s3 .subsuper-stale-scout-s3; do
+    printf 'v' > "$state/$m"
+    touch -d "@$old" "$state/$m" 2>/dev/null || touch -t "$(date -r "$old" +%Y%m%d%H%M.%S)" "$state/$m"
+  done
+  # Orphaned but recent: inside the age gate, so it stays.
+  printf 'v' > "$state/.hash-default_wFRESH_p2"
+
+  sweep=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_retire_orphan_markers_sweep "$2"; echo done' \
+    _ "$ROOT/bin/fm-retire-lib.sh" "$state") || fail "orphan sweep failed"
+  [ "$sweep" = "done" ] || fail "orphan sweep did not complete: $sweep"
+
+  for m in .hash-default_wA0_p2 .count-default_wA0_p2 .stale-default_wA0_p2 \
+    .stale-since-default_wA0_p2 .wedge-escalations-default_wA0_p2 .paused-default_wA0_p2 \
+    .herdr-escalated-default_wA0_p2 .paused-rechecked-default_wA0_p2 \
+    .paused-resurfaced-default_wA0_p2 .seen-scout-s3_status .seen-scout-s3_turn-ended \
+    .hb-surfaced-scout-s3 .subsuper-stale-scout-s3; do
+    [ ! -e "$state/$m" ] || fail "the sweep left the long-orphaned marker $m behind"
+  done
+  for m in .hash-default_wLIVE_p2 .count-default_wLIVE_p2 .stale-default_wLIVE_p2 \
+    .paused-rechecked-default_wLIVE_p2 .paused-resurfaced-default_wLIVE_p2 \
+    .seen-live_status .hb-surfaced-live .hash-default_wFRESH_p2; do
+    [ -e "$state/$m" ] || fail "the sweep removed $m, which a live or recent pane still needs"
+  done
+  pass "the orphan sweep reaps both stale marker classes and spares live and recent markers"
+}
+
+# --- purges take whole identities, never prefixes ------------------------------
+# A delivered reason names its window as a whole space-delimited token, so the
+# retirement purge must match that token exactly: retiring pane default:wA0:p2
+# or task w6 must leave a sibling's default:wA0:p20, sess:fm-w63, and w63.status
+# reasons reprintable, or an unobserved live cycle degrades to a generic FAILED.
+test_retirement_delivery_purge_spares_prefix_siblings() {
+  local dir state log
+  dir=$(make_case retired-prefix-siblings)
+  state="$dir/state"
+  log="$state/.watch-deliveries.log"
+  {
+    printf '%s\t%s\t%s\n' 41 idA 'stale: default:wA0:p2 (idle 300s, possible wedge, escalation 1)'
+    printf '%s\t%s\t%s\n' 42 idB 'stale: default:wA0:p20 (idle 300s, possible wedge, escalation 1)'
+    printf '%s\t%s\t%s\n' 43 idC 'stale: sess:fm-w63'
+    printf '%s\t%s\t%s\n' 44 idD "signal: $state/w6.status"
+    printf '%s\t%s\t%s\n' 45 idE "signal: $state/w63.status"
+  } > "$log"
+  retire_task_state "$state" w6 'default:wA0:p2' || fail "retirement sweep failed"
+  grep -F 'default:wA0:p2 ' "$log" >/dev/null && fail "the retired pane's delivered reason survived the purge"
+  grep -F "$state/w6.status" "$log" >/dev/null && fail "the retired task's signal reason survived the purge"
+  grep -F 'default:wA0:p20' "$log" >/dev/null || fail "a sibling pane's reason was purged on a prefix match"
+  grep -F 'sess:fm-w63' "$log" >/dev/null || fail "a sibling task's stale reason was purged on an id prefix match"
+  grep -F "$state/w63.status" "$log" >/dev/null || fail "a sibling task's signal reason was purged on an id prefix match"
+  pass "the delivery-ledger purge takes whole reason tokens and spares prefix siblings"
+}
+
+# A tombstoned id suppresses only tmux ':fm-<id>' shaped panes: a herdr pane
+# whose trailing segment merely spells a retired id names no task, and a home
+# that never retired that pane must deliver its wake exactly as today.
+test_drain_keeps_pane_whose_segment_spells_a_retired_id() {
+  local dir state out
+  dir=$(make_case retired-id-segment)
+  state="$dir/state"
+  out="$dir/drain.out"
+  retire_task_state "$state" p2 'test:fm-p2' || fail "retirement sweep failed"
+  append_wake "$state" stale 'default:wAY:p2' 'stale: default:wAY:p2' || fail "append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed"
+  grep -F $'\tstale\tdefault:wAY:p2\t' "$out" >/dev/null \
+    || fail "a wake for a pane this home never retired was dropped on an id-segment collision"
+  pass "a tombstoned id never suppresses a pane that merely ends in it"
+}
+
+# The watcher names a signal suppressor from the whole status filename with dots
+# translated (.seen-scout_v2_status for id scout.v2), so retirement must purge
+# that exact name instead of leaving it to rot until the age gate.
+test_retirement_purges_dotted_id_seen_markers() {
+  local dir state
+  dir=$(make_case retired-dotted-id)
+  state="$dir/state"
+  printf 'sig' > "$state/.seen-scout_v2_status"
+  printf 'sig' > "$state/.seen-scout_v2_turn-ended"
+  retire_task_state "$state" scout.v2 'test:fm-scout.v2' || fail "retirement sweep failed"
+  [ ! -e "$state/.seen-scout_v2_status" ] || fail "the dotted id's status suppressor survived retirement"
+  [ ! -e "$state/.seen-scout_v2_turn-ended" ] || fail "the dotted id's turn-end suppressor survived retirement"
+  pass "retirement purges a dotted id's seen markers under the watcher's own names"
+}
+
 # The drain runs at the top of every wake-handling turn, so it also asserts
 # watcher liveness via fm-guard.sh: a lapsed re-arm chain then surfaces even on a
 # plain drain-and-handle turn that runs no other supervision script. It must warn
 # when work is in flight with no live watcher, and stay silent right after a
 # normal fire from a live watcher with a fresh beacon, so it never false-alarms.
-test_secondmate_foreign_queue_stall_tracks_progress_and_alerts_once() {
-  local dir state sub fakebin out row_before row_after stall_count real_date
+# Budgets here are deliberately asymmetric: a checkpoint that is SUPPOSED to wake
+# returns the moment it does, so a generous --seconds only removes false negatives
+# on a loaded box, while a checkpoint asserted to stay silent pays its whole budget
+# on every run and stays short.
+test_secondmate_foreign_queue_stall_is_one_shot_and_read_only() {
+  local dir state sub fakebin out row_before row_after stall_count
   dir=$(make_case secondmate-foreign-stall)
   state="$dir/state"
   sub="$dir/secondmate"
@@ -288,7 +465,24 @@ SH
   row_before="$dir/foreign-before"
   row_after="$dir/foreign-after"
   cp "$sub/state/.wake-queue" "$row_before"
-  out="$dir/watch-stalled.out"
+  fakebin="$dir/fakebin"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) printf '%s\n' "${FM_FAKE_TMUX_WINDOW:-}" ;;
+  capture-pane) cat "${FM_FAKE_TMUX_CAPTURE:-/dev/null}" ;;
+  display-message) printf '0\n' ;;
+  *) exit 0 ;;
+esac
+SH
+  chmod +x "$fakebin/tmux"
+  out="$dir/watch.out"
+
+  # A POSITIVE wake assertion needs a generous budget: the checkpoint returns as
+  # soon as the wake lands, so a larger budget costs nothing when the contract
+  # holds, while a tight one reaps the watcher during its bounded startup work on
+  # a loaded machine and reports a wake that did fire as missing. The negative
+  # assertions below keep their short budgets, which they always spend in full.
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
@@ -296,6 +490,10 @@ SH
     "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 4 > "$out" 2> "$dir/watch-stalled.err" || true
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=8 idle=2s' "$out" >/dev/null \
     || fail "a foreign queue with no progress did not alert: $(cat "$out")"
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$out" 2> "$dir/watch.err" || true
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=8' "$out" >/dev/null \
+    || fail "an aged foreign row did not wake the parent checkpoint: $(cat "$out"); err=$(cat "$dir/watch.err"); meta=$(cat "$state/mate.meta"); foreign=$(cat "$sub/state/.wake-queue")"
+  [ -s "$state/.wake-queue" ] || fail "the parent notification was not durable"
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
   [ "$stall_count" -eq 1 ] || fail "the stalled episode did not publish exactly one parent notification"
   cmp -s "$row_before" "$sub/state/.wake-queue" \
@@ -328,6 +526,8 @@ SH
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 4 > "$dir/watch-refrozen.out" 2> "$dir/watch-refrozen.err" || true
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=9 idle=2s' "$dir/watch-refrozen.out" >/dev/null \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$dir/watch-refrozen.out" 2> "$dir/watch-refrozen.err" || true
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=9' "$dir/watch-refrozen.out" >/dev/null \
     || fail "a genuine later no-progress episode was hidden after earlier progress"
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
   [ "$stall_count" -eq 1 ] || fail "the later no-progress episode did not publish exactly one notification"
@@ -561,6 +761,179 @@ SH
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
   [ "$stall_count" -eq 1 ] || fail "the over-bound episode did not publish exactly one notification"
   pass "a long-lived mate mid-turn is not a stall, but a queue frozen past the busy bound still alarms"
+}
+
+# --- an unattended home reports what is AT RISK, not the loop that noticed ----
+# The detection bin/fm-secondmate-home-lib.sh records was correct and was
+# dismissed twice, because "wake-loop stalled" reads as an internal loop
+# diagnostic rather than as live child work nobody is watching. When the mate's
+# own home holds live child task records, the durable check names that instead.
+test_secondmate_unattended_home_names_live_child_work() {
+  local dir state sub fakebin out
+  dir=$(make_case secondmate-unattended)
+  state="$dir/state"
+  sub="$dir/secondmate"
+  mkdir -p "$sub/state" "$sub/data"
+  printf 'mate\n' > "$sub/.fm-secondmate-home"
+  printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=claude\nbackend=tmux\nhome=%s\n' \
+    "$sub" > "$state/mate.meta"
+  # The mate's own home: one live child task record, and its events unconsumed.
+  printf 'window=firstmate:fm-p3\nkind=ship\nharness=claude\nbackend=tmux\nworktree=%s\n' \
+    "$sub/wt-p3" > "$sub/state/p3.meta"
+  printf '%s\t7\tsignal\tp3\tsignal: state/p3.status\n' "$(( $(date +%s) - 10 ))" \
+    > "$sub/state/.wake-queue"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$out" 2> "$dir/watch.err" || true
+  grep -F 'check: secondmate home UNATTENDED - 1 live child task(s) with nobody consuming their events: mate=mate row=7' "$out" >/dev/null \
+    || fail "an unattended home was not named as live child work: $(cat "$out")"
+  ! grep -F 'wake-loop stalled' "$out" >/dev/null \
+    || fail "an unattended home was reported as a stalled loop: $(cat "$out")"
+  grep -F 'secondmate-wake-loop-mate-' "$state/.wake-queue" >/dev/null \
+    || fail "the unattended-home report was not durable"
+  pass "a home with live children reports unattended child work, not a stalled loop"
+}
+
+# --- a mate that is merely mid-turn is not a stalled wake loop ---------------
+# Measured 2026-08-24: this check was loud in the wrong place and silent in the
+# right one. Two mates were reported repeatedly while holding ZERO undrained rows -
+# they were mid-turn, and each newly arriving row aged past the threshold before
+# the mate reached it, so every arrival bought its own alarm. A third mate holding
+# 90 undrained rows whose oldest was 331 minutes old raised nothing at all, because
+# the per-row marker already covered its oldest row. Both halves are pinned here:
+# the mid-turn excuse must hold for a shallow, young backlog, and must end at the
+# depth and age bounds however busy the endpoint looks.
+test_secondmate_mid_turn_mate_is_not_reported_as_stalled() {
+  local dir state sub fakebin gen out
+  dir=$(make_case secondmate-mid-turn)
+  state="$dir/state"
+  sub="$dir/secondmate"
+  mkdir -p "$sub/state" "$sub/data"
+  printf 'mate\n' > "$sub/.fm-secondmate-home"
+  printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=pi\nbackend=tmux\nhome=%s\n' \
+    "$sub" > "$state/mate.meta"
+  printf '%s\t7\tcheck\trouted\tcheck: routed row\n' "$(( $(date +%s) - 10 ))" > "$sub/state/.wake-queue"
+  # The mate's endpoint is provably mid-turn, through the same semantic busy
+  # contract every other liveness read uses.
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" mate) || fail "could not arm the mate busy record"
+  "$ROOT/bin/fm-busy-event.sh" apply "$state" mate busy --gen "$gen" --source pi-ext --event agent-start \
+    >/dev/null || fail "could not record the mate as mid-turn"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 3 > "$out" 2> "$dir/watch.err" || true
+  ! grep -F 'secondmate wake-loop stalled' "$out" >/dev/null \
+    || fail "a mid-turn mate holding one young row was reported as a stalled wake loop: $(cat "$out")"
+  [ ! -s "$state/.wake-queue" ] || fail "a mid-turn mate published a durable stall notification"
+
+  # The excuse is bounded by the oldest row's age: the same busy endpoint, the same
+  # single row, but past FM_SECONDMATE_WAKE_STALL_BEHIND_SECS it must report.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=5 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$dir/watch-behind.out" 2> "$dir/watch-behind.err" || true
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=7' "$dir/watch-behind.out" >/dev/null \
+    || fail "a busy mate past the behind bound stayed silent: $(cat "$dir/watch-behind.out")"
+  pass "a mid-turn mate is not reported as a stalled wake loop until it is measurably behind"
+}
+
+# A mate that IS behind must keep reporting. The per-row marker and receipt used to
+# veto every later report of the same row, which is exactly how a mate holding 90
+# rows for hours produced silence. They now date the last report instead, so an
+# unchanged backlog repeats on a decaying, bounded interval.
+test_secondmate_deep_backlog_reports_depth_and_keeps_escalating() {
+  local dir state sub fakebin out epoch seq gen
+  dir=$(make_case secondmate-deep-backlog)
+  state="$dir/state"
+  sub="$dir/secondmate"
+  mkdir -p "$sub/state" "$sub/data"
+  printf 'mate\n' > "$sub/.fm-secondmate-home"
+  printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=pi\nbackend=tmux\nhome=%s\n' \
+    "$sub" > "$state/mate.meta"
+  epoch=$(( $(date +%s) - 4000 ))
+  : > "$sub/state/.wake-queue"
+  seq=1
+  while [ "$seq" -le 12 ]; do
+    printf '%s\t%s\tcheck\trouted-%s\tcheck: routed row %s\n' \
+      "$(( epoch + seq ))" "$seq" "$seq" "$seq" >> "$sub/state/.wake-queue"
+    seq=$((seq + 1))
+  done
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" mate) || fail "could not arm the mate busy record"
+  "$ROOT/bin/fm-busy-event.sh" apply "$state" mate busy --gen "$gen" --source pi-ext --event agent-start \
+    >/dev/null || fail "could not record the mate as mid-turn"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+
+  # Depth alone ends the mid-turn excuse, and the report carries it.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=999999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$out" 2> "$dir/watch.err" || true
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=1' "$out" >/dev/null \
+    || fail "a mate holding a deep backlog stayed silent: $(cat "$out")"
+  grep -F 'depth=12' "$out" >/dev/null \
+    || fail "the stall report did not carry the queue depth: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err" \
+    || fail "parent drain failed after the deep-backlog report"
+  ack_drain_err "$state" "$dir/drain.err" \
+    || fail "deep-backlog report could not be acknowledged"
+
+  # Inside the repeat interval the same unchanged backlog stays quiet.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=999999 \
+    FM_SECONDMATE_WAKE_STALL_REPEAT_SECS=999 FM_SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 3 > "$dir/watch-quiet.out" 2> "$dir/watch-quiet.err" || true
+  ! grep -F 'secondmate wake-loop stalled' "$dir/watch-quiet.out" >/dev/null \
+    || fail "an acknowledged report repeated inside its interval: $(cat "$dir/watch-quiet.out")"
+  [ ! -s "$state/.wake-queue" ] || fail "an acknowledged report was re-published inside its interval"
+
+  # The acknowledgement above leaves one re-arm resurface for the next cycle to
+  # deliver. Consume it first, so the cycle that must publish the repeat report
+  # is not cut short by an unrelated actionable wake.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=999999 \
+    FM_SECONDMATE_WAKE_STALL_REPEAT_SECS=999 FM_SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 10 > "$dir/watch-resurface.out" 2> "$dir/watch-resurface.err" || true
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain-resurface.out" 2> "$dir/drain-resurface.err" || true
+  ack_drain_err "$state" "$dir/drain-resurface.err" || true
+
+  # Past the repeat interval the still-behind mate reports again, rather than being
+  # silenced forever by the first report of that same oldest row.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_WAKE_STALL_BEHIND_SECS=999999 \
+    FM_SECONDMATE_WAKE_STALL_REPEAT_SECS=1 FM_SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS=1 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$dir/watch-again.out" 2> "$dir/watch-again.err" || true
+  # Read the durable queue rather than this one cycle's stdout: the cycle can
+  # legitimately return on another actionable wake first (a re-arm resurface
+  # after the acknowledgement above), while the repeat report itself is durable.
+  [ -s "$state/.wake-queue" ] || fail "the repeat report was not durable: resurface=$(cat "$dir/watch-resurface.out")$(cat "$dir/watch-resurface.err") again=$(cat "$dir/watch-again.out")$(cat "$dir/watch-again.err")"
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=1' "$state/.wake-queue" >/dev/null \
+    || fail "a mate still hours behind was permanently silenced by its first report: $(cat "$state/.wake-queue")"
+  pass "a mate holding a deep, hours-old backlog reports its depth and keeps reporting on a bounded interval"
 }
 
 test_secondmate_stall_marker_rejects_symlink() {
@@ -2009,6 +2382,57 @@ test_historical_annotation_skips_announced_status() {
   pass "historical annotations replay nothing already announced and keep everything new"
 }
 
+# The scheduled orphan sweep (bin/fm-orphan-sweep.sh) is destructive and
+# box-wide, so the drain owns exactly one thing about it: that it runs at most
+# once per window, and that what it says lands on stderr with the drain's other
+# operational notes rather than in the wake records a caller parses.
+test_orphan_sweep_runs_once_per_window_on_stderr() {
+  local dir state desktops registry marker
+  dir=$(make_case orphan-sweep-cadence)
+  state="$dir/state"
+  desktops="$dir/desktops"
+  registry="$desktops/registry"
+  marker="$state/.orphan-sweep-last"
+  mkdir -p "$desktops/dead-mate" "$dir/pools" "$dir/tmp" "$dir/proc"
+  printf 'profile\n' > "$desktops/dead-mate/Cookies"
+  printf 'dead-mate\t44\n' > "$registry"
+  find "$desktops" -exec touch -h -d '10 days ago' {} + 2>/dev/null || true
+
+  run_drain_with_sweep() {
+    FM_STATE_OVERRIDE="$state" \
+    FM_HOME="$dir" \
+    FM_ORPHAN_SWEEP=on \
+    FM_DESKTOP_ROOT="$desktops" \
+    FM_DESKTOP_LEGACY_REGISTRY="$registry" \
+    FM_DESKTOP_X_SOCKET_DIR="$dir/x-sockets" \
+    FM_ORPHAN_SWEEP_TREEHOUSE_ROOT="$dir/pools" \
+    FM_ORPHAN_SWEEP_TMP_DIR="$dir/tmp" \
+    FM_ORPHAN_SWEEP_PROC_ROOT="$dir/proc" \
+      "$DRAIN" > "$1" 2> "$2"
+  }
+
+  # Due: the marker is old enough that the window has passed.
+  touch -d '2 hours ago' "$marker"
+  run_drain_with_sweep "$dir/due.out" "$dir/due.err" || fail "cadence: the due drain failed"
+  [ ! -d "$desktops/dead-mate" ] || fail "cadence: a due drain did not run the sweep"
+  assert_grep 'removed desktop' "$dir/due.err" \
+    "cadence: the sweep's report did not reach the drain's stderr"
+  assert_no_grep 'orphan sweep' "$dir/due.out" \
+    "cadence: the sweep wrote to the stdout a caller reads wake records from"
+  find "$marker" -newermt '-5 minutes' -print -quit | grep -q . ||
+    fail "cadence: a due drain did not date the sweep it ran"
+
+  # Not due: the same drain again inside the window must not sweep.
+  mkdir -p "$desktops/dead-mate"
+  printf 'profile\n' > "$desktops/dead-mate/Cookies"
+  find "$desktops" -exec touch -h -d '10 days ago' {} + 2>/dev/null || true
+  run_drain_with_sweep "$dir/skip.out" "$dir/skip.err" || fail "cadence: the second drain failed"
+  [ -f "$desktops/dead-mate/Cookies" ] \
+    || fail "cadence: a second drain inside the window swept again"
+  pass "the orphan sweep runs at most once per window, and reports on stderr only"
+}
+
+
 test_self_held_lock_reclaims_instead_of_deadlocking
 test_subshell_lock_ownership_without_bashpid
 test_bounded_lock_handoff_after_contention
@@ -2031,7 +2455,13 @@ test_not_working_stale_enqueue_before_suppressor
 test_check_output_is_queued
 test_atomic_double_drain
 test_drain_dedupes_obvious_duplicates
+test_drain_drops_only_tombstoned_retired_records
+test_orphan_marker_sweep_reaps_both_classes
+test_retirement_delivery_purge_spares_prefix_siblings
+test_drain_keeps_pane_whose_segment_spells_a_retired_id
+test_retirement_purges_dotted_id_seen_markers
 test_drain_asserts_watcher_liveness
+test_orphan_sweep_runs_once_per_window_on_stderr
 test_structural_signal_enrichment_preserves_raw_rows
 test_enrichment_preserves_all_unread_lines_and_status_file_failures
 test_slow_annotation_does_not_block_append_and_deleted_file_fails_open

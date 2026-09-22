@@ -13,6 +13,24 @@
 # draft state does not refuse, matching how the head read below is optional.
 # bin/fm-pr-merge.sh records through this script with FM_PR_CHECK_MERGE=1 and
 # skips this refusal, because its own merge-time draft refusal is authoritative.
+#
+# This is also the one point that enforces a task's declared PR body contract.
+# The pipeline that opens a PR composes the published body itself, so body
+# content a brief asks for never reaches the forge on its own. A task that
+# genuinely requires published content - a repository policy that demands an
+# AI-assistance disclosure, for example - declares it at brief time with
+# bin/fm-brief.sh --pr-body-required, which stores that content at
+# data/<task-id>/pr-body-required.md. When that file exists, this script reads
+# the PUBLISHED body back from the forge over REST, appends the declared block
+# as the body's final lines unless the body already ends with it, then reads
+# the body back over REST once more to confirm the published result. The
+# description sent is never the evidence. A task that declares nothing has its
+# body neither read nor written, so its published body is exactly what the
+# pipeline composed.
+# The refusal is loud and total: declared content that cannot be published
+# records no pr=, arms no merge poll, and stops the merge in
+# bin/fm-pr-merge.sh, which runs this script before it merges. The audience
+# contract below refuses the same way on the same read-back.
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -20,11 +38,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-forge-audit-lib.sh
+. "$SCRIPT_DIR/fm-forge-audit-lib.sh"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 
@@ -43,6 +64,9 @@ PROVIDER=$FM_PR_PROVIDER
 HOST=$FM_PR_HOST
 PROJECT_PATH=$FM_PR_PATH
 NUMBER=$FM_PR_NUMBER
+# Set only for github; the REST head read below addresses the repository with them.
+OWNER=$FM_PR_OWNER
+REPO=$FM_PR_REPO
 
 # Task-derived paths are constructed only after the canonical ID validation.
 META="$STATE/$ID.meta"
@@ -80,10 +104,16 @@ fi
 
 "$FM_ROOT/bin/fm-guard.sh" || true
 
-# pr_head is recorded only when the forge's CLI can supply it. gh exposes the
-# head commit as a selectable field; plain glab exposes it only inside its JSON
-# output, which would need a JSON processor firstmate does not require, so a
-# GitLab task records no pr_head. Both consumers already treat it as optional:
+# pr_head is recorded only when the forge's CLI can supply it. gh reads the head
+# commit straight from the REST pull request resource, addressed by the owner,
+# repository, and number already parsed from the URL; plain glab exposes it only
+# inside its JSON output, which would need a JSON processor firstmate does not
+# require, so a GitLab task records no pr_head.
+# That read is REST rather than `gh pr view --json headRefOid`, which is
+# GraphQL: bin/fm-pr-merge.sh runs this script on every task-class merge, the
+# fleet's busiest GitHub path, so it must not spend the scarcer shared GraphQL
+# budget on a field REST answers directly.
+# Both consumers already treat pr_head as optional:
 # bin/fm-teardown.sh reads the head from the forge at teardown rather than from
 # metadata and falls back to its provider-agnostic content check, and
 # bin/fm-review-diff.sh resolves the head from the remote when none is recorded.
@@ -92,10 +122,132 @@ fi
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
-  if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
+  if REMOTE_HEAD=$(cd "$WT" && gh api "repos/$OWNER/$REPO/pulls/$NUMBER" --jq .head.sha 2>/dev/null) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
+fi
+
+# --- declared PR body contract ----------------------------------------------
+# Trailing whitespace and CR carry no meaning in a rendered body, so both sides
+# are compared with them removed.
+body_trim_tail() {  # <text>
+  local s=${1-}
+  s=${s//$'\r'/}
+  printf '%s' "${s%"${s##*[![:space:]]}"}"
+}
+
+# Names the task and the exact content that is not published, then stops.
+body_refuse() {  # <reason> [declared-content]
+  printf 'error: task %s declares required pull request body content that %s does not carry: %s\n' \
+    "$ID" "$URL" "$1" >&2
+  [ "$#" -lt 2 ] || printf -- '--- declared content, not published ---\n%s\n--- end declared content ---\n' "$2" >&2
+  exit 1
+}
+
+# One REST read of the published body, empty when the PR has none.
+body_read_published() {
+  gh api "repos/$OWNER/$REPO/pulls/$NUMBER" --jq '.body // ""' 2>/dev/null
+}
+
+REQUIRED_FILE="$DATA/$ID/pr-body-required.md"
+if [ -e "$REQUIRED_FILE" ] || [ -L "$REQUIRED_FILE" ]; then
+  if [ ! -f "$REQUIRED_FILE" ] || [ -L "$REQUIRED_FILE" ] || [ "$(fm_pr_file_link_count "$REQUIRED_FILE")" != 1 ]; then
+    body_refuse "the declaration at $REQUIRED_FILE is not a regular file with one link, so it was not read"
+  fi
+  REQUIRED=$(body_trim_tail "$(cat "$REQUIRED_FILE")")
+  [ -n "$REQUIRED" ] || {
+    echo "error: task $ID declares required pull request body content, but $REQUIRED_FILE is empty" >&2
+    exit 1
+  }
+  [ "$PROVIDER" = github ] \
+    || body_refuse "publishing declared body content is implemented for GitHub only" "$REQUIRED"
+  command -v gh >/dev/null 2>&1 \
+    || body_refuse "reading the published body needs gh on PATH" "$REQUIRED"
+
+  PUBLISHED=$(body_read_published) \
+    || body_refuse "the published body could not be read back over REST" "$REQUIRED"
+  PUBLISHED=$(body_trim_tail "$PUBLISHED")
+
+  case "$PUBLISHED" in
+    *"$REQUIRED") ;;
+    *)
+      UPDATED=$REQUIRED
+      [ -z "$PUBLISHED" ] || UPDATED=$(printf '%s\n\n%s' "$PUBLISHED" "$REQUIRED")
+      forge_audit pr-body-append "$ID" "$URL" \
+        || body_refuse "the outbound body write could not be recorded in the forge write audit" "$REQUIRED"
+      # -F body=@- on a pipe keeps a body of any length off argv.
+      printf '%s\n' "$UPDATED" \
+        | gh api --method PATCH "repos/$OWNER/$REPO/pulls/$NUMBER" -F body=@- --silent >/dev/null 2>&1 \
+        || body_refuse "the forge refused the body update" "$REQUIRED"
+      # The only evidence that counts: what the forge publishes, read back over
+      # REST rather than assumed from the update just sent.
+      PUBLISHED=$(body_read_published) \
+        || body_refuse "the published body could not be read back over REST after the update" "$REQUIRED"
+      PUBLISHED=$(body_trim_tail "$PUBLISHED")
+      case "$PUBLISHED" in
+        *"$REQUIRED") ;;
+        *) body_refuse "the published body still does not end with it after the update" "$REQUIRED" ;;
+      esac
+      ;;
+  esac
+fi
+
+# --- published body audience contract ---------------------------------------
+# A published body carrying fleet-internal vocabulary tells everyone who can
+# read the repository how the captain's fleet works, and that disclosure is
+# irreversible the moment a private repository is made public. The body is
+# therefore checked before the task records its PR, so a refusal stops the
+# merge for the same reason a missing declaration does.
+#
+# The list holds only terms that name the fleet itself. `no-mistakes`,
+# `worktree`, `brief` and `ruling` are deliberately ABSENT: the pipeline puts
+# its own product name in every body's footer, attestation and commit
+# subjects, `<validation worktree>` is its own path redaction, and the rest is
+# ordinary English, so banning them would refuse nearly every pull request the
+# fleet opens. Matching is plain and case-insensitive because none of these is
+# a prefix of an unrelated word.
+# docs/documentation-audiences.md records why this repository does not
+# keyword-lint prose in general; this list earns its exception by naming the
+# fleet rather than judging prose style.
+AUDIENCE_TERMS='firstmate|crewmate|secondmate|captain|ponytail|treehouse|fm-[a-z0-9-]*\.sh'
+
+# The firstmate repository is exempt: this vocabulary is its subject matter, so
+# its own pull requests describe it rather than leak it. The .git test stops
+# the lookup walking up into an unrelated enclosing repository.
+audience_repo_is_firstmate() {
+  [ -e "$FM_ROOT/.git" ] || return 1
+  case "$(git -C "$FM_ROOT" remote get-url origin 2>/dev/null)" in
+    *[/:]"$OWNER/$REPO"|*[/:]"$OWNER/$REPO".git) return 0 ;;
+  esac
+  return 1
+}
+
+audience_refuse() {  # <reason>
+  printf 'error: task %s did not record %s: %s\n' "$ID" "$URL" "$1" >&2
+  exit 1
+}
+
+# A GitLab merge request is not checked, for the reason pr_head is not recorded
+# for one: plain glab exposes the body only inside JSON output, which would
+# need a JSON processor firstmate does not require.
+if [ "$PROVIDER" = github ] && ! audience_repo_is_firstmate; then
+  # Reuse the declared contract's final read-back when it made one.
+  if [ -z "${PUBLISHED+x}" ] && ! command -v gh >/dev/null 2>&1; then
+    # No reader on this host at all, so the wording check cannot run. Say so and
+    # continue: refusing here would block every gh-less path for a lint on
+    # prose, while a host that HAS gh and still cannot read the body is a real
+    # forge problem and still refuses below.
+    echo "warning: task $ID recorded $URL without the published-body vocabulary check, because gh is not available to read the body back" >&2
+    PUBLISHED=
+  fi
+  [ -n "${PUBLISHED+x}" ] || PUBLISHED=$(body_read_published) \
+    || audience_refuse "its published body could not be read back over REST to check it for fleet-internal vocabulary"
+  AUDIENCE_HITS=$(printf '%s\n' "$PUBLISHED" \
+    | LC_ALL=C grep -oiE "$AUDIENCE_TERMS" \
+    | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sort -u | paste -sd, -)
+  [ -z "$AUDIENCE_HITS" ] \
+    || audience_refuse "its published body carries fleet-internal vocabulary that must be rewritten in the project's own words first: $AUDIENCE_HITS"
 fi
 
 META_TMP=

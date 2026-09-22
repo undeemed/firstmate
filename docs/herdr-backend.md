@@ -263,6 +263,17 @@ A blocked Pi is parked on an interactive prompt, so its blank composer region is
 A working Pi, pending middle row, missing identity, incomplete separator pair, or over-tall candidate remains unknown or pending.
 Identity stays a lazy second read, consulted only when a separator pair could change the verdict.
 
+omp draws a HALF-OPEN box that no other fleet harness uses.
+Its rounded top border is `╭──<chrome>──╮`, its content row OPENS with `│` and simply ends with no closing border on the right, and its bottom border is `╰──…──╯`.
+The live in-session composer carries no placeholder and no prompt glyph inside that row, so the generic closed-border shape and the bare agent-glyph shape both miss it entirely.
+`bin/fm-composer-lib.sh` owns that shape through `fm_composer_rounded_top_row`, `fm_composer_rounded_bottom_row`, and `fm_composer_open_box_row`, and its shared screen classifier promotes a half-open row only when the backend's native identity for the pane is exactly `omp` (the same lazy identity pass the pi separated shape uses), so no other harness's classification can move.
+Once promoted the row is an ordinary bordered composer and its leading `│` strips like any other border glyph.
+
+Herdr's native `agent_status` for an omp pane is racy around Enter: it can report `idle` with `screen_detection_skipped` set while the turn has already started.
+A legible `idle` there is therefore not proof that the text was never submitted.
+`fm_backend_herdr_send_text_submit` already treats an explicitly empty composer after Enter as positive submission evidence whenever the native baseline stayed idle, which covers this race and can add a confirmation but never removes one and never suppresses an Enter retry.
+That ordering matches `bin/fm-busy-lib.sh`, which already ranks the omp extension's own records above Herdr's native status.
+
 ANSI capture preserves de-emphasized placeholder style.
 `bin/fm-composer-lib.sh` is the fleet-wide owner that strips dim or faint runs and dark truecolor placeholders while retaining bright typed input.
 If the ANSI capture ever fails, the plain fallback declares itself unstyled and the classifier degrades a glyph row carrying trailing text to `unknown` instead of misreading ghost suggestions as typed input, which safely defers injection and eventually raises the wedge alarm.
@@ -276,6 +287,18 @@ The separate routed-request carrier uses `[fm-from-firstmate]` plus U+2063.
 U+2063 survives Herdr terminal input as text, unlike the legacy ASCII control separator that could erase the visible routing label.
 `bin/fm-operational-input.sh` owns current operational construction and parsing, and the AFK skill owns legacy away-input compatibility.
 No Herdr-specific copy of that protocol exists.
+
+### Known gap: submit-confirmation false negatives on busy panes (2026-08-19)
+
+`bin/fm-send.sh` against a Herdr pane whose agent is mid-turn can report
+`error: text not submitted ... (delivery unconfirmed; verdict=pending)` even though the
+text WAS accepted and queued by the agent's busy-queue.
+Observed on `tetanus-mate-t1` (`default:w82:p2`, claude backend): a 40-attempt retry loop
+believed every attempt failed while all 40 landed; the mate deduped and acked each resend.
+Until the herdr adapter grows a positive queued-submit acknowledgement, callers MUST NOT
+build blind retry loops on the `verdict=pending` failure verdict alone.
+Before resending, check the endpoint's durable status log (`state/<task>.status`) for an ack
+of the prior send; treat a matching ack as delivered.
 
 ## Restart and liveness behavior
 
@@ -307,7 +330,7 @@ Mid-session secondmate agent-process liveness is not implemented because idle se
 Protocol 16 can subscribe to `pane.agent_status_changed` over one bounded Unix-socket reader.
 `bin/fm-transition-lib.sh` owns the backend-neutral transition vocabulary and policy.
 The Herdr adapter subscribes before reconciling current levels, buffers edges during reconciliation, and returns fresh blocked transitions for this home's panes.
-The watcher maps the pane back to the task and skips secondmate endpoints, declared `paused:` waits, and verified `captain-held` transfers, because a declared wait already names the human the fast escalation would report and is left to the watcher's own bounded pause cadence; a captain-held transfer remains silent without rechecks while the away-posture record exists.
+The watcher absorbs edges naming panes no task meta records, maps the rest back to their tasks, and skips secondmate endpoints, declared `paused:` waits, and verified `captain-held` transfers, because a declared wait already names the human the fast escalation would report and is left to the watcher's own bounded pause cadence; a captain-held transfer remains silent without rechecks while the away-posture record exists.
 
 The push path only shortens latency.
 Polling runs every cycle and remains the permanent fallback when protocol 16, the event schema, Python, connection, subscription, or repeated reader execution is unavailable.

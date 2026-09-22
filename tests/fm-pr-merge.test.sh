@@ -1,12 +1,89 @@
 #!/usr/bin/env bash
 # Tests for bin/fm-pr-merge.sh: the one path firstmate uses to merge a task's
-# PR, which must record pr= and any available pr_head= into the task's meta so
-# fm-teardown.sh's landed-check has a PR reference to verify against, even on
-# repos with no PR CI where the usual "checks green" fm-pr-check.sh trigger
-# never fires.
+# PR, which must always record pr= and any available pr_head= into the task's
+# meta before merging so fm-teardown.sh's landed-check has a PR reference to
+# verify against, even on repos with no PR CI where the usual "checks green"
+# fm-pr-check.sh trigger never fires.
+# The merge audit records these tests assert are written through
+# bin/fm-forge-audit-lib.sh.
 #
 # The test_* functions below name the covered merge, refusal, live-head,
 # away-authority, outcome-publication, and recovery behavior directly.
+# Matrix:
+#   (a) a verified merge records pr= and pr_head=
+#   (b) merge is refused when gh-axi pr merge itself fails (no silent success)
+#   (c) extra gh-axi pr merge args are forwarded after number and --repo
+#   (d) merge is refused before gh-axi when task meta is missing
+#   (e) PR URL is parsed to number + --repo for gh-axi (defaults to --squash)
+#   (f) malformed PR URL fails fast without calling gh-axi
+#   (g) explicit merge method is not overridden by the default --squash
+#   (h) repo override args fail fast because the repo comes from the URL,
+#       including a bundled short-option cluster that carries -R
+#   (i) a GitLab MR URL resolves and merges through glab instead of erroring
+#   (j) glab is addressed by the host from the URL, never an assumed one
+#   (k) no merge method is imposed on GitLab, so the project's own one applies
+#   (l) each pre-merge condition refuses independently, and all of them report
+#   (m) a stale recorded pr_head= is reported and the live head is verified
+#   (n) an unreadable merge request state refuses rather than merging blind
+#   (o) glab or jq absent refuses before any state is recorded
+#   (p) --sha in extra GitLab args fails fast, and still forwards on GitHub
+#   (q) a GitLab refusal still leaves pr= recorded and the merge poll armed
+#   (r) the implicit --squash default is refused on a stacked PR, naming the
+#       counts it read live from REST, while a small PR still squashes, an
+#       explicit method still wins, and GitLab is never consulted for counts
+#   (s) every merge is recorded in the home's forge write audit log BEFORE the
+#       forge is called, naming the home and the task, and the log states on
+#       creation what it does not capture
+#   (t) a forge write that cannot be recorded refuses the merge outright
+#   (u) neither caller arguments nor the environment reach the audit log
+#
+# The forge mocks copy the audit log as they are invoked, so a case can assert
+# what the log already held at the moment the forge was called.
+#
+#   (v1) GitHub success is accepted only after the PR is read back as merged
+#   (s) an open GitHub PR that is neither merged nor queued fails verification
+#   (t) a GitHub PR in the merge queue is reported as queued, not merged
+#   (u) a queue-required refusal names the exact compatible retry flags
+#   (v) a failed poll setup cannot be reported as a verified GitHub merge
+#   (w) a zero-exit queue-required refusal keeps merge semantics unchanged
+#   (x) an unreadable outcome after a successful merge call keeps the PR
+#       recorded and the merge poll armed
+#   (y) agreeing queue rules still produce exact retry flags
+#   (z) conflicting queue rules report ambiguous retry guidance
+#   (aa) gh-axi remains usable when gh is absent
+#   (ab) a landed merge whose fallback outcome read fails keeps its poll armed
+#   (ac) a successful merge in a secondmate home reports the landed PR upward
+#       once, on the route its parent binding names, and a repeat merge of the
+#       same PR does not duplicate that line
+#   (ad) a refused or failed merge reports nothing
+#   (ae) a successful merge in a main home leaves a durable wake naming the PR
+#   (af) a secondmate home with no usable parent binding says so loudly instead
+#       of merging in silence
+#   (ag) an accepted queued GitHub merge emits nothing and leaves its poll armed
+#   (ah) an accepted queued GitLab merge emits nothing and leaves its poll armed
+#   (ai) an uncommitted marker retry never loses the durable outcome
+#   (aj) distinct merged PRs for a reused task each survive queue deduplication
+#   (ak) pr= is already recorded when the forge call that can land the merge runs
+#   (al) a failed gh read falls back to the gh-axi view, which can prove a merge
+#   (am) a failed merge command still names an outcome read that proves a landed
+#       or queued pull request, without masking the forge failure
+#   (an) a refusal after a zero-exit merge quotes the forge's own output, marked
+#       apart from the wrapper's verdict and never leaked to stdout
+#   (ao) a caller-requested auto-merge on a queue-less base refuses and says
+#       auto-merge is armed with nothing merged or queued yet
+#   (ap) a caller-requested auto-merge whose merge command failed refuses
+#       without ever claiming auto-merge was armed
+#   (aq) an outcome read that fails after a zero-exit merge still quotes the
+#       forge's own output, the only evidence left
+#   (ar) auto-merge with the queue's own method that is still unqueued refuses
+#       without echoing back the flags just used, and names the next step
+#   (as) a caller method the queue does not use still gets exact retry flags
+#   (at) an unrecognised queue method still names the queue requirement and
+#       guesses no method
+#   (au) unreadable branch rules are reported apart from a queue-less base
+#   (av) a base branch with no queue rule says nothing about a merge queue
+#   (aw) a refusal built on the gh-axi view says the merge queue could not be
+#       observed, and judges that view's state like the queue-aware one
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -122,12 +199,29 @@ assert_logged_gh_merge() {
     || fail "expected gh merge line: $line"$'\n'"got: $(grep '^pr merge ' "$case_dir/gh.log" || true)"
 }
 
+# write_pull_json <case_dir> [commits] [changed_files] [head_ref] [body]
+# The REST pull payload the squash guard reads at merge time. The defaults
+# describe an ordinary single-topic PR, which must still squash by default.
+write_pull_json() {
+  local case_dir=$1 commits=${2:-1} files=${3:-3} head_ref=${4:-fm/task-x1} body=${5:-}
+  printf '{"commits":%s,"changed_files":%s,"head":{"ref":"%s"},"body":"%s"}\n' \
+    "$commits" "$files" "$head_ref" "$body" > "$case_dir/pull.json"
+}
+
+# gh-axi mock recording every invocation to a log file, and gh mock answering
+# the REST head read behind fm-pr-check.sh's pr_head lookup plus the REST pull
+# payload the squash guard reads. GraphQL `gh pr view` is deliberately answered
+# by nothing, so a return to it records no head at all. Every gh invocation is
+# logged, so a test can prove the merge path added no GraphQL call. A
+# gh-api-fails marker in the case dir makes the REST reads fail.
+# Args: case_dir head_sha
 add_gh_mocks() {
   local case_dir=$1 head=$2
   write_github_live_json "$case_dir" "$head"
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+[ -z "${FM_TEST_AUDIT_SNAPSHOT:-}" ] || cp "$FM_STATE_OVERRIDE/forge-write-audit.log" "$FM_TEST_AUDIT_SNAPSHOT" 2>/dev/null || :
 case "${1:-} ${2:-}" in
   "pr view")
     [ "$#" -eq 5 ] && [ "${4:-}" = --repo ] || exit 2
@@ -136,76 +230,87 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
-  cat > "$case_dir/fakebin/gh" <<'SH'
+  cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
-case "${1:-} ${2:-}" in
+printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
+if [ "\${1:-}" = api ]; then
+  case " \$* " in
+    *" --jq .head.sha "*)
+      [ ! -e "$case_dir/gh-api-fails" ] || exit 1
+      printf '%s\n' '$head'
+      exit 0
+      ;;
+    *" --jq .body"*)
+      # The audience read bin/fm-pr-check.sh makes on every published body is
+      # deliberately NOT gated on gh-api-fails: that marker exists to make the
+      # COUNT unreadable, and a case about the squash guard must still get past
+      # the audience contract to reach it.
+      cat "$case_dir/pr-body"
+      exit 0
+      ;;
+  esac
+  case "\${2:-}" in
+    */pulls/*)
+      [ ! -e "$case_dir/gh-api-fails" ] || exit 1
+      cat "$case_dir/pull.json"
+      exit 0
+      ;;
+  esac
+fi
+case "\${1:-} \${2:-}" in
   "pr view")
-    case " $* " in
-      *statusCheckRollup*)
-        cat "$FM_TEST_GH_VIEW_JSON"
-        if [ -f "${FM_TEST_AWAY_RECORD_AFTER_VIEW:-}" ]; then
-          if [ -s "${FM_TEST_AWAY_RECORD_AFTER_VIEW}" ]; then
-            cp "$FM_TEST_AWAY_RECORD_AFTER_VIEW" "$FM_STATE_OVERRIDE/.afk-contract"
-          else
-            rm -f "$FM_STATE_OVERRIDE/.afk-contract"
-          fi
-        fi
-        exit 0
-        ;;
-      *headRefOid*)
-        cat "$FM_TEST_GH_HEAD"
-        exit 0
-        ;;
-      *isDraft*)
-        cat "$FM_TEST_GH_VIEW_JSON"
-        exit 0
-        ;;
+    case " \$* " in
+      *headRefOid*) printf '%s\n' '$head' ; exit 0 ;;
     esac
     ;;
-  "pr merge")
-    if [ -n "${FM_TEST_META_AT_MERGE:-}" ] && [ -f "${FM_STATE_OVERRIDE:-}/task-x1.meta" ]; then
-      cat "$FM_STATE_OVERRIDE/task-x1.meta" > "$FM_TEST_META_AT_MERGE"
-    fi
-    # The forge call runs inside the merge's critical section, so a real
-    # away-record change attempted from here is the TOCTOU itself: whatever
-    # happens to it happens between the authority read and the merge.
-    if [ -x "${FM_TEST_AWAY_MUTATE_AT_MERGE:-}" ]; then
-      away_rc=0
-      "$FM_TEST_AWAY_MUTATE_AT_MERGE" > "$FM_TEST_AWAY_MUTATE_OUT" 2>&1 || away_rc=$?
-      printf '%s\n' "$away_rc" > "$FM_TEST_AWAY_MUTATE_RC"
-      "$FM_TEST_ROOT/bin/fm-afk-contract.sh" words \
-        > "$FM_TEST_AWAY_WORDS_AT_MERGE" 2>/dev/null \
-        || printf 'no-live-record\n' > "$FM_TEST_AWAY_WORDS_AT_MERGE"
-    fi
-    if [ -n "${FM_TEST_GH_MERGE_OUTPUT:-}" ]; then
-      printf '%s\n' "$FM_TEST_GH_MERGE_OUTPUT"
-    else
-      printf 'merged:\n  number: %s\n  status: ok\n' "${3:-}"
-    fi
-    merge_rc=0
-    if [ -f "${FM_TEST_GH_MERGE_RC_FILE:-}" ]; then
-      merge_rc=$(cat "$FM_TEST_GH_MERGE_RC_FILE")
-    fi
-    exit "$merge_rc"
-    ;;
   "api graphql")
-    if [ -f "${FM_TEST_GH_GRAPHQL_FAIL:-}" ]; then
-      echo 'error: could not reach the GitHub API' >&2
-      exit 1
-    fi
-    cat "$FM_TEST_GH_OUTCOME"
+    cat "\$FM_TEST_GH_OUTCOME"
     exit 0
     ;;
   api\ *)
-    if [ -f "${FM_TEST_GH_RULES_FAIL_BODY:-}" ]; then
-      cat "$FM_TEST_GH_RULES_FAIL_BODY" >&2
-      exit 1
-    fi
-    if [ -f "${FM_TEST_GH_RULES_FAIL:-}" ]; then
-      exit 1
-    fi
-    cat "$FM_TEST_GH_RULES"
+    cat "\$FM_TEST_GH_RULES"
+    exit 0
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+  : > "$case_dir/gh.log"
+  printf '%s\n' 'Adds the thing, described for the repository that receives it.' > "$case_dir/pr-body"
+  write_pull_json "$case_dir"
+}
+
+# gh-axi mock that fails the merge call but succeeds everything else, so a
+# real merge failure is distinguishable from the recording step.
+add_gh_mocks_merge_fails() {
+  local case_dir=$1
+  add_gh_mocks "$case_dir" cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+case "${1:-} ${2:-}" in
+  "pr merge") echo "error: pr merge failed" >&2 ; exit 1 ;;
+  esac
+  exit 0
+SH
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
+if [ "\${1:-}" = api ]; then
+  case " \$* " in
+    *" --jq .head.sha "*) printf '%s\n' cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd; exit 0 ;;
+  esac
+  case "\${2:-}" in
+    */pulls/*) [ ! -f "$case_dir/pull.json" ] || { cat "$case_dir/pull.json"; exit 0; } ;;
+  esac
+fi
+case "\${1:-} \${2:-}" in
+  "api graphql")
+    cat "\$FM_TEST_GH_OUTCOME"
+    exit 0
+    ;;
+  api\ *)
+    cat "\$FM_TEST_GH_RULES"
     exit 0
     ;;
 esac
@@ -227,8 +332,32 @@ add_gh_mocks_merge_fails() {
 # Flag the shared gh mock so GraphQL outcome reads fail while live verify and
 # merge still succeed. Args: case_dir [head_sha ignored]
 add_gh_mock_outcome_read_fails() {
-  local case_dir=$1
-  : > "$case_dir/github-graphql-fail"
+  local case_dir=$1 head=$2
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
+if [ "\${1:-}" = api ]; then
+  case " \$* " in
+    *" --jq .head.sha "*) printf '%s\n' '$head'; exit 0 ;;
+  esac
+  case "\${2:-}" in
+    */pulls/*) [ ! -f "$case_dir/pull.json" ] || { cat "$case_dir/pull.json"; exit 0; } ;;
+  esac
+fi
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *headRefOid*) printf '%s\n' '$head' ; exit 0 ;;
+    esac
+    ;;
+  "api graphql")
+    echo 'error: could not reach the GitHub API' >&2
+    exit 1
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
 }
 
 # gh-axi mock that merges but cannot answer its own view, so a case can prove
@@ -282,6 +411,7 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
   "mr merge")
+    [ -z "${FM_TEST_AUDIT_SNAPSHOT:-}" ] || cp "$FM_STATE_OVERRIDE/forge-write-audit.log" "$FM_TEST_AUDIT_SNAPSHOT" 2>/dev/null || :
     [ ! -e "$case_dir/glab-merge-fails" ] || { echo "error: mr merge failed" >&2 ; exit 1 ; }
     : > "$case_dir/glab-merge-called"
     exit 0
@@ -381,8 +511,9 @@ glab_merge_line() {
 run_pr_merge() {
   local case_dir=$1 rc; shift
   FM_ROOT_OVERRIDE="$ROOT" \
-  FM_HOME="${FM_TEST_HOME:-$case_dir/home}" \
+  FM_HOME="${FM_TEST_HOME:-$case_dir}" \
   FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_TEST_AUDIT_SNAPSHOT="${FM_TEST_AUDIT_SNAPSHOT:-}" \
   FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
   FM_TEST_GH_LOG="$case_dir/gh.log" \
   FM_TEST_GH_OUTCOME="$case_dir/github-outcome" \
@@ -450,6 +581,16 @@ test_verified_merge_records_pr_and_head() {
   assert_grep 'pr_head=deadbeefcafefeed0000000000000000deadbeef' "$case_dir/state/task-x1.meta" \
     "records-before-merge: pr_head= was not recorded"
   assert_logged_gh_merge "$case_dir" 9 example/repo --squash
+  assert_grep 'api repos/example/repo/pulls/9 --jq .head.sha' "$case_dir/gh.log" \
+    "records-before-merge: pr_head= was not read from the REST pull request resource"
+  assert_no_grep 'pr view' "$case_dir/gh.log" \
+    "records-before-merge: the head was read with GraphQL gh pr view"
+  # The one GraphQL call this path may make is the post-merge outcome read that
+  # proves the pull request actually landed; the head itself stays on REST.
+  [ "$(grep -c graphql "$case_dir/gh.log")" -le 1 ] \
+    || fail "records-before-merge: an extra GraphQL call was introduced on the task merge path"
+  grep -qxF 'pr merge 9 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "records-before-merge: gh-axi pr merge was not invoked with number, --repo, and default --squash"
   pass "fm-pr-merge records pr= and pr_head= for a verified GitHub merge"
 }
 
@@ -826,7 +967,32 @@ test_github_unreadable_queue_rules_are_not_reported_as_no_queue() {
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" 8484848484848484848484848484848484848484
   write_github_outcome "$case_dir" OPEN false false main
-  : > "$case_dir/github-rules-fail"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
+if [ "\${1:-}" = api ]; then
+  case " \$* " in
+    *" --jq .head.sha "*) printf '%s\n' 8484848484848484848484848484848484848484; exit 0 ;;
+  esac
+  case "\${2:-}" in
+    */pulls/*) [ ! -f "$case_dir/pull.json" ] || { cat "$case_dir/pull.json"; exit 0; } ;;
+  esac
+fi
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *headRefOid*) printf '%s\n' 8484848484848484848484848484848484848484 ; exit 0 ;;
+    esac
+    ;;
+  "api graphql")
+    cat "\$FM_TEST_GH_OUTCOME"
+    exit 0
+    ;;
+  api\ *) exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh"
   : > "$case_dir/gh-axi.log"
   : > "$case_dir/gh.log"
 
@@ -1055,9 +1221,12 @@ test_github_without_gh_still_uses_gh_axi_merge() {
   mirror_path_without "$ghless_path" gh "$case_dir/fakebin"
   : > "$case_dir/gh-axi.log"
 
+  # Without gh the squash guard cannot read the commit count it must see before
+  # flattening history, so this case states the method explicitly - exactly what
+  # that refusal tells an operator to do - and then proves the gh-axi path.
   set +e
   PATH="$ghless_path" run_pr_merge "$case_dir" task-x1 \
-    https://github.com/example/repo/pull/60 \
+    https://github.com/example/repo/pull/60 -- --squash \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
@@ -1082,9 +1251,12 @@ test_github_without_gh_failed_read_keeps_bookkeeping() {
   mirror_path_without "$ghless_path" gh "$case_dir/fakebin"
   : > "$case_dir/gh-axi.log"
 
+  # Explicit method for the same reason as the case above: with no gh the squash
+  # guard has no counts to read, so the implicit default is refused before the
+  # merge this case is about.
   set +e
   PATH="$ghless_path" run_pr_merge "$case_dir" task-x1 \
-    https://github.com/example/repo/pull/61 \
+    https://github.com/example/repo/pull/61 -- --squash \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
@@ -1846,6 +2018,240 @@ test_github_still_forwards_sha_arg() {
   assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "github-sha-arg: gh pr merge ran despite the head override"
   pass "fm-pr-merge refuses a caller --sha on GitHub because the head comes from the live read"
+}
+
+# --- squash-safety guard on the implicit default ----------------------------
+# A squash collapses every commit on the PR into one, so the implicit default
+# has to know what it is about to flatten. The counts come from one live REST
+# read; an explicit merge method skips the guard entirely.
+
+# The stacked shape whose ancestry a default squash destroyed: many commits
+# across many files, carried on one pull request.
+STACK_COMMITS=249
+STACK_FILES=379
+
+test_default_squash_refused_for_stacked_pr() {
+  local case_dir rc
+  case_dir=$(make_case squash-guard-stack)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1010101010101010101010101010101010101010
+  write_pull_json "$case_dir" "$STACK_COMMITS" "$STACK_FILES" fm/ladder-rung-17
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/241 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "squash-guard-stack: fm-pr-merge should refuse to squash a stacked PR by default"
+  assert_grep "it carries $STACK_COMMITS commits and $STACK_FILES changed files" "$case_dir/stderr" \
+    "squash-guard-stack: the refusal did not name the counts it actually read"
+  assert_grep "flatten those $STACK_COMMITS commits into one commit and destroy their ancestry permanently" \
+    "$case_dir/stderr" "squash-guard-stack: the refusal did not state the consequence"
+  assert_grep 'pass --squash to squash it anyway' "$case_dir/stderr" \
+    "squash-guard-stack: the refusal did not say how to proceed deliberately"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "squash-guard-stack: the merge was attempted despite the refusal"
+  assert_grep 'api repos/example/repo/pulls/241' "$case_dir/gh.log" \
+    "squash-guard-stack: the counts were not read from REST at merge time"
+  assert_no_grep 'graphql' "$case_dir/gh.log" \
+    "squash-guard-stack: a GraphQL call was introduced on the merge path"
+  pass "fm-pr-merge refuses the default squash on a stacked PR and names the counts"
+}
+
+test_squash_guard_boundary_is_more_than_the_threshold() {
+  local case_dir rc
+  # At the threshold the default still squashes, one commit past it refuses, so
+  # the gate is "more than", not "at least", and neither side is vacuous.
+  case_dir=$(make_case squash-guard-at-threshold)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1818181818181818181818181818181818181818
+  write_pull_json "$case_dir" 15 100
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/249 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "squash-guard-at-threshold: a PR exactly at the threshold should still squash"
+  grep -qxF 'pr merge 249 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "squash-guard-at-threshold: the default --squash was not applied at the threshold"
+
+  case_dir=$(make_case squash-guard-past-threshold)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1919191919191919191919191919191919191919
+  write_pull_json "$case_dir" 16 100
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/250 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "squash-guard-past-threshold: one commit past the threshold should refuse"
+  assert_grep 'it carries 16 commits and 100 changed files' "$case_dir/stderr" \
+    "squash-guard-past-threshold: the refusal did not name the counts it actually read"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "squash-guard-past-threshold: the merge was attempted despite the refusal"
+  pass "fm-pr-merge squashes at the guard threshold and refuses one commit past it"
+}
+
+test_default_squash_refused_on_changed_file_threshold() {
+  local case_dir rc
+  case_dir=$(make_case squash-guard-files)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1212121212121212121212121212121212121212
+  # Few commits, but a change far too broad to flatten without being asked.
+  write_pull_json "$case_dir" 3 400
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/242 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "squash-guard-files: fm-pr-merge should refuse on the changed-file threshold"
+  assert_grep 'it carries 3 commits and 400 changed files' "$case_dir/stderr" \
+    "squash-guard-files: the refusal did not name the counts it actually read"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "squash-guard-files: the merge was attempted despite the refusal"
+  pass "fm-pr-merge refuses the default squash when the changed-file count is too large"
+}
+
+test_single_commit_pr_still_squashes_by_default() {
+  local case_dir
+  case_dir=$(make_case squash-guard-single-commit)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1313131313131313131313131313131313131313
+  write_pull_json "$case_dir" 1 11
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/243 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "squash-guard-single-commit: an ordinary single-commit PR should still merge"
+
+  grep -qxF 'pr merge 243 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "squash-guard-single-commit: the default --squash was not applied as before"
+  assert_no_grep 'refusing to squash' "$case_dir/stderr" \
+    "squash-guard-single-commit: a single-commit PR was refused"
+  # One GraphQL call is the post-merge outcome read that proves the pull request
+  # landed; the guard's own counts still come from REST.
+  [ "$(grep -c graphql "$case_dir/gh.log")" -le 1 ] \
+    || fail "squash-guard-single-commit: an extra GraphQL call was introduced on the merge path"
+  pass "fm-pr-merge still squashes a single-commit PR by default, exactly as before"
+}
+
+test_explicit_squash_overrides_the_refusal() {
+  local case_dir
+  case_dir=$(make_case squash-guard-explicit)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1414141414141414141414141414141414141414
+  write_pull_json "$case_dir" "$STACK_COMMITS" "$STACK_FILES"
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/244 -- --squash \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "squash-guard-explicit: an explicit --squash should still squash a stacked PR"
+
+  grep -qxF 'pr merge 244 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "squash-guard-explicit: an explicit --squash was not forwarded"
+  assert_no_grep 'refusing to squash' "$case_dir/stderr" \
+    "squash-guard-explicit: an explicit --squash was refused"
+  pass "fm-pr-merge lets an explicit --squash override the stacked-PR refusal"
+}
+
+test_merge_and_rebase_unaffected_by_squash_guard() {
+  local case_dir method number=245
+  for method in merge rebase; do
+    case_dir=$(make_case "squash-guard-explicit-$method")
+    mkdir -p "$case_dir/wt"
+    add_gh_mocks "$case_dir" 1515151515151515151515151515151515151515
+    write_pull_json "$case_dir" "$STACK_COMMITS" "$STACK_FILES"
+    : > "$case_dir/gh-axi.log"
+
+    run_pr_merge "$case_dir" task-x1 "https://github.com/example/repo/pull/$number" -- "--$method" \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" \
+      || fail "squash-guard-explicit-$method: --$method should be unaffected by the squash guard"
+
+    grep -qxF "pr merge $number --repo example/repo --$method" "$case_dir/gh-axi.log" \
+      || fail "squash-guard-explicit-$method: --$method was not forwarded unchanged"
+    assert_no_grep 'refusing to squash' "$case_dir/stderr" \
+      "squash-guard-explicit-$method: an explicit --$method was refused"
+    # The pr_head lookup reads the same REST resource, so the count read is
+    # identified by the whole line: it is the one with no --jq selector.
+    ! grep -qxF "api repos/example/repo/pulls/$number" "$case_dir/gh.log" \
+      || fail "squash-guard-explicit-$method: an explicit merge method still spent a count read"
+    number=$((number + 1))
+  done
+  pass "fm-pr-merge leaves an explicit --merge or --rebase completely unguarded"
+}
+
+test_unreadable_commit_count_refuses_the_default_squash() {
+  local case_dir rc
+  case_dir=$(make_case squash-guard-unreadable)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1616161616161616161616161616161616161616
+  : > "$case_dir/gh-api-fails"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/247 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "squash-guard-unreadable: an unverifiable count should not be squashed by default"
+  assert_grep 'its commit count could not be read' "$case_dir/stderr" \
+    "squash-guard-unreadable: the refusal did not name the unreadable count"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "squash-guard-unreadable: the merge was attempted on an unverified count"
+  pass "fm-pr-merge refuses the default squash when the commit count cannot be read"
+}
+
+test_stack_named_branch_warns_but_still_merges() {
+  local case_dir
+  case_dir=$(make_case squash-guard-stack-hint)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 1717171717171717171717171717171717171717
+  # Under both thresholds, so the counts allow the squash and only the soft
+  # branch-name signal remains: it warns, it does not gate.
+  write_pull_json "$case_dir" 4 9 fm/stack-rung-02
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/248 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "squash-guard-stack-hint: the count check is the hard gate, so this should merge"
+
+  grep -qxF 'pr merge 248 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "squash-guard-stack-hint: the default --squash was not applied"
+  assert_grep 'the head branch "fm/stack-rung-02" names a stack' "$case_dir/stderr" \
+    "squash-guard-stack-hint: a stack-named branch produced no warning"
+  pass "fm-pr-merge warns on a stack-named branch while keeping the counts as the hard gate"
+}
+
+test_gitlab_untouched_by_squash_guard() {
+  local case_dir rc merge_line
+  case_dir=$(make_gitlab_case gitlab-no-squash-guard)
+  # Any GitHub count read would fail here, so a merge that still succeeds proves
+  # the GitLab path never consults one: it imposes no squash to guard.
+  : > "$case_dir/gh-api-fails"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "gitlab-no-squash-guard: the GitLab path should be unaffected by the squash guard"
+  merge_line=$(glab_merge_line "$case_dir/glab.log")
+  [ "$merge_line" = "GITLAB_HOST=$MR_HOST mr merge 7 -R $MR_PROJECT_URL --sha $MR_HEAD --yes" ] \
+    || fail "gitlab-no-squash-guard: unexpected merge invocation: '$merge_line'"
+  assert_no_grep 'refusing to squash' "$case_dir/stderr" \
+    "gitlab-no-squash-guard: a squash refusal reached the GitLab path"
+  assert_no_grep 'api repos' "$case_dir/gh.log" \
+    "gitlab-no-squash-guard: the GitLab path spent a GitHub count read"
+  pass "fm-pr-merge leaves the GitLab merge path untouched by the squash guard"
 }
 
 # --- durable merge outcome ---------------------------------------------------
@@ -3212,6 +3618,422 @@ test_allow_red_refused_on_gitlab() {
 }
 
 test_gitlab_head_override_args_refuse_before_recording
+test_default_squash_refused_for_stacked_pr
+test_default_squash_refused_on_changed_file_threshold
+test_squash_guard_boundary_is_more_than_the_threshold
+test_single_commit_pr_still_squashes_by_default
+test_explicit_squash_overrides_the_refusal
+test_merge_and_rebase_unaffected_by_squash_guard
+test_unreadable_commit_count_refuses_the_default_squash
+test_stack_named_branch_warns_but_still_merges
+test_gitlab_untouched_by_squash_guard
+
+# --- pipeline-raised PR class (fm-pr-merge.sh --pipeline <url>) --------------
+# The pipeline class has no task meta; it gates on live forge state read through
+# `gh api`. These cases mock `gh api` per endpoint from fixture files and assert
+# the green gate merges (pinned to head) while every failed gate refuses loudly
+# and never invokes `gh-axi pr merge`.
+
+PIPELINE_HEAD_SHA=1111111111111111111111111111111111111111
+
+# pipeline_pull_json <case_dir> [state] [base] [mergeable_state] [commits] [files]
+# The one pull payload the pipeline class reads. The squash guard reuses that
+# same payload, so the gate fields and the counts live in one fixture.
+pipeline_pull_json() {
+  local case_dir=$1 state=${2:-open} base=${3:-main} mstate=${4:-clean}
+  local commits=${5:-1} files=${6:-4}
+  printf '{"state":"%s","base":{"ref":"%s"},"mergeable_state":"%s","head":{"sha":"%s"},"commits":%s,"changed_files":%s,"body":""}\n' \
+    "$state" "$base" "$mstate" "$PIPELINE_HEAD_SHA" "$commits" "$files" > "$case_dir/fx/pull.json"
+}
+
+# Write the gh (api) + gh-axi (merge) mocks and green default fixtures. Tests
+# override individual fixtures, or delete one to simulate a forge read failure.
+add_pipeline_mocks() {
+  local case_dir=$1 fx="$1/fx"
+  mkdir -p "$fx"
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = "api" ]; then
+  case "\${2:-}" in
+    */pulls/*/reviews*)     f="$fx/reviews.json" ;;
+    */commits/*/check-runs*) f="$fx/checks.json" ;;
+    */pulls/*)              f="$fx/pull.json" ;;
+    repos/*/*)              f="$fx/repo.json" ;;
+    *) printf '{}\n'; exit 0 ;;
+  esac
+  [ -f "\$f" ] && { cat "\$f"; exit 0; } || exit 1
+fi
+exit 0
+SH
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+[ -z "${FM_TEST_AUDIT_SNAPSHOT:-}" ] || cp "$FM_STATE_OVERRIDE/forge-write-audit.log" "$FM_TEST_AUDIT_SNAPSHOT" 2>/dev/null || :
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh" "$case_dir/fakebin/gh-axi"
+  printf '%s\n' '{"default_branch":"main"}' > "$fx/repo.json"
+  pipeline_pull_json "$case_dir"
+  printf '%s\n' '{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"success"}]}' > "$fx/checks.json"
+  printf '%s\n' '[]' > "$fx/reviews.json"
+}
+
+test_pipeline_merges_green_pr() {
+  local case_dir rc FM_TEST_AUDIT_SNAPSHOT
+  case_dir=$(make_case pipeline-green)
+  add_pipeline_mocks "$case_dir"
+  : > "$case_dir/gh-axi.log"
+  FM_TEST_AUDIT_SNAPSHOT="$case_dir/audit-at-call"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "pipeline-green: fm-pr-merge --pipeline should succeed on a green PR"
+  grep -qxF "pr merge 9 --repo example/repo --match-head-commit $PIPELINE_HEAD_SHA --squash" "$case_dir/gh-axi.log" \
+    || fail "pipeline-green: gh-axi pr merge was not invoked with --match-head-commit <head> and default --squash"
+  assert_present "$case_dir/audit-at-call" \
+    "pipeline-green: the forge was called before the write was recorded"
+  assert_grep "class=pipeline" "$case_dir/audit-at-call" \
+    "pipeline-green: audit line was not recorded"
+  assert_grep "task=-" "$case_dir/audit-at-call" \
+    "pipeline-green: a pipeline merge has no owning task and must say so"
+  assert_grep "head=$PIPELINE_HEAD_SHA" "$case_dir/audit-at-call" \
+    "pipeline-green: audit line did not record the gated head"
+  pass "fm-pr-merge --pipeline merges a green PR pinned to head and records the write first"
+}
+
+# Shared refusal driver: run --pipeline and assert non-zero + no merge invoked.
+expect_pipeline_refusal() {
+  local case_dir=$1 label=$2 rc
+  : > "$case_dir/gh-axi.log"
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "$label: expected refusal, got exit 0"
+  if grep -q 'pr merge' "$case_dir/gh-axi.log" 2>/dev/null; then
+    fail "$label: gh-axi pr merge was invoked despite a failed gate"
+  fi
+}
+
+test_pipeline_refuses_non_clean() {
+  local case_dir
+  case_dir=$(make_case pipeline-dirty)
+  add_pipeline_mocks "$case_dir"
+  pipeline_pull_json "$case_dir" open main dirty
+  expect_pipeline_refusal "$case_dir" pipeline-dirty
+  pass "fm-pr-merge --pipeline refuses a PR whose mergeable_state is not clean"
+}
+
+test_pipeline_refuses_red_check() {
+  local case_dir
+  case_dir=$(make_case pipeline-red)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"failure"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-red
+  pass "fm-pr-merge --pipeline refuses a PR with a non-green check"
+}
+
+test_pipeline_refuses_pending_check() {
+  local case_dir
+  case_dir=$(make_case pipeline-pending)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success"},{"status":"in_progress","conclusion":null}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-pending
+  pass "fm-pr-merge --pipeline refuses a PR with a still-running check"
+}
+
+test_pipeline_refuses_paginated_checks() {
+  local case_dir
+  case_dir=$(make_case pipeline-paginated)
+  add_pipeline_mocks "$case_dir"
+  # total_count exceeds the returned page: a red check could hide on page two.
+  printf '%s\n' '{"total_count":101,"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"success"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-paginated
+  pass "fm-pr-merge --pipeline refuses when checks exceed one verifiable page"
+}
+
+test_pipeline_refuses_changes_requested_then_commented() {
+  local case_dir
+  case_dir=$(make_case pipeline-changes-requested)
+  add_pipeline_mocks "$case_dir"
+  # A later COMMENTED review from the same reviewer must NOT clear the earlier
+  # CHANGES_REQUESTED - the outstanding request still blocks the merge.
+  printf '%s\n' '[{"user":{"login":"rev1"},"state":"CHANGES_REQUESTED","submitted_at":"2026-01-01T00:00:00Z"},{"user":{"login":"rev1"},"state":"COMMENTED","submitted_at":"2026-01-02T00:00:00Z"}]' > "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-changes-requested
+  pass "fm-pr-merge --pipeline refuses when a reviewer's CHANGES_REQUESTED is only followed by a COMMENTED review"
+}
+
+test_pipeline_refuses_reviews_read_failure() {
+  local case_dir
+  case_dir=$(make_case pipeline-reviews-fail)
+  add_pipeline_mocks "$case_dir"
+  # Delete the reviews fixture so the mocked `gh api .../reviews` exits non-zero:
+  # a forge read failure must fail closed, never merge.
+  rm -f "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-reviews-fail
+  pass "fm-pr-merge --pipeline fails closed when the reviews API read fails"
+}
+
+test_pipeline_refuses_paginated_reviews() {
+  local case_dir
+  case_dir=$(make_case pipeline-reviews-paginated)
+  add_pipeline_mocks "$case_dir"
+  # A full returned page: the reviews endpoint reports no total_count, so a
+  # later CHANGES_REQUESTED could hide on page two.
+  jq -n '[range(100) | {"user":{"login":"rev\(.)"},"state":"APPROVED","submitted_at":"2026-01-01T00:00:00Z"}]' \
+    > "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-reviews-paginated
+  pass "fm-pr-merge --pipeline refuses when reviews fill one verifiable page"
+}
+
+test_pipeline_refuses_malformed_checks_payload() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-malformed)
+  add_pipeline_mocks "$case_dir"
+  # Valid JSON of the wrong shape: the total==returned guard passes, so only a
+  # fail-closed count extraction stands between this payload and a merge.
+  printf '%s\n' '{"total_count":2,"check_runs":[1,2]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-malformed
+  pass "fm-pr-merge --pipeline refuses a malformed checks payload instead of merging"
+}
+
+test_pipeline_refuses_missing_total_count() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-no-total)
+  add_pipeline_mocks "$case_dir"
+  # Green check_runs but no total_count: page consistency is unverifiable, so
+  # a red check could hide on page two.
+  printf '%s\n' '{"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"success"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-no-total
+  pass "fm-pr-merge --pipeline refuses a checks payload without total_count instead of merging"
+}
+
+test_pipeline_refuses_null_conclusion() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-null-conclusion)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":1,"check_runs":[{"status":"completed","conclusion":null}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-null-conclusion
+  pass "fm-pr-merge --pipeline refuses a completed check with a null conclusion"
+}
+
+test_pipeline_refuses_unknown_conclusion() {
+  local case_dir
+  case_dir=$(make_case pipeline-checks-unknown-conclusion)
+  add_pipeline_mocks "$case_dir"
+  printf '%s\n' '{"total_count":1,"check_runs":[{"status":"completed","conclusion":"mystery_state"}]}' > "$case_dir/fx/checks.json"
+  expect_pipeline_refusal "$case_dir" pipeline-checks-unknown-conclusion
+  pass "fm-pr-merge --pipeline refuses a completed check with an unrecognized conclusion"
+}
+
+test_pipeline_refuses_malformed_reviews_payload() {
+  local case_dir
+  case_dir=$(make_case pipeline-reviews-malformed)
+  add_pipeline_mocks "$case_dir"
+  # A non-array reviews payload (e.g. an error object served with exit 0).
+  printf '%s\n' '{"message":"Server Error"}' > "$case_dir/fx/reviews.json"
+  expect_pipeline_refusal "$case_dir" pipeline-reviews-malformed
+  pass "fm-pr-merge --pipeline refuses a non-array reviews payload instead of merging"
+}
+
+test_pipeline_refuses_match_head_commit_override() {
+  local case_dir rc
+  case_dir=$(make_case pipeline-pin-override)
+  add_pipeline_mocks "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 -- \
+    --match-head-commit 0000000000000000000000000000000000000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "pipeline-pin-override: fm-pr-merge should refuse a caller-supplied --match-head-commit"
+  assert_grep 'must not override the gated head pin' "$case_dir/stderr" \
+    "pipeline-pin-override: refusal did not explain the head pin override"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "pipeline-pin-override: gh-axi pr merge was invoked despite the pin override"
+  assert_absent "$case_dir/state/forge-write-audit.log" \
+    "pipeline-pin-override: a merge was recorded despite the pin override"
+  pass "fm-pr-merge --pipeline refuses caller-supplied --match-head-commit overrides"
+}
+
+test_pipeline_refuses_stacked_default_squash() {
+  local case_dir
+  case_dir=$(make_case pipeline-stack)
+  add_pipeline_mocks "$case_dir"
+  pipeline_pull_json "$case_dir" open main clean 249 379
+  expect_pipeline_refusal "$case_dir" pipeline-stack
+  assert_grep 'it carries 249 commits and 379 changed files' "$case_dir/stderr" \
+    "pipeline-stack: the refusal did not name the counts it actually read"
+  assert_absent "$case_dir/state/forge-write-audit.log" \
+    "pipeline-stack: a merge was recorded despite the squash refusal"
+  pass "fm-pr-merge --pipeline refuses the default squash on a stacked PR"
+}
+
+test_pipeline_explicit_squash_merges_a_stack() {
+  local case_dir rc
+  case_dir=$(make_case pipeline-stack-explicit)
+  add_pipeline_mocks "$case_dir"
+  pipeline_pull_json "$case_dir" open main clean 249 379
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 -- --squash \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "pipeline-stack-explicit: an explicit --squash should still merge a green stacked PR"
+  grep -qxF "pr merge 9 --repo example/repo --match-head-commit $PIPELINE_HEAD_SHA --squash" "$case_dir/gh-axi.log" \
+    || fail "pipeline-stack-explicit: an explicit --squash was not forwarded with the gated head pin"
+  pass "fm-pr-merge --pipeline lets an explicit --squash override the stacked-PR refusal"
+}
+
+test_pipeline_refuses_auto_extra_arg() {
+  local case_dir rc
+  case_dir=$(make_case pipeline-auto-override)
+  add_pipeline_mocks "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" --pipeline https://github.com/example/repo/pull/9 -- --auto \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "pipeline-auto-override: fm-pr-merge should refuse a caller-supplied --auto"
+  assert_grep 'must not enable auto-merge' "$case_dir/stderr" \
+    "pipeline-auto-override: refusal did not explain the auto-merge rejection"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "pipeline-auto-override: gh-axi pr merge was invoked despite --auto"
+  assert_absent "$case_dir/state/forge-write-audit.log" \
+    "pipeline-auto-override: a merge was recorded despite --auto"
+  pass "fm-pr-merge --pipeline refuses caller-supplied --auto in extra args"
+}
+
+test_pipeline_merges_green_pr
+test_pipeline_refuses_non_clean
+test_pipeline_refuses_red_check
+test_pipeline_refuses_pending_check
+test_pipeline_refuses_paginated_checks
+test_pipeline_refuses_changes_requested_then_commented
+test_pipeline_refuses_reviews_read_failure
+test_pipeline_refuses_paginated_reviews
+test_pipeline_refuses_malformed_checks_payload
+test_pipeline_refuses_missing_total_count
+test_pipeline_refuses_null_conclusion
+test_pipeline_refuses_unknown_conclusion
+test_pipeline_refuses_malformed_reviews_payload
+test_pipeline_refuses_match_head_commit_override
+test_pipeline_refuses_auto_extra_arg
+test_pipeline_refuses_stacked_default_squash
+test_pipeline_explicit_squash_merges_a_stack
+
+# --- forge write audit log --------------------------------------------------
+# Fourteen homes share one forge credential and the forge reports the same
+# provenance for all of them, so the only record that can say which home merged
+# is the one the acting home writes itself, before it acts.
+
+AUDIT_LOG=state/forge-write-audit.log
+
+test_audit_precedes_github_merge() {
+  local case_dir FM_TEST_AUDIT_SNAPSHOT
+  case_dir=$(make_case audit-github)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 5555555555555555555555555555555555555555
+  : > "$case_dir/gh-axi.log"
+  FM_TEST_AUDIT_SNAPSHOT="$case_dir/audit-at-call"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "audit-github: fm-pr-merge failed"
+
+  assert_present "$case_dir/audit-at-call" \
+    "audit-github: gh-axi pr merge ran before the write was recorded"
+  assert_grep "home=$case_dir" "$case_dir/audit-at-call" \
+    "audit-github: the record does not name the home that acted"
+  assert_grep "task=task-x1" "$case_dir/audit-at-call" \
+    "audit-github: the record does not name the task"
+  assert_grep "action=pr-merge	target=https://github.com/example/repo/pull/31" \
+    "$case_dir/audit-at-call" "audit-github: the record does not name the action and its target"
+  head -1 "$case_dir/$AUDIT_LOG" | grep -qF 'absence of a line is not proof that no write occurred' \
+    || fail "audit-github: the log does not state on creation what it fails to capture"
+  pass "fm-pr-merge records a GitHub merge, and the log's own limit, before calling the forge"
+}
+
+test_audit_precedes_gitlab_merge() {
+  local case_dir FM_TEST_AUDIT_SNAPSHOT
+  case_dir=$(make_gitlab_case audit-gitlab)
+  FM_TEST_AUDIT_SNAPSHOT="$case_dir/audit-at-call"
+
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "audit-gitlab: fm-pr-merge failed"
+
+  assert_present "$case_dir/audit-at-call" \
+    "audit-gitlab: glab mr merge ran before the write was recorded"
+  assert_grep "task=task-x1	action=mr-merge	target=$MR_URL" "$case_dir/audit-at-call" \
+    "audit-gitlab: the record does not name the task, action, and target"
+  assert_grep "head=$MR_HEAD" "$case_dir/audit-at-call" \
+    "audit-gitlab: the record does not name the verified head"
+  pass "fm-pr-merge records a GitLab merge before calling the forge"
+}
+
+test_audit_failure_refuses_the_merge() {
+  local case_dir rc
+  case_dir=$(make_case audit-unwritable)
+  mkdir -p "$case_dir/wt"
+  # A directory where the log belongs: the append fails however it is attempted.
+  mkdir -p "$case_dir/$AUDIT_LOG"
+  add_gh_mocks "$case_dir" 6666666666666666666666666666666666666666
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/32 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "audit-unwritable: an unrecordable merge should refuse"
+  assert_grep 'forge write audit log could not be appended' "$case_dir/stderr" \
+    "audit-unwritable: the refusal did not name the unwritable log"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "audit-unwritable: the forge was called even though the write could not be recorded"
+  pass "fm-pr-merge refuses to merge rather than act unlogged"
+}
+
+test_audit_excludes_credential_material() {
+  local case_dir
+  case_dir=$(make_case audit-no-secrets)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 7777777777777777777777777777777777777777
+  : > "$case_dir/gh-axi.log"
+
+  export GH_TOKEN=ghp_environmentcredential000
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/33 -- \
+    --squash --auth-token=ghp_argumentcredential111 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "audit-no-secrets: fm-pr-merge failed"
+  unset GH_TOKEN
+
+  # Non-vacuous: the secret-shaped argument really did reach the forge call.
+  grep -qxF 'pr merge 33 --repo example/repo --squash --auth-token=ghp_argumentcredential111' \
+    "$case_dir/gh-axi.log" || fail "audit-no-secrets: the extra argument never reached the merge"
+  assert_no_grep 'ghp_argumentcredential111' "$case_dir/$AUDIT_LOG" \
+    "audit-no-secrets: a caller argument reached the audit log"
+  assert_no_grep 'ghp_environmentcredential000' "$case_dir/$AUDIT_LOG" \
+    "audit-no-secrets: an environment credential reached the audit log"
+  pass "the audit log carries no caller argument and no environment credential"
+}
+
+test_audit_precedes_github_merge
+test_audit_precedes_gitlab_merge
+test_audit_failure_refuses_the_merge
+test_audit_excludes_credential_material
 test_secondmate_merge_reports_upward_once
 test_secondmate_merge_reports_on_the_local_route
 test_gitlab_merge_reports_upward

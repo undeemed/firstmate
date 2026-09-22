@@ -128,7 +128,7 @@ import {
 import {
   classifyFirstmateOperationalText,
   encodeFirstmateOperationalInputWith,
-} from "./lib/fm-operational-input.ts";
+} from "../../extensions/lib/fm-operational-input.ts";
 
 const extensionFile = fileURLToPath(import.meta.url);
 const extensionDir = dirname(extensionFile);

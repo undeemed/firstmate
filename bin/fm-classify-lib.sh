@@ -27,7 +27,7 @@
 # A missing, malformed, identity-mismatched, or past-end classified position reads
 # from byte 0, preferring a bounded duplicate over a lost event.
 #
-# There are three documented exceptions. The absorb classification
+# There are four documented exceptions. The absorb classification
 # (crew_absorb_class and its working/paused wrappers) is NOT a pure status-file
 # read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call,
 # to decide whether a crew that just stopped its turn or went stale is working,
@@ -39,7 +39,13 @@
 # stays bounded by new appends instead of re-reading each task's whole lifetime
 # log every time. crew_worktree_written_since reads the task's meta file and walks
 # a bounded slice of its worktree instead of a status file, so callers run it only
-# at the moment they would otherwise escalate.
+# at the moment they would otherwise escalate, crew_step_progress_evidence
+# makes one bounded `no-mistakes axi status` read at that same moment, and
+# crew_turn_progress_evidence stats that task's turn-boundary marker there too. commit_key_syntax_markers also
+# writes: after the drain has printed the stated-key syntax warnings it persists
+# each task's warned-through byte marker (state/.<task>.key-syntax-cursor), and a
+# marker that cannot be written simply re-warns next drain (see "Fleet-wide
+# stated-key syntax warnings" below).
 
 # Directory of this library, used to locate the sibling fm-crew-state.sh reader.
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a
@@ -597,6 +603,72 @@ _fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
   _fm_decision_slug_ok "$k" || return 1
   printf '%s' "$k"
 }
+# --- stated-key syntax guard ------------------------------------------------
+#
+# _fm_decision_key above reads a stated key from exactly two positions. A worker
+# that writes the token anywhere else states a key nothing will ever use: the
+# line folds under the shared "default" bucket (or, for a slug the charset
+# rejects, is skipped by the fold entirely) while its note still SHOWS the
+# literal "[key=x]" token, so the listing reads as correctly keyed and only
+# fm-send's --resolve-key refusal reveals the loss - after the answer has been
+# composed. Two such decisions on one task then share "default", where answering
+# either closes both.
+#
+# The guard warns rather than rejects, and reads rather than writes, because
+# workers append status with a plain `echo` (bin/fm-brief.sh rule 4): there is no
+# write chokepoint to refuse at, and the fold deliberately HONORS the note-head
+# position rather than losing a stated key (issue #2109), so refusing every
+# after-the-colon token would discard decisions the fold can still place. The
+# drain surfaces one warning per newly appended line instead
+# (bin/fm-wake-drain.sh), which is the first place a supervisor reads the append.
+#
+# Reasons, all reported against the same line:
+#   unplaced-key  a "[key=...]" token sits past the note head, so the fold read
+#                 this line under "default"
+#   invalid-slug  a token sits in a stated position but its slug fails the
+#                 charset, so the fold skipped the line outright
+#   late-key      the token sits at the note head: honored, but the documented
+#                 position is before the colon
+# Only the verbs that open or close a decision are checked, so a `note:` line
+# quoting a key stays quiet.
+_fm_key_syntax_verbs() {  # -> space-separated verbs whose keys matter here
+  printf 'needs-decision blocked %s %s' \
+    "${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}" \
+    "${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}"
+}
+# Print the reason a decision-opening or decision-closing status line states a
+# key the fold cannot use as written. Returns 1 (printing nothing) for a line
+# with no token, a non-decision verb, or the documented before-colon position.
+status_line_key_syntax_problem() {  # <status-line> -> reason
+  local line=$1 verb want slug matched=0
+  case "$line" in
+    *'[key='*) ;;
+    *) return 1 ;;
+  esac
+  verb=$(status_line_verb "$line")
+  for want in $(_fm_key_syntax_verbs); do
+    [ "$verb" = "$want" ] && { matched=1; break; }
+  done
+  [ "$matched" -eq 1 ] || return 1
+  if _fm_key_before_colon "$line"; then
+    slug=${line%%:*}
+    slug=${slug#*\[key=}
+    slug=${slug%%\]*}
+    _fm_decision_slug_ok "$slug" && return 1
+    printf 'invalid-slug'
+    return 0
+  fi
+  if slug=$(_fm_key_at_note_head "$line"); then
+    if _fm_decision_slug_ok "$slug"; then
+      printf 'late-key'
+    else
+      printf 'invalid-slug'
+    fi
+    return 0
+  fi
+  printf 'unplaced-key'
+}
+
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
 _fm_decision_drop() {  # <open-set> <key>
@@ -1567,6 +1639,7 @@ EOF
   fi
   if [ "$rc" -eq 0 ]; then
     rm -f -- "$state/$task.status" "$state/.$task.open-decisions-cursor" \
+      "$state/.$task.key-syntax-cursor" \
       "$signal_marker" "$heartbeat_marker" "$daemon_marker" || rc=1
   fi
   fm_lock_release "$lock" || rc=1
@@ -1849,6 +1922,101 @@ $snapshot
 EOF
 }
 
+# Fleet-wide stated-key syntax warnings: one
+# "<task>\t<line-end>\t<reason>\t<status-line>" row per not-yet-warned line
+# whose stated key the fold cannot use as written
+# (status_line_key_syntax_problem above), where <line-end> is the byte offset
+# just past that line in the status file. Bounded by a private per-task byte
+# marker rather than the presentation cursor, because that cursor deliberately
+# holds still while only routine lines are unread - a warning tied to it would
+# repeat every drain for as long as the decision stayed open. commit_key_syntax_
+# markers below advances the marker once the caller has printed the rows, and
+# the caller uses <line-end> to pull a task's marker back to its last shown row
+# when its byte cap omitted any, so a turn that dies before printing - or a row
+# the cap dropped - warns again next time. Prints nothing when every new line
+# places its key correctly, which is the common case.
+_fm_key_syntax_marker_path() {  # <status-file>
+  local dir base
+  dir=$(dirname "$1")
+  base=$(basename "$1")
+  printf '%s/.%s.key-syntax-cursor' "$dir" "${base%.status}"
+}
+# Byte offset already warned about for <status-file>. A missing marker, a
+# changed status identity (rotated or recreated file), malformed content, or an
+# offset past the current file end reads as 0, which re-warns rather than
+# silently skipping a bad line.
+_fm_key_syntax_offset() {  # <status-file> -> offset
+  local f=$1 marker ident recorded offset extra size
+  marker=$(_fm_key_syntax_marker_path "$f")
+  [ -f "$marker" ] && [ -r "$marker" ] && [ ! -L "$marker" ] || { printf '0'; return 0; }
+  ident=$(_fm_open_decisions_file_ident "$f") || { printf '0'; return 0; }
+  IFS=$(printf '\t') read -r recorded offset extra < "$marker" || { printf '0'; return 0; }
+  [ -z "$extra" ] || { printf '0'; return 0; }
+  [ "$recorded" = "$ident" ] || { printf '0'; return 0; }
+  case "$offset" in ''|*[!0-9]*) printf '0'; return 0 ;; esac
+  size=$(_fm_status_file_size "$f") || { printf '0'; return 0; }
+  size=${size//[[:space:]]/}
+  case "$size" in ''|*[!0-9]*) printf '0'; return 0 ;; esac
+  [ "$offset" -le "$size" ] || { printf '0'; return 0; }
+  printf '%s' "$offset"
+}
+scan_key_syntax_warnings_snapshot() {  # <state> <snapshot>
+  local state=$1 snapshot=$2 task endpoint ident f start size chunk line reason rc=0 pos lineend
+  local LC_ALL=C
+  while IFS=$(printf '\t') read -r task endpoint ident; do
+    [ -n "$task" ] || continue
+    f="$state/$task.status"
+    [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || continue
+    case "$endpoint" in ''|*[!0-9]*) return 1 ;; esac
+    size=$(_fm_status_file_size "$f") || return 1
+    size=${size//[[:space:]]/}
+    case "$size" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$endpoint" -le "$size" ] || return 1
+    start=$(_fm_key_syntax_offset "$f")
+    [ "$start" -lt "$endpoint" ] || continue
+    chunk=$(_fm_status_read_span "$f" "$start" "$((endpoint - start))") || return 1
+    pos=$start
+    while IFS= read -r line || [ -n "$line" ]; do
+      lineend=$((pos + ${#line} + 1))
+      [ "$lineend" -le "$endpoint" ] || lineend=$endpoint
+      pos=$lineend
+      [ -n "$line" ] || continue
+      reason=$(status_line_key_syntax_problem "$line") || continue
+      printf '%s\t%s\t%s\t%s\n' "$task" "$lineend" "$reason" "$line" || { rc=1; break; }
+    done <<EOF
+$chunk
+EOF
+    [ "$rc" -eq 0 ] || return 1
+  done <<EOF
+$snapshot
+EOF
+  return 0
+}
+
+# Record that every line up to each task's captured endpoint has been warned
+# about. Called only after the rows are printed, with a snapshot the caller has
+# already pulled back to the last shown row for any task whose rows its byte
+# cap omitted. A marker that cannot be written is not fatal: the next drain
+# re-warns, which is the safe direction.
+commit_key_syntax_markers() {  # <state> <snapshot>
+  local state=$1 snapshot=$2 task endpoint ident f marker tmp
+  while IFS=$(printf '\t') read -r task endpoint ident; do
+    [ -n "$task" ] || continue
+    case "$endpoint" in ''|*[!0-9]*) continue ;; esac
+    [ -n "$ident" ] || continue
+    f="$state/$task.status"
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [ "$ident" = "$(_fm_open_decisions_file_ident "$f")" ] || continue
+    marker=$(_fm_key_syntax_marker_path "$f")
+    tmp="$marker.tmp.$$"
+    printf '%s\t%s\n' "$ident" "$endpoint" > "$tmp" 2>/dev/null || { rm -f "$tmp"; continue; }
+    mv -f "$tmp" "$marker" 2>/dev/null || rm -f "$tmp"
+  done <<EOF
+$snapshot
+EOF
+  return 0
+}
+
 # Fold material routed-work phases in the same keyed event stream.
 # A working or declared-pause event opens or replaces one phase for its key.
 # A later done, failed, needs-decision, blocked, or resolved event carrying that
@@ -2118,17 +2286,31 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
-  local id=$1 line state src
-  [ -n "$id" ] || { printf 'none'; return; }
+  local verdict
+  verdict=$(crew_absorb_state "$1")
+  printf '%s' "${verdict%% *}"
+}
+
+# crew_absorb_state: the same single fm-crew-state.sh read, printing
+# "<class> <source>" so a caller that must weigh WHY the crew reads working can do
+# it without a second read. The distinction matters in exactly one place: an
+# actively-running pipeline (source run-step) is positive evidence the crew resumed
+# and outranks its own older declaration, while a pane busy signature (source pane)
+# is a reading of the very pane a declared wait already explains - and the reading a
+# per-harness busy source keeps reporting on a parked lane. The source token is
+# whatever fm-crew-state.sh reported, or `none` when the line carried none.
+crew_absorb_state() {  # <id>
+  local id=$1 line state src=none
+  [ -n "$id" ] || { printf 'none none'; return; }
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
-  case "$line" in state:*) ;; *) printf 'none'; return ;; esac
+  case "$line" in state:*) ;; *) printf 'none none'; return ;; esac
   state=${line#state: }; state=${state%% *}
-  if [ "$state" = paused ]; then printf 'paused'; return; fi
+  case "$line" in *"source: "*) src=${line#*source: }; src=${src%% *} ;; esac
+  if [ "$state" = paused ]; then printf 'paused %s' "$src"; return; fi
   if [ "$state" = working ]; then
-    src=${line#*source: }; src=${src%% *}
-    case "$src" in run-step|pane) printf 'working'; return ;; esac
+    case "$src" in run-step|pane) printf 'working %s' "$src"; return ;; esac
   fi
-  printf 'none'
+  printf 'none %s' "$src"
 }
 
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class
@@ -2287,6 +2469,84 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
       -type f -newer "$anchor" -print -quit 2>/dev/null || true)
   fi
   [ -n "$hit" ]
+}
+
+# Seconds an ACTIVE pipeline step may go with no recorded activity before its lane
+# is escalated as a possible wedge anyway. This is a progress bound, not a pacing
+# knob: a step waiting on an external service legitimately burns no CPU and moves
+# no files, but it still records what it last did, so the honest question is how
+# long ago it last did it. Measured 2026-08-27 on a healthy lane, a `ci` step
+# waiting on GitHub checks reported `8m1s ago: log: CI checks running, waiting for
+# results...`, so the default sits at roughly twice that legitimate silence.
+FM_STEP_ACTIVITY_MAX_SECS=${FM_STEP_ACTIVITY_MAX_SECS:-900}
+
+# Print the evidence phrase for <id>'s pipeline step when that step is ACTIVE and
+# was active recently, and return 0; print nothing and return 1 otherwise. This is
+# the wedge detector's fourth liveness input, and the only one that can see the
+# shape which produced three false possible-wedge escalations on 2026-08-27: a run
+# whose steps had all completed through `pr`, whose `ci` step was running and
+# waiting on GitHub, and which therefore burned almost no CPU, wrote no file, and
+# rendered nothing into its pane for many minutes at a time while being perfectly
+# healthy. Neither pane quietness, nor the run step alone, nor the worktree write
+# probe can tell that lane from a wedged one; the step's own last_activity can,
+# because it measures PROGRESS - when that step last did something - where every
+# other input measures only liveness. This function is the one owner of that
+# policy; every other mention of it points here.
+#
+# Both required conditions come off ONE fm-crew-state.sh line, the same read
+# crew_absorb_state makes: `working` from source `run-step` is that reader's own
+# attribution of an ACTIVE run to this crew's branch and code identity, and its
+# `activity: <step> <seconds>` field is that run's progress record. A verdict from
+# any other source, a missing activity field, an unreadable line, and an age past
+# FM_STEP_ACTIVITY_MAX_SECS all return 1, so anything that cannot be evaluated
+# leaves the caller's escalation schedule exactly as it was.
+crew_step_progress_evidence() {  # <id>
+  local line rest step age _
+  [ -n "${1:-}" ] || return 1
+  line=$("$FM_CREW_STATE_BIN" "$1" 2>/dev/null) || return 1
+  # Read the state and source as TOKENS, from their first occurrence, never as
+  # substrings: a crew's own status line is echoed into the detail of a
+  # status-log verdict, so a worker that appends "source: run-step · activity: pr 30"
+  # would otherwise fabricate progress evidence and silence its own wedge alarm.
+  case "$line" in "state: working "*) ;; *) return 1 ;; esac
+  rest=${line#*source: }
+  case "$rest" in "run-step "*) ;; *) return 1 ;; esac
+  case "$rest" in *"activity: "*) rest=${rest##*activity: } ;; *) return 1 ;; esac
+  read -r step age _ <<< "$rest"
+  case "$age" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$age" -le "$FM_STEP_ACTIVITY_MAX_SECS" ] || return 1
+  printf 'active pipeline step %s, last activity %ss ago' "$step" "$age"
+}
+
+# Print the evidence phrase for a model turn <id> completed during the quiet
+# window that <anchor-file> opens, and return 0; print nothing and return 1
+# otherwise. This is the wedge detector's fifth liveness input, and the only one
+# that can see the shape measured on 2026-08-31 (see docs/verification/supervision.md):
+# a direct-PR lane has NO pipeline run at all, so crew_step_progress_evidence can
+# never apply to it, and a lane spending a long turn reading and reasoning writes
+# nothing for crew_worktree_written_since to find, yet raises `possible wedge`
+# while completing model turns behind a static pane.
+#
+# state/<id>.turn-ended is where firstmate ALREADY records that same event. The
+# per-harness turn-end hook fm-spawn installs touches it at every turn boundary -
+# one model response plus its tool calls - so a marker newer than the anchor is
+# positive proof the agent produced something during the quiet window. It is
+# chosen over the rendered token and cost counters that first suggested this fix
+# because it is firstmate's own record of the very event those counters report:
+# no vendor footer to parse, no second sample to take, and the same single
+# `-newer <anchor>` shape crew_worktree_written_since already uses.
+#
+# 1 for every other outcome, including a marker that has not moved, a task with
+# no marker at all, and a missing or unreadable anchor. A harness whose hook
+# fires only when a whole turn ends therefore records nothing mid-turn and simply
+# keeps the caller's existing escalation schedule, which is also what a genuinely
+# stopped crew gets: this probe can only ever defer an escalation on positive
+# evidence, never suppress one for want of it.
+crew_turn_progress_evidence() {  # <id> <state> <anchor-file>
+  local id=${1:-} state=${2:-} anchor=${3:-}
+  [ -f "$anchor" ] || return 1
+  [ "$state/$id.turn-ended" -nt "$anchor" ] || return 1
+  printf 'completing model turns, last turn boundary inside the quiet window'
 }
 
 # 0 (benign/absorb) if EVERY task referenced by a no-verb "signal:" wake is provably

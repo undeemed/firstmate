@@ -38,6 +38,15 @@
 #   (o) fm-pr-check rerun after HEAD moved                      -> no stale pr_head
 #   (p) fm-pr-check when local HEAD lags                        -> record remote PR head
 #   (q) no-mistakes + NO pr= recorded, PR discovered by branch  -> ALLOW  (yolo/no-CI merge)
+#   (q1) no-mistakes + recorded PR still open                   -> REFUSE (not landed)
+#   (q2) no-mistakes + recorded PR closed without merging       -> REFUSE (not landed)
+#
+# Build-cache reaping (fm-teardown.sh's reap_task_build_cache):
+#   (aa) task-owned, idle cache                 -> REAPED, bytes reported
+#   (ab) unlanded work refuses the teardown     -> cache untouched, no reap
+#   (ac) cache owned by another firstmate home  -> KEPT, skip reported
+#   (ad) secondmate's shared per-project cache  -> KEPT, skip reported
+#   (ae) live process inside the cache          -> KEPT, skip reported
 #   (q2) no-mistakes + squash-merged, local followed pipeline rebase -> ALLOW
 #   (q3) no-mistakes + squash-merged, same file, different content   -> REFUSE
 #   (q4) no-mistakes + squash-merged rebased local plus extra commit -> REFUSE
@@ -83,53 +92,6 @@ export REAL_LSOF_FOR_TEST
 #   $CASE/project/      - clone of origin; acts as the firstmate project dir
 #   $CASE/wt/           - a worktree of the project (the task worktree)
 # Echoes the case dir.
-test_secondmate_teardown_leaves_shared_project_cache() {
-  local case_dir home cache rc
-  case_dir=$(make_case build-cache-secondmate)
-  write_meta "$case_dir" local-only secondmate
-  configure_secondmate_with_tmux_children "$case_dir"
-  home="$case_dir/secondmate-home"
-  cache="$case_dir/project-shared-cache"
-  seed_build_cache "$case_dir" "$cache"
-
-  rc=0
-  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "build-cache-secondmate: teardown should retire the secondmate home"
-  [ ! -d "$home" ] || fail "build-cache-secondmate: teardown did not retire the secondmate home"
-  [ -f "$cache/debug/libthing.rlib" ] \
-    || fail "build-cache-secondmate: a shared per-project cache was deleted by a secondmate teardown"
-  assert_grep "build cache left behind for task-x1" "$case_dir/stderr" \
-    "build-cache-secondmate: teardown did not report what it left behind"
-  assert_grep "not this home's cache for this task" "$case_dir/stderr" \
-    "build-cache-secondmate: teardown did not say why it left the cache"
-  pass "a shared per-project cache survives a secondmate teardown and the skip is reported"
-}
-seed_build_cache() {  # <case-dir> <path>
-  printf 'build_cache=%s\n' "$2" >> "$1/state/task-x1.meta"
-  mkdir -p "$2/debug"
-  printf 'compiled artifact\n' > "$2/debug/libthing.rlib"
-}
-test_cache_this_home_does_not_own_is_reported_not_reaped() {
-  local case_dir cache rc
-  case_dir=$(make_case build-cache-co-tenant)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  cache="$case_dir/other-home/build-caches/task-x1"
-  seed_build_cache "$case_dir" "$cache"
-
-  rc=0
-  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "build-cache-co-tenant: teardown should still succeed"
-  [ -f "$cache/debug/libthing.rlib" ] \
-    || fail "build-cache-co-tenant: a cache this home does not own was deleted"
-  assert_grep "build cache left behind for task-x1" "$case_dir/stderr" \
-    "build-cache-co-tenant: teardown did not report what it left behind"
-  assert_grep "not this home's cache for this task" "$case_dir/stderr" \
-    "build-cache-co-tenant: teardown did not say why it left the cache"
-  pass "a cache this home does not own survives a teardown and the skip is reported"
-}
 make_case() {
   local name=$1 case_dir fakebin
   case_dir="$TMP_ROOT/$name"
@@ -300,29 +262,39 @@ land_on_origin_main() {
   rm -rf "$tmp"
 }
 
-# Override GitHub lookups to report PR 7 as merged with the supplied head.
-add_gh_pr_merged_for_head() {
-  local case_dir=$1 head=$2
+# Override GitHub lookups to report PR 7 in <state> with the supplied head.
+# Every lookup bin/ makes here is REST, so the fake answers the three shapes the
+# scripts ask for: the branch->number list route bin/fm-teardown.sh discovers a
+# PR with, the merged-only head that the same script selects, and the head alone
+# that bin/fm-pr-check.sh records as pr_head=. GraphQL `gh pr view` and `gh-axi
+# pr list` are answered by nothing, so a reintroduced GraphQL read fails the case
+# instead of passing quietly.
+# <state> is the fixture's PR state, MERGED by default, or OPEN or CLOSED without
+# merging. Only MERGED answers the merged-head select, as the REST resource does.
+add_gh_pr_for_head() {  # <case_dir> <head> [state]
+  local case_dir=$1 head=$2 state=${3:-MERGED}
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
-case "${1:-} ${2:-}" in
-  "pr list")
-    printf '%s\n' "count: 1 (showing first 1)" "pull_requests[1]{number,state}:" "  7,merged" ; exit 0 ;;
-  "pr view")
-    printf '%s\n' "pull_request:" "  number: 7" "  state: merged" '  merged: "2026-06-26T00:00:00Z"' ; exit 0 ;;
-esac
-exit 0
+echo "error: no GraphQL lookup is expected on this path" >&2
+exit 1
 SH
   cat > "$case_dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
-case "\${1:-} \${2:-}" in
-  "pr view")
-    case " \$* " in
-      *"state,headRefOid,url"*) printf '%s\t%s\t%s\n' 'MERGED' '$head' 'https://github.com/example/repo/pull/7' ; exit 0 ;;
-      *"headRefOid"*) printf '%s\n' '$head' ; exit 0 ;;
-    esac
-    ;;
-esac
+printf '%s\n' "\$*" >> '$case_dir/gh-calls.log'
+if [ "\${1:-}" = api ]; then
+  case " \$* " in
+    *"/pulls?"*) printf '%s\n' '7' ; exit 0 ;;
+    *".merged"*)
+      [ '$state' = MERGED ] && printf '%s\t%s\n' '$head' 'https://github.com/example/repo/pull/7'
+      exit 0 ;;
+    *".head.sha"*) printf '%s\n' '$head' ; exit 0 ;;
+    # The audience read bin/fm-pr-check.sh makes on every published body must
+    # succeed here: these cases are about pr_head recording, not the audience
+    # contract, and a refusal would stop them before their subject.
+    *" --jq .body"*) printf '%s\n' 'Adds the thing, described for the repository that receives it.' ; exit 0 ;;
+  esac
+fi
+
 echo "error: pull request not found" >&2
 exit 1
 SH
@@ -470,6 +442,17 @@ SH
 # present, and succeeds once it is gone. This drives the lock through
 # fm-teardown.sh's own retry-then-stale-cleanup logic (teardown_treehouse_return
 # in bin/fm-teardown.sh) rather than hand-simulating that logic in the test.
+# A treehouse fake that records any return, so a test can assert the checkout
+# was never returned. Args: case_dir
+add_logging_treehouse() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return\n' >> "$case_dir/treehouse.log"
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
 add_lock_aware_treehouse() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
@@ -887,7 +870,7 @@ test_squash_merged_branch_deleted_allows() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   append_pr_meta_for_current_head "$case_dir"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -907,7 +890,7 @@ test_squash_merged_pr_allows_when_head_ancestor_of_pr_head() {
   append_pr_meta_url "$case_dir"
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -935,9 +918,13 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes auto-fix")
   land_on_origin_main "$case_dir" feature.txt hello
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
   seed_backlog_in_flight "$case_dir"
   # No append_pr_meta_* call: state/task-x1.meta has no pr= or pr_head= line.
+  # With no recorded URL the repository comes from the worktree's own origin, so
+  # the remote is renamed to its real GitHub form here. The merged PR answers
+  # before any content fetch, so nothing in this case reaches the network.
+  git -C "$case_dir/wt" remote set-url origin https://github.com/example/repo.git
 
   ! grep -qE '^(pr|pr_head)=' "$case_dir/state/task-x1.meta" \
     || fail "no-pr-branch-discovery: test setup bug, meta unexpectedly has a pr= line"
@@ -949,9 +936,37 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
 
   expect_code 0 "$rc" "no-pr-branch-discovery: teardown should succeed by discovering the merged PR from the branch name"
   ! grep -q REFUSED "$case_dir/stderr" || fail "no-pr-branch-discovery: teardown printed a REFUSED line"
+  grep -q 'pulls?state=all&head=example:fm/task-x1' "$case_dir/gh-calls.log" \
+    || fail "no-pr-branch-discovery: the branch was not resolved over the REST list route"
+  grep -q 'repos/example/repo/pulls/7' "$case_dir/gh-calls.log" \
+    || fail "no-pr-branch-discovery: the discovered PR was not read over REST"
   assert_grep 'https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
     "no-pr-branch-discovery: resolved PR URL was not recorded on completion"
   pass "teardown discovers a merged PR by branch name and tears down when no pr= was ever recorded"
+}
+
+# An unmerged PR lands nothing, whichever way it is unmerged: REST reports one as
+# state "open" and the other as "closed" with merged false, and the merged-head
+# select answers with nothing for both.
+run_unmerged_pr_refusal_case() {  # <state>
+  local state=$1 case_dir rc pr_head
+  case_dir=$(make_case "unmerged-pr-${state}")
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_for_current_head "$case_dir"
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  add_gh_pr_for_head "$case_dir" "$pr_head" "$state"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "unmerged-pr-$state: teardown should refuse for an unmerged PR"
+  grep -q REFUSED "$case_dir/stderr" || fail "unmerged-pr-$state: no REFUSED line in stderr"
+  grep -q 'repos/example/repo/pulls/7' "$case_dir/gh-calls.log" \
+    || fail "unmerged-pr-$state: the recorded PR was not read over REST"
+  pass "a PR that is $state is not landed work and the worktree is kept"
 }
 
 test_squash_merged_pr_allows_replayed_unpushed_patch() {
@@ -965,7 +980,7 @@ test_squash_merged_pr_allows_replayed_unpushed_patch() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   append_pr_meta_url "$case_dir"
   pr_head=$(land_equivalent_patch_on_origin_branch "$case_dir" pr-head feature.txt hello "add feature")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -985,7 +1000,7 @@ test_merged_pr_with_later_local_commit_refuses() {
   append_pr_meta_for_current_head "$case_dir"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   wt_commit_file "$case_dir" later.txt local-only "local follow-up"
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -1005,7 +1020,7 @@ test_squash_merged_rebased_branch_allows() {
   printf '%s\n' \
     'pr=https://github.com/example/repo/pull/7' \
     "pr_head=$pr_head" >> "$case_dir/state/task-x1.meta"
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -1029,7 +1044,7 @@ test_squash_merged_same_file_different_content_refuses() {
   printf '%s\n' \
     'pr=https://github.com/example/repo/pull/7' \
     "pr_head=$pr_head" >> "$case_dir/state/task-x1.meta"
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -1054,7 +1069,7 @@ test_squash_merged_rebased_local_with_unlanded_commit_refuses() {
   printf '%s\n' \
     'pr=https://github.com/example/repo/pull/7' \
     "pr_head=$pr_head" >> "$case_dir/state/task-x1.meta"
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -1095,7 +1110,7 @@ test_pr_check_does_not_refresh_stale_pr_head() {
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
@@ -1132,7 +1147,7 @@ test_pr_check_records_remote_head_when_local_lags() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
@@ -1207,7 +1222,7 @@ test_dirty_worktree_refuses() {
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   land_on_origin_main "$case_dir" feature.txt hello
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
   printf '%s\n' "uncommitted edit" > "$case_dir/wt/feature.txt"
 
   set +e
@@ -2067,7 +2082,7 @@ test_secondmate_pr_registration_publishes_ready_line() {
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  add_gh_pr_for_head "$case_dir" "$pr_head"
 
   FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
     PATH="$case_dir/fakebin:$PATH" "$PR_CHECK" task-x1 "$url" > "$case_dir/pr-check.out" 2> "$case_dir/pr-check.err" \
@@ -2086,7 +2101,7 @@ test_secondmate_pr_registration_publishes_ready_line() {
   case_dir=$(make_case main-pr-ready)
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt hello "add feature"
-  add_gh_pr_merged_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  add_gh_pr_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
   FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
     PATH="$case_dir/fakebin:$PATH" "$PR_CHECK" task-x1 "$url" >/dev/null 2> "$case_dir/pr-check.err" \
     || fail "main-pr-ready: fm-pr-check failed"
@@ -2957,7 +2972,7 @@ test_parked_own_run_is_aborted_before_teardown() {
     "parked-run-abort: no-mistakes axi abort was never invoked for the task's own parked run"
   assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
     "parked-run-abort: no-mistakes axi abort did not target the verified run id"
-  assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
+  assert_grep "has no outcome yet; aborting" "$case_dir/stderr" \
     "parked-run-abort: teardown did not report aborting the parked run before removing the worker"
   pass "a task's own parked no-mistakes run is aborted, not orphaned, before the worker is removed"
 }
@@ -3021,7 +3036,9 @@ EOF
   expect_code 0 "$rc" "parked-run-pipeline-advanced-unfetched: teardown should still succeed"
   assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
     "parked-run-pipeline-advanced-unfetched: teardown did not abort the parked run the ledger proves is this task's continuation"
-  assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
+  # This fork aborts every run this task owns that has no outcome yet, not only
+  # a parked one, so the report names the missing outcome rather than the gate.
+  assert_grep "has no outcome yet; aborting" "$case_dir/stderr" \
     "parked-run-pipeline-advanced-unfetched: teardown did not report aborting the parked run"
   pass "a parked run the pipeline advanced past the task copy is still concluded from the runs ledger, not orphaned"
 }
@@ -3367,7 +3384,12 @@ EOF
 # The ledger proves the continuation, but the run is NOT parked at a gate -
 # it is autonomously running/fixing against the daemon's own clone. Teardown
 # must leave that work alone even when the attribution proof would bind it.
-test_ledger_proven_continuation_never_aborts_active_run() {
+# This fork concludes every run the task owns that has no outcome yet, including
+# an autonomously active one: a run left driving itself after its task is gone
+# keeps WRITING (observed 2026-09-01, when a torn-down task's run committed and
+# opened a pull request half an hour later). A ledger-proven continuation is
+# this task's own run, so it is aborted rather than left running.
+test_ledger_proven_continuation_is_aborted_while_active() {
   local case_dir rc advanced_short anchor_short
   case_dir=$(make_case parked-run-ledger-active)
   write_meta "$case_dir" no-mistakes ship
@@ -3387,9 +3409,11 @@ EOF
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
   expect_code 0 "$rc" "parked-run-ledger-active: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-ledger-active: teardown aborted an actively running run the ledger happened to bind"
-  pass "a ledger-proven continuation is still left alone while the run is autonomously active"
+  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
+    "parked-run-ledger-active: teardown left an active run of this task driving itself"
+  assert_grep "has no outcome yet; aborting" "$case_dir/stderr" \
+    "parked-run-ledger-active: teardown did not report concluding the active run"
+  pass "a ledger-proven continuation of this task is concluded even while it is autonomously active"
 }
 
 test_mismatched_run_after_abort_refuses_unconfirmed() {
@@ -3453,15 +3477,11 @@ test_parked_own_run_refuses_when_abort_is_unconfirmed() {
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  ( cd "$case_dir/wt" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
 
-  cat > "$case_dir/fakebin/treehouse" <<EOF
-#!/usr/bin/env bash
-printf 'return\n' >> "$case_dir/treehouse.log"
-EOF
-  chmod +x "$case_dir/fakebin/treehouse"
+  add_logging_treehouse "$case_dir"
 
   rc=0
   FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
@@ -3470,7 +3490,7 @@ EOF
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
   expect_code 1 "$rc" "parked-run-abort-unconfirmed: teardown should refuse"
-  assert_grep "REFUSED: no-mistakes run for task-x1 is still parked after axi abort" "$case_dir/stderr" \
+  assert_grep "REFUSED: no-mistakes run for task-x1 is still unfinished after axi abort" "$case_dir/stderr" \
     "parked-run-abort-unconfirmed: teardown did not explain the parked-run refusal"
   assert_present "$case_dir/wt" \
     "parked-run-abort-unconfirmed: teardown removed the worktree after refusing"
@@ -3505,9 +3525,11 @@ test_another_branchs_parked_run_is_never_touched() {
   pass "a parked run on another branch is never aborted by this task's teardown (ownership is precise)"
 }
 
-test_own_autonomous_run_is_left_alone() {
+# A task-owned run still RUNNING at teardown time (Fix 1 in bin/fm-teardown.sh's
+# header). An aborted run stands in for "no later forge write".
+test_own_autonomous_run_is_aborted() {
   local case_dir rc head
-  case_dir=$(make_case autonomous-run-left-alone)
+  case_dir=$(make_case autonomous-run-stopped)
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
@@ -3517,12 +3539,218 @@ test_own_autonomous_run_is_left_alone() {
   FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
-  expect_code 0 "$rc" "autonomous-run-left-alone: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "autonomous-run-left-alone: teardown aborted a task-owned autonomous run"
-  assert_not_contains "$(cat "$case_dir/stderr")" "aborting" \
-    "autonomous-run-left-alone: teardown reported aborting an autonomous run"
-  pass "a task-owned autonomous running step is left alone rather than aborted"
+  expect_code 0 "$rc" "autonomous-run-stopped: teardown should still succeed"
+  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
+    "autonomous-run-stopped: teardown left a task-owned running pipeline alive"
+  pass "a task-owned running pipeline is aborted before teardown returns"
+}
+
+# The other half of that incident: the pane close was never confirmed, yet an
+# unpatched teardown printed "complete" and erased the records that make the
+# still-live worker findable.
+test_unclosed_endpoint_refuses_completion() {
+  local case_dir rc
+  case_dir=$(make_case endpoint-still-open)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  # The recorded window is still listed after the kill, with a live agent as its
+  # current command.
+  cat > "$case_dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) printf '%s\n' 'fm-task-x1' ;;
+  display-message) [ "${*: -1}" != '#{pane_current_command}' ] || printf '%s\n' 'claude' ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "endpoint-still-open: teardown should refuse an unconfirmed close"
+  assert_grep "is not confirmed closed" "$case_dir/stderr" \
+    "endpoint-still-open: teardown did not explain the unconfirmed close"
+  assert_not_contains "$(cat "$case_dir/stdout")" "complete" \
+    "endpoint-still-open: teardown reported completion over a live endpoint"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "endpoint-still-open: teardown erased the task record for a live endpoint"
+  pass "an unconfirmed pane close refuses loudly instead of reporting completion"
+}
+
+# The same two guarantees on the forced secondmate child path: a child ship
+# task's own still-running pipeline is aborted before that child's records and
+# worktree are removed.
+test_forced_secondmate_child_run_is_aborted() {
+  local case_dir rc child_head
+  case_dir=$(make_case secondmate-child-run-abort)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+  child_head=$(git -C "$case_dir/child-a-wt" rev-parse HEAD)
+
+  rc=0
+  FM_FAKE_AXI_STATUS="$(running_axi_status_toon fm/child-a "$child_head" 01CHILDRUN)" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "secondmate-child-run-abort: forced teardown should still succeed"
+  assert_present "$case_dir/nm-abort.log" \
+    "secondmate-child-run-abort: forced cleanup left the child's running pipeline alive"
+  assert_grep "abort --run 01CHILDRUN" "$case_dir/nm-abort.log" \
+    "secondmate-child-run-abort: the abort did not target the child's verified run id"
+  [ "$(wc -l < "$case_dir/nm-abort.log")" -eq 1 ] \
+    || fail "secondmate-child-run-abort: forced cleanup aborted a run it does not own"
+  pass "forced secondmate teardown aborts a child ship task's still-running pipeline"
+}
+
+# ...and a child endpoint still alive after its kill stops the forced cleanup
+# with every durable record intact.
+test_forced_secondmate_child_live_endpoint_stops_cleanup() {
+  local case_dir home rc
+  case_dir=$(make_case secondmate-child-endpoint-open)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+  home="$case_dir/secondmate-home"
+  # The child's recorded window is still listed after the kill, with a live
+  # agent as its current command.
+  cat > "$case_dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) printf '%s\n' 'fm-child-a' ;;
+  display-message) [ "${*: -1}" != '#{pane_current_command}' ] || printf '%s\n' 'claude' ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "secondmate-child-endpoint-open: forced cleanup should stop on a live child endpoint"
+  assert_grep "is not confirmed closed" "$case_dir/stderr" \
+    "secondmate-child-endpoint-open: teardown did not explain the unconfirmed child close"
+  assert_grep "retaining that child's durable identity records" "$case_dir/stderr" \
+    "secondmate-child-endpoint-open: refusal did not explain child record retention"
+  assert_present "$home/state/child-a.meta" \
+    "secondmate-child-endpoint-open: forced cleanup erased the live child's record"
+  [ -d "$case_dir/child-a-wt" ] \
+    || fail "secondmate-child-endpoint-open: forced cleanup removed the live child's worktree"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "secondmate-child-endpoint-open: the stopped cleanup erased the parent record"
+  [ -d "$home" ] \
+    || fail "secondmate-child-endpoint-open: the stopped cleanup removed the secondmate home"
+  assert_not_contains "$(cat "$case_dir/stdout")" "complete" \
+    "secondmate-child-endpoint-open: teardown reported completion over a live child endpoint"
+  pass "a live child endpoint after the kill stops forced cleanup with records intact"
+}
+
+# Record a SECOND task in the same home holding the SAME checkout - the
+# co-tenancy fm-worktree-collision-c5 reproduced end to end, where a returned
+# pool slot was handed to a new worker while the first worker was still live.
+add_cotenant_task() {  # <case-dir> <cotenant-id>
+  local case_dir=$1 other=$2
+  mkdir -p "$case_dir/tasktmp-$other"
+  fm_write_meta "$case_dir/state/$other.meta" \
+    "window=firstmate:fm-$other" \
+    "endpoint_task_id=$other" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "tasktmp=$case_dir/tasktmp-$other"
+}
+
+# Start a disowned process whose cwd is the shared worktree, carrying (or
+# deliberately lacking) the per-task scratch root a real worker's process tree
+# inherits from its pane. Sets STARTED_PID rather than echoing it, because a
+# command substitution would not outlive its own subshell.
+# Args: case_dir <tasktmp-root|->
+start_worktree_process() {
+  local case_dir=$1 root=$2
+  if [ "$root" = - ]; then
+    ( cd "$case_dir/wt" && exec env -u TMPDIR -u GOTMPDIR sleep 300 ) </dev/null >/dev/null 2>&1 &
+  else
+    ( cd "$case_dir/wt" && exec env TMPDIR="$root/tmp" sleep 300 ) </dev/null >/dev/null 2>&1 &
+  fi
+  STARTED_PID=$!
+  disown
+  sleep 0.3
+  kill -0 "$STARTED_PID" 2>/dev/null || fail "setup process in $case_dir/wt did not start"
+}
+
+test_cotenant_process_survives_teardown() {
+  local case_dir rc own_pid other_pid branch survived=0
+  case_dir=$(make_case cotenant-process-survives)
+  write_meta "$case_dir" no-mistakes ship
+  printf 'tasktmp=%s\n' "$case_dir/tasktmp" >> "$case_dir/state/task-x1.meta"
+  mkdir -p "$case_dir/tasktmp"
+  add_cotenant_task "$case_dir" task-y2
+  land_shippable_commit "$case_dir"
+
+  start_worktree_process "$case_dir" "$case_dir/tasktmp"
+  own_pid=$STARTED_PID
+  start_worktree_process "$case_dir" "$case_dir/tasktmp-task-y2"
+  other_pid=$STARTED_PID
+
+  add_logging_treehouse "$case_dir"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  kill -0 "$other_pid" 2>/dev/null || survived=1
+  kill -0 "$own_pid" 2>/dev/null && survived=2
+  kill -KILL "$own_pid" "$other_pid" 2>/dev/null || true
+
+  expect_code 0 "$rc" "cotenant-process-survives: teardown should still complete"
+  [ "$survived" != 1 ] || fail "cotenant-process-survives: the co-tenant's live process was reaped by another task's teardown"
+  [ "$survived" != 2 ] || fail "cotenant-process-survives: this task's own process was not reaped"
+  assert_absent "$case_dir/treehouse.log" \
+    "cotenant-process-survives: teardown returned a checkout another task still records"
+  branch=$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)
+  [ "$branch" = fm/task-x1 ] || fail "cotenant-process-survives: teardown reset the shared checkout's branch to $branch"
+  assert_grep "is also recorded by task(s) task-y2" "$case_dir/stderr" \
+    "cotenant-process-survives: teardown did not report the shared checkout"
+  assert_grep "reaping leaked worktree process" "$case_dir/stderr" \
+    "cotenant-process-survives: teardown did not report reaping its own process"
+  assert_absent "$case_dir/state/task-x1.meta" \
+    "cotenant-process-survives: teardown did not complete its own task cleanup"
+  assert_present "$case_dir/state/task-y2.meta" \
+    "cotenant-process-survives: teardown removed the co-tenant's record"
+  pass "a co-tenant's live process in a shared checkout survives this task's teardown, while this task's own process is still reaped"
+}
+
+test_unattributable_shared_worktree_process_refuses_teardown() {
+  local case_dir rc own_pid stray_pid own_alive=0 stray_alive=0
+  case_dir=$(make_case cotenant-unattributable-refusal)
+  write_meta "$case_dir" no-mistakes ship
+  printf 'tasktmp=%s\n' "$case_dir/tasktmp" >> "$case_dir/state/task-x1.meta"
+  mkdir -p "$case_dir/tasktmp"
+  add_cotenant_task "$case_dir" task-y2
+  land_shippable_commit "$case_dir"
+
+  start_worktree_process "$case_dir" "$case_dir/tasktmp"
+  own_pid=$STARTED_PID
+  start_worktree_process "$case_dir" -
+  stray_pid=$STARTED_PID
+
+  add_logging_treehouse "$case_dir"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  kill -0 "$own_pid" 2>/dev/null && own_alive=1
+  kill -0 "$stray_pid" 2>/dev/null && stray_alive=1
+  kill -KILL "$own_pid" "$stray_pid" 2>/dev/null || true
+
+  expect_code 1 "$rc" "cotenant-unattributable-refusal: teardown should refuse"
+  assert_grep "REFUSED: process(es) $stray_pid run in shared checkout" "$case_dir/stderr" \
+    "cotenant-unattributable-refusal: teardown did not name the process it could not attribute"
+  [ "$stray_alive" = 1 ] || fail "cotenant-unattributable-refusal: teardown killed a process it could not attribute"
+  [ "$own_alive" = 1 ] || fail "cotenant-unattributable-refusal: teardown reaped before establishing ownership"
+  assert_present "$case_dir/wt" "cotenant-unattributable-refusal: teardown removed the shared worktree"
+  assert_present "$case_dir/state/task-x1.meta" "cotenant-unattributable-refusal: teardown removed task metadata"
+  assert_absent "$case_dir/treehouse.log" "cotenant-unattributable-refusal: teardown returned the shared worktree"
+  pass "an unattributable process in a shared checkout refuses teardown loudly instead of guessing in either direction"
 }
 
 test_leaked_worktree_process_is_reaped() {
@@ -3535,7 +3763,7 @@ test_leaked_worktree_process_is_reaped() {
   # worktree - the same shape the observed incident's leaked `go test`
   # binaries took (reparented to init, no live task meta to attribute them
   # to once an unpatched teardown had already run).
-  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  ( cd "$case_dir/wt" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.3
@@ -3562,7 +3790,7 @@ test_leaked_tasktmp_process_is_reaped() {
   mkdir -p "$case_dir/tasktmp"
   land_shippable_commit "$case_dir"
 
-  ( cd "$case_dir/tasktmp" && exec sleep 300 ) &
+  ( cd "$case_dir/tasktmp" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.3
@@ -3651,7 +3879,7 @@ test_reused_pid_identity_is_not_force_killed() {
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
 
-  perl -e '$SIG{TERM} = "IGNORE"; sleep 300' &
+  perl -e '$SIG{TERM} = "IGNORE"; sleep 300' </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.2
@@ -3706,7 +3934,7 @@ test_exec_changed_process_is_still_reaped() {
       open my $fh, ">", $done or die "open";
       close $fh;
       exec "perl", "-e", '\''$SIG{TERM} = "IGNORE"; sleep 300'\'';
-    ' "$marker" "$done_flag" ) &
+    ' "$marker" "$done_flag" ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.2
@@ -3773,7 +4001,7 @@ test_process_spawned_during_grace_is_reaped_on_later_pass() {
         exit 0;
       };
       sleep 300;
-    ' "$child_file" ) &
+    ' "$child_file" ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.2
@@ -3879,7 +4107,7 @@ test_run_abort_precedes_process_reap_precedes_worktree_removal() {
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
   abort_log="$case_dir/nm-abort.log"
 
-  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  ( cd "$case_dir/wt" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
   pid=$!
   disown
   sleep 0.3
@@ -3913,6 +4141,346 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
+# Live main-home incident (2026-08): an ordinary clean teardown left every
+# derived supervision record naming the retired worker in place - its queued
+# alarm, the arm layer's replayable delivered reason, and its pane-keyed watcher
+# counters, which are keyed by PANE and so survived removal of every file named
+# after the task. 145 of 158 pane-keyed markers in that home belonged to panes no
+# meta had recorded for weeks. Retirement must reap all of it and leave a
+# tombstone, while touching nothing that belongs to a live sibling task.
+test_teardown_reaps_supervision_records_for_the_retired_task() {
+  local case_dir state key live_key
+  case_dir=$(make_case retire-reaps-supervision-records)
+  state="$case_dir/state"
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  key=firstmate_fm-task-x1
+  live_key=firstmate_fm-live-y2
+
+  printf 'working: implementing\n' > "$state/task-x1.status"
+  : > "$state/task-x1.turn-ended"
+  printf 'h1' > "$state/.hash-$key"
+  printf '4' > "$state/.count-$key"
+  printf 'h1' > "$state/.stale-$key"
+  printf '100' > "$state/.stale-since-$key"
+  printf '2' > "$state/.wedge-escalations-$key"
+  : > "$state/.paused-$key"
+  printf 'sig' > "$state/.seen-task-x1_status"
+  printf 'sig' > "$state/.seen-task-x1_turn-ended"
+  printf 'done: x\n' > "$state/.hb-surfaced-task-x1"
+  printf 'done: x\n' > "$state/.subsuper-seen-status-task-x1"
+  printf '%s\t%s\t%s\n' 4242 'identity' 'stale: firstmate:fm-task-x1' > "$state/.watch-deliveries.log"
+
+  # A live sibling worker whose own records must survive untouched.
+  fm_write_meta "$state/live-y2.meta" "window=firstmate:fm-live-y2" "kind=ship"
+  printf 'working: still going\n' > "$state/live-y2.status"
+  printf 'h2' > "$state/.hash-$live_key"
+  printf '3' > "$state/.count-$live_key"
+  printf 'sig' > "$state/.seen-live-y2_status"
+  printf '%s\t%s\t%s\n' 4243 'identity' 'stale: firstmate:fm-live-y2' >> "$state/.watch-deliveries.log"
+
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_wake_append stale firstmate:fm-task-x1 "stale: firstmate:fm-task-x1"
+    fm_wake_append signal task-x1.status "signal: task-x1.status"
+    fm_wake_append stale firstmate:fm-live-y2 "stale: firstmate:fm-live-y2"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" || fail "retire-reaps: seeding the wake queue failed"
+
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "retire-reaps: teardown failed: $(cat "$case_dir/stderr")"
+
+  local leftover
+  for leftover in ".hash-$key" ".count-$key" ".stale-$key" ".stale-since-$key" \
+    ".wedge-escalations-$key" ".paused-$key" ".seen-task-x1_status" \
+    ".seen-task-x1_turn-ended" ".hb-surfaced-task-x1" ".subsuper-seen-status-task-x1"; do
+    [ ! -e "$state/$leftover" ] || fail "retire-reaps: teardown left $leftover behind"
+  done
+  grep -F 'task-x1' "$state/.wake-queue" >/dev/null \
+    && fail "retire-reaps: a queued wake still names the retired task"
+  grep -F 'fm-task-x1' "$state/.watch-deliveries.log" >/dev/null \
+    && fail "retire-reaps: a replayable delivered reason still names the retired pane"
+  grep -F 'task-x1' "$state/.retired-tasks" >/dev/null \
+    || fail "retire-reaps: no retirement tombstone was recorded"
+
+  for leftover in ".hash-$live_key" ".count-$live_key" ".seen-live-y2_status"; do
+    [ -e "$state/$leftover" ] || fail "retire-reaps: teardown removed the live task's $leftover"
+  done
+  grep -F 'firstmate:fm-live-y2' "$state/.wake-queue" >/dev/null \
+    || fail "retire-reaps: the live task's queued wake was purged"
+  grep -F 'firstmate:fm-live-y2' "$state/.watch-deliveries.log" >/dev/null \
+    || fail "retire-reaps: the live task's delivered reason was purged"
+  pass "teardown reaps every supervision record naming the retired task and leaves a live task's untouched"
+}
+
+# --- build-cache reaping (fm-teardown.sh's reap_task_build_cache) ------------
+# A task's build cache lives OUTSIDE its worktree, so returning the worktree
+# reclaims nothing. bin/fm-spawn.sh gives each task one home-scoped cache, and
+# teardown reaps exactly that path when no process is using it. Any other
+# recorded path is reported and left in place.
+
+# Teardown resolves the home-scoped cache from FM_HOME, so each case runs with the
+# case dir as the home. Record a cache in the task's meta, as a spawn does, and fill it with build output
+# so a reap is measurable and a survivor is visible.
+seed_build_cache() {  # <case-dir> <path>
+  printf 'build_cache=%s\n' "$2" >> "$1/state/task-x1.meta"
+  mkdir -p "$2/debug"
+  printf 'compiled artifact\n' > "$2/debug/libthing.rlib"
+}
+
+test_task_owned_build_cache_is_reaped_on_success() {
+  local case_dir rc cache
+  case_dir=$(make_case build-cache-reaped)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cache="$case_dir/build-caches/task-x1"
+  seed_build_cache "$case_dir" "$cache"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "build-cache-reaped: teardown should succeed"
+  [ ! -d "$cache" ] || fail "build-cache-reaped: the task's own build cache survived teardown"
+  assert_grep "reaped build cache for task-x1" "$case_dir/stdout" \
+    "build-cache-reaped: teardown did not report reaping the cache"
+  assert_grep "reclaimed" "$case_dir/stdout" \
+    "build-cache-reaped: teardown did not report the size reclaimed"
+  pass "a task-owned build cache is removed with the worktree and the bytes reclaimed are reported"
+}
+
+test_build_cache_survives_refused_teardown() {
+  local case_dir rc cache
+  case_dir=$(make_case build-cache-refused)
+  write_meta "$case_dir" no-mistakes ship
+  # Real content that never reached a remote or the default branch: work the
+  # landed-work check must still refuse to discard.
+  wt_commit_file "$case_dir" feature.txt hello "unlanded work"
+  cache="$case_dir/build-caches/task-x1"
+  seed_build_cache "$case_dir" "$cache"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  [ "$rc" -ne 0 ] || fail "build-cache-refused: teardown should refuse unlanded work"
+  assert_grep "REFUSED" "$case_dir/stderr" \
+    "build-cache-refused: teardown did not refuse the unlanded work"
+  [ -f "$cache/debug/libthing.rlib" ] \
+    || fail "build-cache-refused: cache cleanup ran on a refused teardown"
+  assert_no_grep "reaped build cache" "$case_dir/stdout" \
+    "build-cache-refused: teardown reported a reap on the refusal path"
+  pass "a refused teardown never reaps the build cache, so the landed-work safety is unchanged"
+}
+
+# A co-tenant home's cache is the dangerous near miss: same shape as this task's
+# own path, different home. Teardown reports it and deletes nothing.
+test_cache_this_home_does_not_own_is_reported_not_reaped() {
+  local case_dir cache rc
+  case_dir=$(make_case build-cache-co-tenant)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cache="$case_dir/other-home/build-caches/task-x1"
+  seed_build_cache "$case_dir" "$cache"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "build-cache-co-tenant: teardown should still succeed"
+  [ -f "$cache/debug/libthing.rlib" ] \
+    || fail "build-cache-co-tenant: a cache this home does not own was deleted"
+  assert_grep "build cache left behind for task-x1" "$case_dir/stderr" \
+    "build-cache-co-tenant: teardown did not report what it left behind"
+  assert_grep "not this home's cache for this task" "$case_dir/stderr" \
+    "build-cache-co-tenant: teardown did not say why it left the cache"
+  pass "a cache this home does not own survives a teardown and the skip is reported"
+}
+
+# A secondmate is a home, not a build: even a record naming a shared
+# per-project cache must survive the home's retirement.
+test_secondmate_teardown_leaves_shared_project_cache() {
+  local case_dir home cache rc
+  case_dir=$(make_case build-cache-secondmate)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+  home="$case_dir/secondmate-home"
+  cache="$case_dir/project-shared-cache"
+  seed_build_cache "$case_dir" "$cache"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "build-cache-secondmate: teardown should retire the secondmate home"
+  [ ! -d "$home" ] || fail "build-cache-secondmate: teardown did not retire the secondmate home"
+  [ -f "$cache/debug/libthing.rlib" ] \
+    || fail "build-cache-secondmate: a shared per-project cache was deleted by a secondmate teardown"
+  assert_grep "build cache left behind for task-x1" "$case_dir/stderr" \
+    "build-cache-secondmate: teardown did not report what it left behind"
+  assert_grep "not this home's cache for this task" "$case_dir/stderr" \
+    "build-cache-secondmate: teardown did not say why it left the cache"
+  pass "a shared per-project cache survives a secondmate teardown and the skip is reported"
+}
+
+test_live_build_keeps_build_cache() {
+  local case_dir rc cache pid
+  case_dir=$(make_case build-cache-live-build)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cache="$case_dir/build-caches/task-x1"
+  seed_build_cache "$case_dir" "$cache"
+
+  # A build still working in the cache, outside the worktree teardown reaps.
+  ( cd "$cache" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "build-cache-live-build: setup builder did not start"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  kill -KILL "$pid" 2>/dev/null || true
+
+  expect_code 0 "$rc" "build-cache-live-build: teardown should still succeed"
+  [ -f "$cache/debug/libthing.rlib" ] \
+    || fail "build-cache-live-build: a cache with a live build in it was deleted"
+  assert_grep "is still using it" "$case_dir/stderr" \
+    "build-cache-live-build: teardown did not report the live build that kept the cache"
+  pass "a build cache with a live process in it is never reaped, and the reason is reported"
+}
+
+# --- desktop reaping (fm-teardown.sh's reap_task_desktop) --------------------
+# A task's review desktop is the third thing it owns outside the worktree, next
+# to the temp root and the build cache. Nothing removed it, so four dead
+# desktops holding ~560 MB outlived their tasks. The directory is named for the
+# task and the display number comes from the task's own registry line, so both
+# records prove ownership by themselves.
+
+# The desktop a task allocated: a seeded browser profile and the registry line
+# that reserves its display number.
+seed_task_desktop() {  # <case-dir> [task-id]
+  local case_dir=$1 id=${2:-task-x1}
+  mkdir -p "$case_dir/desktops/$id/chrome-profile"
+  printf 'session state\n' > "$case_dir/desktops/$id/chrome-profile/Cookies"
+  printf '%s\t31\n' "$id" > "$case_dir/desktops/registry"
+}
+
+run_teardown_with_desktop() {  # <case-dir> [teardown args...]
+  local case_dir=$1; shift
+  FM_DESKTOP_ROOT="$case_dir/desktops" \
+  FM_DESKTOP_LEGACY_REGISTRY="$case_dir/desktops/registry" \
+  FM_DESKTOP_X_SOCKET_DIR="$case_dir/x-sockets" \
+    run_teardown "$case_dir" "$@"
+}
+
+test_task_desktop_is_reaped_on_success() {
+  local case_dir rc
+  case_dir=$(make_case desktop-reaped)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  seed_task_desktop "$case_dir"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown_with_desktop "$case_dir" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "desktop-reaped: teardown should succeed"
+  [ ! -d "$case_dir/desktops/task-x1" ] \
+    || fail "desktop-reaped: the task's own desktop survived teardown"
+  assert_grep "reaped desktop for task-x1" "$case_dir/stdout" \
+    "desktop-reaped: teardown did not report reaping the desktop"
+  assert_grep "released display :31 for task-x1" "$case_dir/stdout" \
+    "desktop-reaped: teardown did not report releasing the display"
+  assert_no_grep "task-x1" "$case_dir/desktops/registry" \
+    "desktop-reaped: the registry still reserves the retired task's display"
+  pass "a task's desktop is removed with its worktree and its display number is released"
+}
+
+test_task_desktop_survives_refused_teardown() {
+  local case_dir rc
+  case_dir=$(make_case desktop-refused)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "unlanded work"
+  seed_task_desktop "$case_dir"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown_with_desktop "$case_dir" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  [ "$rc" -ne 0 ] || fail "desktop-refused: teardown should refuse unlanded work"
+  [ -f "$case_dir/desktops/task-x1/chrome-profile/Cookies" ] \
+    || fail "desktop-refused: desktop cleanup ran on a refused teardown"
+  assert_grep "task-x1" "$case_dir/desktops/registry" \
+    "desktop-refused: a refused teardown released the display anyway"
+  pass "a refused teardown never reaps the desktop, so the landed-work safety is unchanged"
+}
+
+# A browser on a review desktop keeps its working directory at $HOME, so the
+# cwd reap cannot see it. Its profile path is what names the owner.
+test_desktop_browser_is_stopped_by_its_profile_path() {
+  local case_dir rc pid
+  case_dir=$(make_case desktop-browser)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  seed_task_desktop "$case_dir"
+
+  # `bash -c '<one command>'` execs that command and loses these arguments, so
+  # the body is a list: the fixture has to keep the profile path in its cmdline.
+  ( cd / && exec -a chrome bash -c 'sleep 300; exit 0' chrome \
+      "--user-data-dir=$case_dir/desktops/task-x1/chrome-profile" ) </dev/null >/dev/null 2>&1 &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "desktop-browser: setup browser did not start"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown_with_desktop "$case_dir" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  sleep 0.5
+  local survived=no
+  kill -0 "$pid" 2>/dev/null && survived=yes
+  kill -KILL "$pid" 2>/dev/null || true
+
+  expect_code 0 "$rc" "desktop-browser: teardown should succeed"
+  [ "$survived" = no ] \
+    || fail "desktop-browser: the browser holding the task's profile survived teardown"
+  assert_grep "stopping desktop browser process(es) for task-x1" "$case_dir/stderr" \
+    "desktop-browser: teardown did not report stopping the browser"
+  [ ! -d "$case_dir/desktops/task-x1" ] \
+    || fail "desktop-browser: the desktop survived after its browser was stopped"
+  pass "a browser is stopped by the profile path that names its task, never by process name"
+}
+
+# A browser can keep its profile inside the task's worktree while its working
+# directory sits elsewhere, so only the profile path in its cmdline names the
+# owner - here pointing at the worktree itself, and not as the last argument.
+test_worktree_profile_browser_is_stopped_before_worktree_removal() {
+  local case_dir rc pid
+  case_dir=$(make_case worktree-profile-browser)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+
+  ( cd / && exec -a chrome bash -c 'sleep 300; exit 0' chrome \
+      "--user-data-dir=$case_dir/wt" --no-first-run ) </dev/null >/dev/null 2>&1 &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "worktree-profile: setup browser did not start"
+
+  rc=0
+  FM_HOME="$case_dir" run_teardown_with_desktop "$case_dir" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  sleep 0.5
+  local survived=no
+  kill -0 "$pid" 2>/dev/null && survived=yes
+  kill -KILL "$pid" 2>/dev/null || true
+
+  expect_code 0 "$rc" "worktree-profile: teardown should succeed"
+  [ "$survived" = no ] \
+    || fail "worktree-profile: the browser holding a profile inside the worktree survived teardown"
+  assert_grep "stopping worktree browser process(es) for task-x1" "$case_dir/stderr" \
+    "worktree-profile: teardown did not report stopping the browser"
+  pass "a browser profiled inside the worktree is stopped before the worktree is removed"
+}
+
+test_teardown_reaps_supervision_records_for_the_retired_task
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
@@ -3938,6 +4506,8 @@ test_herdr_projection_teardown_surfaces_restore_failure_without_blocking_cleanup
 test_squash_merged_branch_deleted_allows
 test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
+run_unmerged_pr_refusal_case OPEN
+run_unmerged_pr_refusal_case CLOSED
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_merged_pr_with_later_local_commit_refuses
 test_squash_merged_rebased_branch_allows
@@ -3986,13 +4556,18 @@ test_parked_terminal_unfetched_row_is_never_aborted
 test_parked_run_terminal_newest_row_at_own_head_is_never_aborted
 test_parked_run_behind_diverged_newer_row_is_never_aborted
 test_parked_advanced_run_ambiguous_rows_are_never_aborted
-test_ledger_proven_continuation_never_aborts_active_run
+test_ledger_proven_continuation_is_aborted_while_active
 test_parked_own_run_refuses_when_abort_is_unconfirmed
 test_mismatched_run_after_abort_refuses_unconfirmed
 test_empty_status_after_abort_refuses_unconfirmed
 test_not_found_status_after_abort_confirms_completion
 test_another_branchs_parked_run_is_never_touched
-test_own_autonomous_run_is_left_alone
+test_own_autonomous_run_is_aborted
+test_unclosed_endpoint_refuses_completion
+test_forced_secondmate_child_run_is_aborted
+test_forced_secondmate_child_live_endpoint_stops_cleanup
+test_cotenant_process_survives_teardown
+test_unattributable_shared_worktree_process_refuses_teardown
 test_leaked_worktree_process_is_reaped
 test_leaked_tasktmp_process_is_reaped
 test_lsof_absent_reaps_tmux_process_group
@@ -4003,75 +4578,12 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
-test_task_owned_build_cache_is_reaped_on_success() {
-  local case_dir rc cache
-  case_dir=$(make_case build-cache-reaped)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  cache="$case_dir/build-caches/task-x1"
-  seed_build_cache "$case_dir" "$cache"
-
-  rc=0
-  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "build-cache-reaped: teardown should succeed"
-  [ ! -d "$cache" ] || fail "build-cache-reaped: the task's own build cache survived teardown"
-  assert_grep "reaped build cache for task-x1" "$case_dir/stdout" \
-    "build-cache-reaped: teardown did not report reaping the cache"
-  assert_grep "reclaimed" "$case_dir/stdout" \
-    "build-cache-reaped: teardown did not report the size reclaimed"
-  pass "a task-owned build cache is removed with the worktree and the bytes reclaimed are reported"
-}
-test_build_cache_survives_refused_teardown() {
-  local case_dir rc cache
-  case_dir=$(make_case build-cache-refused)
-  write_meta "$case_dir" no-mistakes ship
-  # Real content that never reached a remote or the default branch: work the
-  # landed-work check must still refuse to discard.
-  wt_commit_file "$case_dir" feature.txt hello "unlanded work"
-  cache="$case_dir/build-caches/task-x1"
-  seed_build_cache "$case_dir" "$cache"
-
-  rc=0
-  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  [ "$rc" -ne 0 ] || fail "build-cache-refused: teardown should refuse unlanded work"
-  assert_grep "REFUSED" "$case_dir/stderr" \
-    "build-cache-refused: teardown did not refuse the unlanded work"
-  [ -f "$cache/debug/libthing.rlib" ] \
-    || fail "build-cache-refused: cache cleanup ran on a refused teardown"
-  assert_no_grep "reaped build cache" "$case_dir/stdout" \
-    "build-cache-refused: teardown reported a reap on the refusal path"
-  pass "a refused teardown never reaps the build cache, so the landed-work safety is unchanged"
-}
-test_live_build_keeps_build_cache() {
-  local case_dir rc cache pid
-  case_dir=$(make_case build-cache-live-build)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  cache="$case_dir/build-caches/task-x1"
-  seed_build_cache "$case_dir" "$cache"
-
-  # A build still working in the cache, outside the worktree teardown reaps.
-  ( cd "$cache" && exec sleep 300 ) </dev/null >/dev/null 2>&1 &
-  pid=$!
-  disown
-  sleep 0.3
-  kill -0 "$pid" 2>/dev/null || fail "build-cache-live-build: setup builder did not start"
-
-  rc=0
-  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-  kill -KILL "$pid" 2>/dev/null || true
-
-  expect_code 0 "$rc" "build-cache-live-build: teardown should still succeed"
-  [ -f "$cache/debug/libthing.rlib" ] \
-    || fail "build-cache-live-build: a cache with a live build in it was deleted"
-  assert_grep "is still using it" "$case_dir/stderr" \
-    "build-cache-live-build: teardown did not report the live build that kept the cache"
-  pass "a build cache with a live process in it is never reaped, and the reason is reported"
-}
 test_task_owned_build_cache_is_reaped_on_success
 test_build_cache_survives_refused_teardown
 test_cache_this_home_does_not_own_is_reported_not_reaped
 test_secondmate_teardown_leaves_shared_project_cache
 test_live_build_keeps_build_cache
+test_task_desktop_is_reaped_on_success
+test_task_desktop_survives_refused_teardown
+test_desktop_browser_is_stopped_by_its_profile_path
+test_worktree_profile_browser_is_stopped_before_worktree_removal

@@ -64,6 +64,28 @@ fm_nm_strip_quotes() {
   fm_nm_trim "$s"
 }
 
+# Print "<step> <seconds>" for the first ACTIVE step in captured `axi status`
+# output $1 and how long ago that step last recorded doing something; 1 when the
+# output reports no such step. Only an active_steps row carries a quoted
+# "<duration> ago: <what it did>" activity, so a row that matches IS an active
+# step, while a completed-steps row, a renamed or dropped column, and an
+# unparseable age all stop matching and report nothing. The duration is Go's own
+# h-m-s form, its fraction truncated because callers compare against
+# whole-second bounds; a sub-second age renders in ms/us/ns units instead, which
+# this expression deliberately does not match, so it reads as no evidence - the
+# escalate-safe direction.
+fm_nm_active_step_activity() {  # <toon-output>
+  local line
+  local re='^[[:space:]]*([A-Za-z_-]+),.*"(([0-9]+)h)?(([0-9]+)m)?([0-9]+)(\.[0-9]+)?s ago:'
+  while IFS= read -r line; do
+    [[ $line =~ $re ]] || continue
+    printf '%s %s' "${BASH_REMATCH[1]}" \
+      $(( 10#0${BASH_REMATCH[3]} * 3600 + 10#0${BASH_REMATCH[5]} * 60 + 10#${BASH_REMATCH[6]} ))
+    return 0
+  done <<< "${1:-}"
+  return 1
+}
+
 # Scalar value of a TOON key in captured `axi status` output $1.
 fm_nm_field() {  # <toon-output> <key>
   printf '%s\n' "$1" | sed -n "s/^[[:space:]]*$2:[[:space:]]*\(.*\)/\1/p" | head -1
@@ -103,12 +125,23 @@ fm_nm_resolve_commit() {  # <worktree> <sha-ish>
 # fm_nm_runs_status_for_worktree owns the coarse ledger fallback.
 fm_nm_head_matches_worktree() {  # <worktree> <run_head>
   local wt=$1 run_head=$2 local_full run_full
-  [ -n "$run_head" ] || return 1
-  local_full=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || return 1
-  run_full=$(fm_nm_resolve_commit "$wt" "$run_head")
-  [ -n "$run_full" ] || return 1
-  [ "$run_full" = "$local_full" ] && return 0
-  git -C "$wt" merge-base --is-ancestor "$local_full" "$run_full" 2>/dev/null
+  [ -n "$run_head" ] || { printf 'absent'; return 0; }
+  local_full=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || { printf 'absent'; return 0; }
+  run_full=$(git -C "$wt" rev-parse --verify "${run_head}^{commit}" 2>/dev/null) \
+    || { printf 'undetermined'; return 0; }
+  if [ "$run_full" = "$local_full" ] \
+    || git -C "$wt" merge-base --is-ancestor "$local_full" "$run_full" 2>/dev/null; then
+    printf 'match'
+  else
+    printf 'stale'
+  fi
+}
+
+# 0 only when run head $2 provably matches worktree $1's code identity. An
+# undetermined binding is NOT a match: a caller that must tell "provably not
+# current" apart from "cannot tell" reads fm_nm_head_binding instead.
+fm_nm_head_matches_worktree() {  # <worktree> <run_head>
+  [ "$(fm_nm_head_binding "$1" "$2")" = match ]
 }
 
 # Liveness class of a recorded ledger status word.

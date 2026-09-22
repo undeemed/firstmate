@@ -6,7 +6,7 @@
 import type { UserMessageComponent as PiUserMessageComponent } from "@earendil-works/pi-coding-agent";
 import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 import { calmPresentationHides } from "./fm-calm-visibility.ts";
-import { classifyFirstmateCurrentOperationalText } from "./fm-operational-input.ts";
+import { classifyFirstmateCurrentOperationalText } from "../../../extensions/lib/fm-operational-input.ts";
 
 type UserMessageConstructorArgs = ConstructorParameters<typeof PiUserMessageComponent>;
 type UserMessageLike = {
