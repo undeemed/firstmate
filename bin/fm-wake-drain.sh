@@ -236,16 +236,6 @@ assert_watcher_liveness() {
 # stdout a caller reads wake records from.
 ORPHAN_SWEEP_MARKER="$STATE/.orphan-sweep-last"
 
-run_orphan_sweep_if_due() {
-  [ "${FM_ORPHAN_SWEEP:-on}" = off ] && return 0
-  find "$ORPHAN_SWEEP_MARKER" -newermt '-1 hour' -print -quit 2>/dev/null | grep -q . && return 0
-  # Claim the slot before doing the work, so a second drain inside the same
-  # window skips it rather than repeating the scan.
-  touch "$ORPHAN_SWEEP_MARKER" 2>/dev/null || return 0
-  fm_run_timed 45 \
-    "$SCRIPT_DIR/fm-orphan-sweep.sh" >&2 || true
-}
-
 # Mark presentation-stage inactive terminal outcomes only after the handling
 # turn has completed and before this acknowledgement consumes its queue rows.
 # The helper ignores non-presentation and legacy keys, so this is a narrow

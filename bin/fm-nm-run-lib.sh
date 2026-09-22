@@ -125,23 +125,12 @@ fm_nm_resolve_commit() {  # <worktree> <sha-ish>
 # fm_nm_runs_status_for_worktree owns the coarse ledger fallback.
 fm_nm_head_matches_worktree() {  # <worktree> <run_head>
   local wt=$1 run_head=$2 local_full run_full
-  [ -n "$run_head" ] || { printf 'absent'; return 0; }
-  local_full=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || { printf 'absent'; return 0; }
-  run_full=$(git -C "$wt" rev-parse --verify "${run_head}^{commit}" 2>/dev/null) \
-    || { printf 'undetermined'; return 0; }
-  if [ "$run_full" = "$local_full" ] \
-    || git -C "$wt" merge-base --is-ancestor "$local_full" "$run_full" 2>/dev/null; then
-    printf 'match'
-  else
-    printf 'stale'
-  fi
-}
-
-# 0 only when run head $2 provably matches worktree $1's code identity. An
-# undetermined binding is NOT a match: a caller that must tell "provably not
-# current" apart from "cannot tell" reads fm_nm_head_binding instead.
-fm_nm_head_matches_worktree() {  # <worktree> <run_head>
-  [ "$(fm_nm_head_binding "$1" "$2")" = match ]
+  [ -n "$run_head" ] || return 1
+  local_full=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || return 1
+  run_full=$(fm_nm_resolve_commit "$wt" "$run_head")
+  [ -n "$run_full" ] || return 1
+  [ "$run_full" = "$local_full" ] && return 0
+  git -C "$wt" merge-base --is-ancestor "$local_full" "$run_full" 2>/dev/null
 }
 
 # Liveness class of a recorded ledger status word.

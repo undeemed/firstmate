@@ -3580,20 +3580,6 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
-# Every landed/discard-work refusal above has now passed (or --force skipped
-# them). Fix 1 and Fix 2 (see script header) run here, unconditionally on
-# --force, and before ANY destructive step below - a still-parked run or a
-# leaked process can own live work in this exact worktree. Not for
-# kind=secondmate: a secondmate home's own runtime lifecycle is owned by the
-# dedicated process-event and firstmate-home removal machinery further below,
-# not by task-worktree cleanup.
-teardown_resolve_worktree_cotenants
-if [ "$KIND" != secondmate ]; then
-  # A run matching a shared checkout's branch cannot be attributed to $ID.
-  [ "${#COTENANT_IDS[@]}" -gt 0 ] || conclude_task_no_mistakes_run "$ID" "$KIND" "$WT"
-  reap_task_worktree_processes worktree "$WT" "$TASK_TMP" "$DESKTOP_DIR"
-  [ "${#COTENANT_IDS[@]}" -gt 0 ] || reap_profile_processes "worktree browser" "$WT"
-fi
 
 # Fix 3 (see script header): sweep remote job workers abandoned by an already
 # pruned code root. Best effort - a sweep failure never blocks this teardown.
@@ -3700,10 +3686,12 @@ fi
 # kind=secondmate: a secondmate home's own runtime lifecycle is owned by the
 # dedicated process-event and firstmate-home removal machinery further below,
 # not by task-worktree cleanup.
+teardown_resolve_worktree_cotenants
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
-  conclude_task_no_mistakes_run "$WT"
+  # A run matching a shared checkout's branch cannot be attributed to $ID.
+  [ "${#COTENANT_IDS[@]}" -gt 0 ] || conclude_task_no_mistakes_run "$ID" "$KIND" "$WT"
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP" "$DESKTOP_DIR"
-  reap_profile_processes "worktree browser" "$WT"
+  [ "${#COTENANT_IDS[@]}" -gt 0 ] || reap_profile_processes "worktree browser" "$WT"
 elif [ "$KIND" != secondmate ]; then
   reap_task_worktree_processes tasktmp "$TASK_TMP"
 fi
