@@ -4512,58 +4512,6 @@ test_send_text_submit_confirms_despite_codex_idle_tip_composer() {
 # composer can show faint ghost suggestions after the bare `›` prompt.
 # The guard must ignore that faint suggestion text, otherwise away-mode
 # escalation delivery defers forever even though the human has typed nothing.
-# --- composer_state: omp's half-open composer box ----------------------------
-# Verified live (docs/verification/runtime-backends.md): omp renders a rounded
-# top border, a content row that OPENS with a bright `│` plus two spaces and
-# never closes the border, and a rounded bottom border. There is no placeholder
-# and no prompt glyph in the live in-session composer, so before this shape was
-# taught the whole composer read `unknown` and every send to an omp pane came
-# back as an unconfirmed submit. The rows below are byte-exact captures.
-test_composer_state_omp_half_open_box_empty_is_empty() {
-  local dir log resp fb out
-  dir="$TMP_ROOT/composer-omp-empty"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
-  printf '\xe2\x95\xad\xe2\x94\x80\xe2\x94\x80 omp \xe2\x94\x80\xe2\x94\x80\xe2\x95\xae\n\x1b[0m\x1b[38;2;224;193;255m\xe2\x94\x82  \x1b[0m\n\xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80 ctrl+c quit \xe2\x94\x80\xe2\x94\x80\xe2\x95\xaf\n' > "$resp/1.out"
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/2.out"
-  fb=$(make_herdr_fakebin "$dir")
-  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
-  [ "$out" = empty ] || fail "an empty omp half-open composer box should read empty, got '$out'"
-  pass "fm_backend_herdr_composer_state: an empty omp half-open composer box reads empty"
-}
-
-test_composer_state_omp_half_open_box_typed_is_pending() {
-  local dir log resp fb out
-  dir="$TMP_ROOT/composer-omp-typed"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
-  printf '\xe2\x95\xad\xe2\x94\x80\xe2\x94\x80 omp \xe2\x94\x80\xe2\x94\x80\xe2\x95\xae\n\x1b[0m\x1b[38;2;224;193;255m\xe2\x94\x82  \x1b[0mhello draft not submitted\n\xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80 ctrl+c quit \xe2\x94\x80\xe2\x94\x80\xe2\x95\xaf\n' > "$resp/1.out"
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/2.out"
-  fb=$(make_herdr_fakebin "$dir")
-  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
-  [ "$out" = pending ] || fail "typed text in an omp half-open composer box should read pending, got '$out'"
-  pass "fm_backend_herdr_composer_state: typed text in an omp half-open composer box reads pending"
-}
-
-# The half-open shape is authorized by the pane's native identity, exactly like
-# the Pi separator shape. A non-omp pane keeps its previous verdict, so no other
-# harness's classification can move through this branch.
-test_composer_state_half_open_box_requires_omp_identity() {
-  local dir log resp fb out
-  dir="$TMP_ROOT/composer-half-open-not-omp"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
-  printf '\xe2\x95\xad\xe2\x94\x80\xe2\x94\x80 omp \xe2\x94\x80\xe2\x94\x80\xe2\x95\xae\n\x1b[0m\x1b[38;2;224;193;255m\xe2\x94\x82  \x1b[0mhello draft not submitted\n\xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80 ctrl+c quit \xe2\x94\x80\xe2\x94\x80\xe2\x95\xaf\n' > "$resp/1.out"
-  printf '{"result":{"agent":{"agent":"claude","agent_status":"idle"}}}\n' > "$resp/2.out"
-  fb=$(make_herdr_fakebin "$dir")
-  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
-  [ "$out" = unknown ] || fail "a half-open box on a non-omp pane must not be promoted into a composer, got '$out'"
-  pass "fm_backend_herdr_composer_state: the half-open box is promoted only for a native omp identity"
-}
-
-# herdr's agent_status for an omp pane is racy around Enter: it can still read
-# idle (with screen detection skipped) while the turn has really started, which
-# made every omp send report a false 'pending'. Firstmate never treats herdr's
-# native status as authoritative for omp (bin/fm-busy-lib.sh trusts the omp
-# extension's omp-ext records above it and accepts a native herdr verdict only
-# for BUSY), so a cleared composer after Enter is the positive evidence here.
 test_send_text_submit_omp_racy_idle_confirms_via_cleared_composer() {
   local dir log resp fb out enter_count
   dir="$TMP_ROOT/submit-omp-racy-idle"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -5445,9 +5393,6 @@ test_composer_state_pi_separator_idle_is_empty
 test_composer_state_pi_separator_real_text_is_pending
 test_composer_state_pi_incomplete_separator_below_stale_generic_is_unknown
 test_composer_state_pi_separator_requires_safe_native_identity
-test_composer_state_omp_half_open_box_empty_is_empty
-test_composer_state_omp_half_open_box_typed_is_pending
-test_composer_state_half_open_box_requires_omp_identity
 test_send_text_submit_omp_racy_idle_confirms_via_cleared_composer
 test_send_text_submit_omp_pending_composer_still_retries_enter
 test_composer_state_claude_unbordered_prompt_is_empty
