@@ -909,6 +909,15 @@ nm_run_binding() {
     "$(strip_quotes "$(nm_field pushed_head)")"
 }
 
+# 0 if the active axi-status run's head field matches this worktree's code
+# identity. Branch match is a precondition (caller). Rule owned by
+# fm_nm_head_matches_worktree in bin/fm-nm-run-lib.sh.
+nm_run_head_matches_worktree() {
+  local run_head
+  run_head=$(strip_quotes "$(nm_field head)")
+  fm_nm_head_matches_worktree "$WT" "$run_head"
+}
+
 HAVE_RUN=0
 # RUN_SOURCE distinguishes the two ways HAVE_RUN=1 can happen: "full" means
 # $RUN_OUT is real `axi status` TOON with step/gate detail (including a

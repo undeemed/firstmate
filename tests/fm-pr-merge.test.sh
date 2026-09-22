@@ -334,45 +334,6 @@ SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
 }
 
-# gh-axi mock that fails the merge call but succeeds everything else, so a
-# real merge failure is distinguishable from the recording step.
-add_gh_mocks_merge_fails() {
-  local case_dir=$1
-  add_gh_mocks "$case_dir" cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
-  cat > "$case_dir/fakebin/gh-axi" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
-case "${1:-} ${2:-}" in
-  "pr merge") echo "error: pr merge failed" >&2 ; exit 1 ;;
-  esac
-  exit 0
-SH
-  cat > "$case_dir/fakebin/gh" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
-if [ "\${1:-}" = api ]; then
-  case " \$* " in
-    *" --jq .head.sha "*) printf '%s\n' cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd; exit 0 ;;
-  esac
-  case "\${2:-}" in
-    */pulls/*) [ ! -f "$case_dir/pull.json" ] || { cat "$case_dir/pull.json"; exit 0; } ;;
-  esac
-fi
-case "\${1:-} \${2:-}" in
-  "api graphql")
-    cat "\$FM_TEST_GH_OUTCOME"
-    exit 0
-    ;;
-  api\ *)
-    cat "\$FM_TEST_GH_RULES"
-    exit 0
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
-}
-
 # gh mock that fails the merge call but succeeds live verify, so a real merge
 # failure is distinguishable from the recording step.
 add_gh_mocks_merge_fails() {

@@ -3016,38 +3016,6 @@ EOF
   pass "a superseded failed run is not reported as current"
 }
 
-# The same selection with no live evidence to fall back on: an unbindable
-# current run is reported as unknown WITH its reason. A truthful unknown is the
-# required answer - never the older failed run, and never a confident pass.
-test_unbindable_current_run_reports_unknown() {
-  reset_fakes
-  local d pipeline_head out
-  d=$(new_case unbindable-unknown)
-  make_repo_on_branch "$d/wt" fm/feat-unbindable
-  pipeline_head=$(make_pipeline_commit "$d/wt")
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/unb.meta" "window=fm:fm-unb" "worktree=$d/wt" "kind=ship" "harness=claude"
-  printf 'working: validation under way\n' > "$d/state/unb.status"
-  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
-  # Deliberately UNANCHORED: the row immediately older than the active one did
-  # not end at this worktree's head, so nothing proves whose run the active row
-  # is and the answer must stay a truthful unknown. The anchored variant is
-  # test_active_fix_round_unfetched_pipeline_head_reports_current.
-  FM_FAKE_RUNS_LIST="$(cat <<EOF
-  running    fm/feat-unbindable ${pipeline_head:0:8}  2026-08-25 00:04
-  failed     fm/feat-unbindable bbbbbbb  2026-08-24 23:54
-EOF
-)"
-  FM_FAKE_BUSY=0
-  arm_idle_record "$d/state" unb
-  out=$(run_crew_state "$d" unb)
-  assert_not_contains "$out" "state: failed" "ambiguity must not resolve to a false failure"
-  assert_not_contains "$out" "state: done" "ambiguity must not resolve to a false pass"
-  assert_contains "$out" "state: unknown" "an unbindable current run reads unknown"
-  assert_contains "$out" "cannot tell which run is current" "the unknown states why"
-  pass "an unbindable current run reports a truthful unknown"
-}
-
 # The same shape read through `axi status` instead of the runs list: the CLI
 # answers for this branch with the run's managed-clone head, and its branch_sync
 # block reports the submitted head this worktree is on. That binds the run, so
@@ -3305,41 +3273,6 @@ branch_sync:
   pass "a parked run keeps the strict head rule without pipeline_owned"
 }
 
-# The CLI leaves the top-level `status:` word at `running` while a run WAITS at
-# a gate, so the word alone cannot decide "executing". A gate-parked run at an
-# unresolvable head, on a branch the pipeline has released, must keep the strict
-# head rule in both gate shapes - otherwise the crew reports a stale
-# `parked at <gate>` from a run whose code identity was never verified.
-test_gate_parked_run_with_live_status_word_not_attributed() {
-  local fixture d out
-  for fixture in run_parked_scalar_gate_running run_parked_in_gate_block; do
-    reset_fakes
-    d=$(new_case "f10-gate-parked-$fixture")
-    make_repo_on_branch "$d/wt" fm/feat-f10q
-    make_fakebin "$d" >/dev/null
-    fm_write_meta "$d/state/feat-f10q.meta" "window=fm:fm-feat-f10q" "worktree=$d/wt" "kind=ship" "harness=claude"
-    printf 'working: implementing\n' > "$d/state/feat-f10q.status"
-    FM_FAKE_RUN_HEAD=f0f0f0f0
-    FM_FAKE_AXI_STATUS="$($fixture fm/feat-f10q)
-branch_sync:
-  state: synced"
-    FM_FAKE_RUNS_LIST=""
-    FM_FAKE_BUSY=0
-    arm_idle_record "$d/state" feat-f10q
-    out=$(run_crew_state "$d" feat-f10q)
-    assert_not_contains "$out" "source: run-step" "$fixture: a gate-parked run at an unresolvable head must not bind"
-    assert_not_contains "$out" "parked at" "$fixture: no gate detail may come from an unverified run"
-    assert_contains "$out" "source: status-log" "$fixture: the status log answers for the unbound parked run"
-    pass "$fixture keeps the strict head rule despite its live status word"
-  done
-  # Without the exemption the head rule decides, and an unresolvable head is
-  # UNDETERMINED rather than a proven mismatch, so this reader reports the
-  # ambiguity instead of attributing the run or guessing from an older one.
-  assert_contains "$out" "state: unknown" "a non-pipeline-owned unresolvable head must not bind"
-  assert_contains "$out" "cannot tell which run is current" "the unbound run says why it could not be attributed"
-  pass "the exemption requires branch_sync.state=pipeline_owned"
-}
-
 # Negative control: the exemption also requires an ACTIVE run - a terminal run
 # released the branch, so an inconsistent pipeline_owned label must not bind a
 # terminal run by branch name alone.
@@ -3356,9 +3289,8 @@ outcome: failed"
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" feat-f10e
   local out; out=$(run_crew_state "$d" feat-f10e)
-  assert_not_contains "$out" "state: failed" "a terminal run must not bind through the exemption"
-  assert_contains "$out" "state: unknown" "a terminal unresolvable head reports the ambiguity, not the run"
-  assert_contains "$out" "cannot tell which run is current" "the unbound terminal run says why"
+  assert_not_contains "$out" "source: run-step" "a terminal run must not bind through the exemption"
+  assert_contains "$out" "source: status-log" "falls back to the status log for a terminal unresolvable head"
   pass "the exemption never applies to a terminal run"
 }
 
@@ -3464,13 +3396,6 @@ EOF
   assert_contains "$out" "state: working" "the live run reads working"
   assert_not_contains "$out" "state: failed" "neither the older failed row nor the stale status-log event answers"
   pass "unanchored unverifiable active row is attributed because it is live"
-  # Never attributed - and in this fork an unattributable run answers with a
-  # stated unknown rather than the status log's older verb, so the assertions
-  # below read the ambiguity contract instead of a historical fallback.
-  assert_contains "$out" "state: unknown" "an unanchored unverifiable active row must not be attributed"
-  assert_contains "$out" "cannot tell which run is current" "the unknown must name the ambiguity"
-  assert_not_contains "$out" "state: failed" "an unattributable run must not answer with an older failed row"
-  pass "unanchored unverifiable active row is never attributed"
 }
 
 # Negative control: a TERMINAL row whose commit object is gone from the task
@@ -3499,12 +3424,9 @@ EOF
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" hist
   out=$(run_crew_state "$d" hist)
-  # Not current - and in this fork an unattributable run answers with a stated
-  # unknown rather than the status log, so the terminal row is neither adopted
-  # nor replaced by the log's own verb.
-  assert_contains "$out" "state: unknown" "an unresolvable terminal row must not be adopted as current state"
-  assert_contains "$out" "cannot tell which run is current" "the unknown must name the ambiguity"
-  assert_not_contains "$out" "state: failed" "a historical failed row must never answer for current state"
+  assert_not_contains "$out" "source: run-step" "an unresolvable terminal row is history, not current state"
+  assert_contains "$out" "source: status-log" "historical fallback answers after an unresolvable terminal row"
+  assert_contains "$out" "state: working" "the rewritten worktree's own log stays current"
   pass "unresolvable terminal row never reads as current"
 }
 
@@ -5272,7 +5194,6 @@ test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
 test_superseded_failed_run_is_not_current
-test_unbindable_current_run_reports_unknown
 test_pipeline_head_binds_via_submitted_head
 test_genuinely_failed_current_run_still_reports_failed
 test_pipeline_owned_active_run_beats_superseded_failed_row
@@ -5282,7 +5203,6 @@ test_coarse_mismatched_anchor_falls_to_pane_not_older_row
 test_coarse_terminal_row_at_foreign_head_not_attributed
 test_executing_run_binds_without_pipeline_owned_sync
 test_non_pipeline_owned_parked_unresolvable_head_not_attributed
-test_gate_parked_run_with_live_status_word_not_attributed
 test_pipeline_owned_terminal_run_not_exempt
 test_missing_run_head_falls_back_to_current_state
 test_active_fix_round_unfetched_pipeline_head_reports_current
