@@ -54,6 +54,19 @@
 # setting, which the merge API applies, and imposing squash there would override
 # that convention rather than mirror the GitHub default.
 #
+# That implicit default is guarded, because a squash collapses every commit on
+# the pull request into one and destroys its ancestry permanently on the remote.
+# When the caller passes no merge method, the pull request's commit and changed-
+# file counts are read live from REST (gh api repos/<owner>/<repo>/pulls/<n>,
+# never GraphQL, whose budget the whole fleet shares) and the merge is REFUSED,
+# naming the counts it saw, when either exceeds SQUASH_GUARD_MAX_COMMITS (15) or
+# SQUASH_GUARD_MAX_FILES (100). A count that cannot be read refuses the same way
+# rather than squashing on an unverified assumption. An explicit --squash,
+# --merge, --rebase, or --method always wins and skips the guard entirely, so
+# the operator can still squash a stack deliberately. The guard also warns when
+# the head branch name or PR description names a stack, but the counts are the
+# hard gate. GitLab is unaffected because no squash is ever imposed there.
+#
 # A GitLab merge is refused unless every pre-merge condition holds, each read
 # live at merge time rather than taken from recorded metadata: the merge request
 # is open, detailed_merge_status is mergeable, has_conflicts is false,
@@ -102,6 +115,26 @@
 #
 # Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [-- <extra forge merge args>]
 #
+# Two accepted classes:
+#
+#   task class:     fm-pr-merge.sh <task-id> <pr-url> [-- <extra forge merge args>]
+#     Records pr= and any available pr_head= into the task's state/<task-id>.meta
+#     via bin/fm-pr-check.sh before merging, as described above. GitHub and
+#     GitLab are both accepted here.
+#
+#   pipeline class: fm-pr-merge.sh --pipeline <pr-url> [-- <extra gh-axi pr merge args>]
+#     For pipeline-raised PRs (e.g. no-mistakes-raised) that have no owning task
+#     meta. GitHub only. Instead of task-meta recording it enforces an explicit
+#     green gate - PR open, targets the repository default branch,
+#     mergeable_state=clean, all checks completed with none pending and none
+#     non-green, and no outstanding requested-changes review - then merges pinned
+#     to the exact gated head SHA (--match-head-commit). This is an EXTENSION of
+#     the guard, not a bypass:
+#     every gate that fails, and every forge read that fails, refuses loudly and
+#     exits non-zero, exactly as the task class refuses on missing meta.
+#     Pipeline-class extra args must not include --match-head-commit or --auto,
+#     because the head pin comes only from the gate and auto-merge drops it.
+#
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
 # no landed outcome. bin/fm-merge-outcome-lib.sh owns a confirmed merge's
@@ -119,6 +152,11 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+# Every merge below is an outbound forge write, so it is recorded before it is
+# attempted and refused when it cannot be recorded. bin/fm-forge-audit-lib.sh
+# owns that record and its format.
+# shellcheck source=bin/fm-forge-audit-lib.sh
+. "$SCRIPT_DIR/fm-forge-audit-lib.sh"
 # shellcheck source=bin/fm-merge-outcome-lib.sh
 . "$SCRIPT_DIR/fm-merge-outcome-lib.sh"
 # shellcheck source=bin/fm-merge-authority-lib.sh
@@ -126,15 +164,40 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
 
-if [ "$#" -lt 2 ]; then
-  echo "error: invalid PR merge request" >&2
-  exit 2
+PIPELINE_HEAD=""
+
+# --- class dispatch ---------------------------------------------------------
+CLASS=task
+if [ "${1:-}" = "--pipeline" ]; then
+  CLASS=pipeline
+  shift
 fi
-ID=$1
-RAW_URL=$2
-if ! fm_pr_task_id_valid "$ID" || ! fm_pr_url_parse "$RAW_URL"; then
-  echo "error: invalid PR merge request" >&2
-  exit 2
+
+if [ "$CLASS" = pipeline ]; then
+  if [ "$#" -lt 1 ]; then
+    echo "error: invalid PR merge request" >&2
+    exit 2
+  fi
+  RAW_URL=$1
+  # bin/fm-pr-lib.sh parses GitLab merge request URLs, but the pipeline class
+  # addresses only GitHub by owner/repository, so a GitLab URL is refused here.
+  if ! fm_pr_url_parse "$RAW_URL" || [ "$FM_PR_PROVIDER" != github ]; then
+    echo "error: invalid PR merge request" >&2
+    exit 2
+  fi
+  shift
+else
+  if [ "$#" -lt 2 ]; then
+    echo "error: invalid PR merge request" >&2
+    exit 2
+  fi
+  ID=$1
+  RAW_URL=$2
+  if ! fm_pr_task_id_valid "$ID" || ! fm_pr_url_parse "$RAW_URL"; then
+    echo "error: invalid PR merge request" >&2
+    exit 2
+  fi
+  shift 2
 fi
 URL=$FM_PR_URL
 PROVIDER=$FM_PR_PROVIDER
@@ -146,31 +209,39 @@ PR_NUMBER=$FM_PR_NUMBER
 # glab resolves the instance from the project URL passed to -R, so the host is
 # rebuilt from the parsed identity rather than read from any ambient default.
 PROJECT_URL="https://$FM_PR_HOST/$FM_PR_PATH"
-shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --attended-override)
-      ATTENDED_OVERRIDE=true
-      shift
-      ;;
-    --attended-override=*)
-      echo "error: --attended-override takes no value" >&2
+  --attended-override)
+    ATTENDED_OVERRIDE=true
+    shift
+    ;;
+  --attended-override=*)
+    echo "error: --attended-override takes no value" >&2
+    exit 2
+    ;;
+  --allow-red)
+    [ -n "${2:-}" ] || {
+      echo "error: --allow-red requires a check name" >&2
       exit 2
-      ;;
-    --allow-red)
-      [ -n "${2:-}" ] || { echo "error: --allow-red requires a check name" >&2; exit 2; }
-      [ "${#ALLOW_RED[@]}" -eq 0 ] || { echo "error: --allow-red may be specified only once" >&2; exit 2; }
-      ALLOW_RED+=("$2")
-      shift 2
-      ;;
-    --allow-red=*)
-      echo "error: --allow-red requires a separate check name argument" >&2
+    }
+    [ "${#ALLOW_RED[@]}" -eq 0 ] || {
+      echo "error: --allow-red may be specified only once" >&2
       exit 2
-      ;;
-    --) shift; break ;;
-    *) break ;;
+    }
+    ALLOW_RED+=("$2")
+    shift 2
+    ;;
+  --allow-red=*)
+    echo "error: --allow-red requires a separate check name argument" >&2
+    exit 2
+    ;;
+  --)
+    shift
+    break
+    ;;
+  *) break ;;
   esac
 done
 if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
@@ -182,7 +253,7 @@ caller_has_merge_method() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-      --squash|--merge|--rebase|--method|--method=*) return 0 ;;
+    --squash | --merge | --rebase | --method | --method=*) return 0 ;;
     esac
   done
   return 1
@@ -199,11 +270,11 @@ caller_merge_method() {
       continue
     fi
     case "$arg" in
-      --squash) method=squash ;;
-      --merge) method=merge ;;
-      --rebase) method=rebase ;;
-      --method) pending=true ;;
-      --method=*) method=${arg#--method=} ;;
+    --squash) method=squash ;;
+    --merge) method=merge ;;
+    --rebase) method=rebase ;;
+    --method) pending=true ;;
+    --method=*) method=${arg#--method=} ;;
     esac
   done
   printf '%s' "$method"
@@ -216,14 +287,14 @@ caller_requested_auto_merge() {
   local arg requested=1
   for arg in "$@"; do
     case "$arg" in
-      --auto) requested=0 ;;
-      --auto=*)
-        case "${arg#--auto=}" in
-          [tT]|[tT][rR][uU][eE]|1) requested=0 ;;
-          *) requested=1 ;;
-        esac
-        ;;
-      --disable-auto) requested=1 ;;
+    --auto) requested=0 ;;
+    --auto=*)
+      case "${arg#--auto=}" in
+      [tT] | [tT][rR][uU][eE] | 1) requested=0 ;;
+      *) requested=1 ;;
+      esac
+      ;;
+    --disable-auto) requested=1 ;;
     esac
   done
   return "$requested"
@@ -233,17 +304,17 @@ reject_repo_overrides() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-      --repo|--repo=*)
-        echo "error: extra merge arguments must not override the repository" >&2
-        return 1
-        ;;
-      --*) ;;
-      # A single-dash argument is a short-option cluster, which both CLIs expand
-      # one character at a time, so -yR carries --repo exactly as a bare -R does.
-      -*R*)
-        echo "error: extra merge arguments must not override the repository" >&2
-        return 1
-        ;;
+    --repo | --repo=*)
+      echo "error: extra merge arguments must not override the repository" >&2
+      return 1
+      ;;
+    --*) ;;
+    # A single-dash argument is a short-option cluster, which both CLIs expand
+    # one character at a time, so -yR carries --repo exactly as a bare -R does.
+    -*R*)
+      echo "error: extra merge arguments must not override the repository" >&2
+      return 1
+      ;;
     esac
   done
 }
@@ -252,10 +323,10 @@ reject_head_overrides() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-      --sha|--sha=*|--match-head-commit|--match-head-commit=*)
-        echo "error: extra merge arguments must not override the head commit" >&2
-        return 1
-        ;;
+    --sha | --sha=* | --match-head-commit | --match-head-commit=*)
+      echo "error: extra merge arguments must not override the head commit" >&2
+      return 1
+      ;;
     esac
   done
 }
@@ -265,21 +336,262 @@ reject_protected_forge_args() {
   [ "$ATTENDED_OVERRIDE" = true ] && return 0
   for arg in "$@"; do
     case "$arg" in
-      --auto|--auto=*|--admin|--admin=*|--delete-branch|--delete-branch=*|--remove-source-branch|--remove-source-branch=*)
-        echo "error: extra merge arguments must not request auto-merge, a protection bypass, or branch deletion; pass --attended-override only for an explicit captain instruction" >&2
-        return 1
-        ;;
-      --*) ;;
-      # A single-dash argument is a short-option cluster. -d is gh's
-      # --delete-branch, and -yd carries it the same way -yR carries --repo.
-      -*d*)
-        echo "error: extra merge arguments must not request auto-merge, a protection bypass, or branch deletion; pass --attended-override only for an explicit captain instruction" >&2
-        return 1
-        ;;
+    --auto | --auto=* | --admin | --admin=* | --delete-branch | --delete-branch=* | --remove-source-branch | --remove-source-branch=*)
+      echo "error: extra merge arguments must not request auto-merge, a protection bypass, or branch deletion; pass --attended-override only for an explicit captain instruction" >&2
+      return 1
+      ;;
+    --*) ;;
+    # A single-dash argument is a short-option cluster. -d is gh's
+    # --delete-branch, and -yd carries it the same way -yR carries --repo.
+    -*d*)
+      echo "error: extra merge arguments must not request auto-merge, a protection bypass, or branch deletion; pass --attended-override only for an explicit captain instruction" >&2
+      return 1
+      ;;
+    esac
+  done
+}
+reject_pipeline_pin_overrides() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+    --match-head-commit | --match-head-commit=*)
+      echo "error: extra merge arguments must not override the gated head pin" >&2
+      return 1
+      ;;
+    --auto | --auto=*)
+      echo "error: extra merge arguments must not enable auto-merge, which drops the gated head pin" >&2
+      return 1
+      ;;
     esac
   done
 }
 
+pipeline_refuse() {
+  echo "error: pipeline merge refused - $1" >&2
+}
+
+# Counts above which the implicit --squash default is refused. They sit between
+# ordinary delivery and a stack: the ten most recent PRs of this repo carried at
+# most 11 commits over 16 files, including the pipeline's own review-fix and
+# documentation commits, while the stacked ladder whose ancestry a default
+# squash destroyed carried 249 commits over 379 files. Set them high enough that
+# routine work never trains an operator to pass --squash reflexively.
+SQUASH_GUARD_MAX_COMMITS=15
+SQUASH_GUARD_MAX_FILES=100
+
+# Extract a count from a JSON payload, failing closed: non-zero unless jq
+# succeeds and the result is a non-negative integer.
+jq_count() {
+  local json=$1 filter=$2 value
+  value=$(printf '%s' "$json" | jq "$filter" 2>/dev/null) || return 1
+  case "$value" in
+  '' | *[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$value"
+}
+
+# How the operator proceeds after a squash refusal, printed by every one of them.
+squash_guard_alternatives() {
+  echo '  pass --squash to squash it anyway, or --merge or --rebase to keep the commits' >&2
+}
+
+# A pull request whose commit count cannot be read is not squashed by default,
+# because the default is the destructive option and nothing verified it is safe.
+squash_guard_unreadable() {
+  printf 'error: refusing to squash %s by default - its commit count could not be read from %s/%s\n' \
+    "$URL" "$PR_OWNER" "$PR_REPO" >&2
+  echo '  squashing would flatten every commit on the pull request into one commit and destroy their ancestry permanently' >&2
+  squash_guard_alternatives
+}
+
+# The soft signal: a head branch or description that names a stack. Echoes one
+# reason when it finds one, and returns non-zero when it does not.
+squash_guard_stack_hint() {
+  local head_ref=$1 body=$2 lowered
+  lowered=$(printf '%s' "$head_ref" | tr '[:upper:]' '[:lower:]')
+  case "$lowered" in
+  *stack* | *ladder* | *rung*)
+    printf 'the head branch "%s" names a stack\n' "$head_ref"
+    return 0
+    ;;
+  esac
+  lowered=$(printf '%s' "$body" | tr '[:upper:]' '[:lower:]')
+  case "$lowered" in
+  *stacked* | *"part of a stack"* | *"stack of"*)
+    echo 'the pull request description names a stack'
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+# Guard the implicit --squash default. Called only when the caller passed no
+# merge method, so an explicit one never reaches it. Reads the pull request from
+# REST unless the caller already holds that exact payload ($1), which the
+# pipeline gate does, so no merge path spends a second forge read. Returns
+# non-zero, reporting the counts it saw, when squashing would flatten a stack.
+squash_default_guard() {
+  local pull=${1:-} commits files head_ref body hint=''
+  if [ -z "$pull" ]; then
+    if ! pull=$(gh api "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" 2>/dev/null); then
+      squash_guard_unreadable
+      return 1
+    fi
+  fi
+  if ! commits=$(jq_count "$pull" '.commits') || ! files=$(jq_count "$pull" '.changed_files'); then
+    squash_guard_unreadable
+    return 1
+  fi
+  head_ref=$(printf '%s' "$pull" | jq -r '.head.ref // ""' 2>/dev/null) || head_ref=''
+  body=$(printf '%s' "$pull" | jq -r '.body // ""' 2>/dev/null) || body=''
+  hint=$(squash_guard_stack_hint "$head_ref" "$body") || hint=''
+
+  if [ "$commits" -le "$SQUASH_GUARD_MAX_COMMITS" ] && [ "$files" -le "$SQUASH_GUARD_MAX_FILES" ]; then
+    if [ -n "$hint" ]; then
+      printf 'notice: %s carries %s commit(s) and %s changed file(s), and %s; the default squash will flatten them into one commit\n' \
+        "$URL" "$commits" "$files" "$hint" >&2
+    fi
+    return 0
+  fi
+  printf 'error: refusing to squash %s by default - it carries %s commits and %s changed files\n' \
+    "$URL" "$commits" "$files" >&2
+  printf '  squashing would flatten those %s commits into one commit and destroy their ancestry permanently\n' \
+    "$commits" >&2
+  [ -z "$hint" ] || printf '  %s\n' "$hint" >&2
+  squash_guard_alternatives
+  return 1
+}
+
+# Enforce the pipeline-class green gate against the live forge. Every gate and
+# every forge read fails closed (loud refusal, non-zero). On success it records
+# an audit line and exports PIPELINE_HEAD (the exact gated head SHA) so the
+# merge can pin to it with --match-head-commit.
+pipeline_merge_gate() {
+  local pull repo_json default_branch state base mstate head checks total returned pending red reviews review_count changes_requested
+  if ! pull=$(gh api "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" 2>/dev/null); then
+    pipeline_refuse "PR #$PR_NUMBER could not be read from $PR_OWNER/$PR_REPO"
+    return 1
+  fi
+  if ! repo_json=$(gh api "repos/$PR_OWNER/$PR_REPO" 2>/dev/null); then
+    pipeline_refuse "could not resolve $PR_OWNER/$PR_REPO default branch"
+    return 1
+  fi
+  default_branch=$(printf '%s' "$repo_json" | jq -r '.default_branch' 2>/dev/null)
+  if [ -z "$default_branch" ] || [ "$default_branch" = null ]; then
+    pipeline_refuse "could not resolve $PR_OWNER/$PR_REPO default branch"
+    return 1
+  fi
+  state=$(printf '%s' "$pull" | jq -r '.state')
+  base=$(printf '%s' "$pull" | jq -r '.base.ref')
+  mstate=$(printf '%s' "$pull" | jq -r '.mergeable_state')
+  head=$(printf '%s' "$pull" | jq -r '.head.sha')
+  if [ "$state" != open ]; then
+    pipeline_refuse "PR #$PR_NUMBER is not open (state=$state)"
+    return 1
+  fi
+  if [ "$base" != "$default_branch" ]; then
+    pipeline_refuse "PR #$PR_NUMBER does not target the default branch (base=$base, default=$default_branch)"
+    return 1
+  fi
+  if [ "$mstate" != clean ]; then
+    pipeline_refuse "PR #$PR_NUMBER is not mergeable_state=clean (got=$mstate)"
+    return 1
+  fi
+  if [ -z "$head" ] || [ "$head" = null ]; then
+    pipeline_refuse "PR #$PR_NUMBER head SHA is unavailable"
+    return 1
+  fi
+  # per_page=100 plus a total_count consistency check: if the forge reports more
+  # checks than fit one page, refuse rather than risk a red check on page two.
+  if ! checks=$(gh api "repos/$PR_OWNER/$PR_REPO/commits/$head/check-runs?per_page=100" 2>/dev/null); then
+    pipeline_refuse "PR #$PR_NUMBER checks could not be read"
+    return 1
+  fi
+  if ! total=$(jq_count "$checks" '.total_count') ||
+    ! returned=$(jq_count "$checks" '.check_runs | length'); then
+    pipeline_refuse "PR #$PR_NUMBER checks payload is malformed"
+    return 1
+  fi
+  if [ "$total" -eq 0 ]; then
+    pipeline_refuse "PR #$PR_NUMBER has no checks to verify"
+    return 1
+  fi
+  if [ "$total" != "$returned" ]; then
+    pipeline_refuse "PR #$PR_NUMBER reports $total checks exceeding one verifiable page ($returned read)"
+    return 1
+  fi
+  if ! pending=$(jq_count "$checks" '[.check_runs[] | select(.status != "completed")] | length') ||
+    ! red=$(jq_count "$checks" '[.check_runs[] | select(.status == "completed" and ((.conclusion == "success" or .conclusion == "neutral" or .conclusion == "skipped") | not))] | length'); then
+    pipeline_refuse "PR #$PR_NUMBER checks payload is malformed"
+    return 1
+  fi
+  if [ "$pending" -ne 0 ]; then
+    pipeline_refuse "PR #$PR_NUMBER has $pending check(s) still running"
+    return 1
+  fi
+  if [ "$red" -ne 0 ]; then
+    pipeline_refuse "PR #$PR_NUMBER has $red non-green check(s)"
+    return 1
+  fi
+  # Reviews fail closed. A reviewer's effective verdict is their latest APPROVED
+  # or CHANGES_REQUESTED review; COMMENTED and DISMISSED reviews do not clear a
+  # prior CHANGES_REQUESTED, so they are excluded before taking the latest.
+  if ! reviews=$(gh api "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER/reviews?per_page=100" 2>/dev/null); then
+    pipeline_refuse "PR #$PR_NUMBER reviews could not be read"
+    return 1
+  fi
+  if ! review_count=$(jq_count "$reviews" 'if type == "array" then length else error end'); then
+    pipeline_refuse "PR #$PR_NUMBER reviews payload is malformed"
+    return 1
+  fi
+  # The reviews endpoint reports no total_count, so a full page means a later
+  # review could hide on page two: refuse rather than trust an unverifiable page.
+  if [ "$review_count" -ge 100 ]; then
+    pipeline_refuse "PR #$PR_NUMBER has $review_count reviews exceeding one verifiable page"
+    return 1
+  fi
+  if ! changes_requested=$(jq_count "$reviews" '[.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | group_by(.user.login) | map(last) | [.[] | select(.state == "CHANGES_REQUESTED")] | length'); then
+    pipeline_refuse "PR #$PR_NUMBER reviews payload is malformed"
+    return 1
+  fi
+  if [ "$changes_requested" -ne 0 ]; then
+    pipeline_refuse "PR #$PR_NUMBER has $changes_requested outstanding requested-changes review(s)"
+    return 1
+  fi
+  # The same squash guard the task class applies, run against the payload this
+  # gate already read and before the audit line, so a refusal records no merge.
+  if [ "$DEFAULT_SQUASH" = yes ]; then
+    squash_default_guard "$pull" || return 1
+  fi
+  forge_audit pr-merge - "$URL" class=pipeline "head=$head" || {
+    pipeline_refuse "the merge could not be recorded in the forge write audit log"
+    return 1
+  }
+  PIPELINE_HEAD=$head
+}
+
+# The squash guard applies only to the implicit default, so both classes resolve
+# that once, before any forge read, and never guard an explicit merge method.
+if caller_has_merge_method "$@"; then
+  DEFAULT_SQUASH=no
+else
+  DEFAULT_SQUASH=yes
+fi
+
+if [ "$CLASS" = pipeline ]; then
+  reject_repo_overrides "$@" || exit 1
+  reject_protected_forge_args "$@" || exit 1
+  reject_pipeline_pin_overrides "$@" || exit 1
+  pipeline_merge_gate || exit 1
+  # Pipeline merges pin to the exact gated head so a commit pushed between the
+  # gate and the merge cannot land unvetted.
+  merge_args=(--match-head-commit "$PIPELINE_HEAD")
+  if [ "$DEFAULT_SQUASH" = yes ]; then
+    merge_args+=(--squash)
+  fi
+  gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]}" "$@"
+  exit
+fi
 reject_repo_overrides "$@" || exit 1
 reject_head_overrides "$@" || exit 1
 reject_protected_forge_args "$@" || exit 1
@@ -292,13 +604,13 @@ FM_PR_GITLAB_ASYNC_REQUESTED=false
 if [ "$PROVIDER" = gitlab ]; then
   for arg in "$@"; do
     case "$arg" in
-      --auto-merge|--when-pipeline-succeeds) FM_PR_GITLAB_ASYNC_REQUESTED=true ;;
-      --auto-merge=*|--when-pipeline-succeeds=*)
-        case "${arg#*=}" in
-          [tT]|[tT][rR][uU][eE]|1) FM_PR_GITLAB_ASYNC_REQUESTED=true ;;
-          [fF]|[fF][aA][lL][sS][eE]|0) FM_PR_GITLAB_ASYNC_REQUESTED=false ;;
-        esac
-        ;;
+    --auto-merge | --when-pipeline-succeeds) FM_PR_GITLAB_ASYNC_REQUESTED=true ;;
+    --auto-merge=* | --when-pipeline-succeeds=*)
+      case "${arg#*=}" in
+      [tT] | [tT][rR][uU][eE] | 1) FM_PR_GITLAB_ASYNC_REQUESTED=true ;;
+      [fF] | [fF][aA][lL][sS][eE] | 0) FM_PR_GITLAB_ASYNC_REQUESTED=false ;;
+      esac
+      ;;
     esac
   done
 fi
@@ -400,8 +712,8 @@ gitlab_verify_mergeable() {
   # GITLAB_HOST is set to the same host the project URL already carries, so the
   # instance is taken from the parsed URL by both signals and never from the
   # operator's configured default.
-  if ! json=$(GITLAB_HOST="$FM_PR_HOST" glab mr view "$PR_NUMBER" -R "$PROJECT_URL" -F json 2>/dev/null) \
-    || [ -z "$json" ]; then
+  if ! json=$(GITLAB_HOST="$FM_PR_HOST" glab mr view "$PR_NUMBER" -R "$PROJECT_URL" -F json 2>/dev/null) ||
+    [ -z "$json" ]; then
     echo "error: could not read the GitLab merge request state before merging" >&2
     return 1
   fi
@@ -428,15 +740,15 @@ gitlab_verify_mergeable() {
   while IFS= read -r line; do
     total=$((total + 1))
     case "$line" in
-      state=*) state=${line#state=} ;;
-      detail=*) detail=${line#detail=} ;;
-      conflicts=*) conflicts=${line#conflicts=} ;;
-      discussions=*) discussions=${line#discussions=} ;;
-      head=*) live_head=${line#head=} ;;
-      pipeline_sha=*) pipeline_sha=${line#pipeline_sha=} ;;
-      pipeline_status=*) pipeline_status=${line#pipeline_status=} ;;
-      async_configured=*) async_configured=${line#async_configured=} ;;
-      *) continue ;;
+    state=*) state=${line#state=} ;;
+    detail=*) detail=${line#detail=} ;;
+    conflicts=*) conflicts=${line#conflicts=} ;;
+    discussions=*) discussions=${line#discussions=} ;;
+    head=*) live_head=${line#head=} ;;
+    pipeline_sha=*) pipeline_sha=${line#pipeline_sha=} ;;
+    pipeline_status=*) pipeline_status=${line#pipeline_status=} ;;
+    async_configured=*) async_configured=${line#async_configured=} ;;
+    *) continue ;;
     esac
     named=$((named + 1))
   done <<FIELDS
@@ -461,23 +773,23 @@ FIELDS
       "$RECORDED_HEAD" "$live_head" >&2
   fi
 
-  [ "$state" = opened ] \
-    || refusals="$refusals  - state is \"${state:-unreadable}\", not open
+  [ "$state" = opened ] ||
+    refusals="$refusals  - state is \"${state:-unreadable}\", not open
 "
-  [ "$detail" = mergeable ] \
-    || refusals="$refusals  - detailed_merge_status is \"${detail:-unreadable}\", not mergeable
+  [ "$detail" = mergeable ] ||
+    refusals="$refusals  - detailed_merge_status is \"${detail:-unreadable}\", not mergeable
 "
-  [ "$conflicts" = false ] \
-    || refusals="$refusals  - has_conflicts is \"${conflicts:-unreadable}\", not false
+  [ "$conflicts" = false ] ||
+    refusals="$refusals  - has_conflicts is \"${conflicts:-unreadable}\", not false
 "
-  [ "$discussions" = true ] \
-    || refusals="$refusals  - blocking_discussions_resolved is \"${discussions:-unreadable}\", not true
+  [ "$discussions" = true ] ||
+    refusals="$refusals  - blocking_discussions_resolved is \"${discussions:-unreadable}\", not true
 "
-  [ "$pipeline_status" = success ] \
-    || refusals="$refusals  - the head pipeline status is \"${pipeline_status:-none}\", not success
+  [ "$pipeline_status" = success ] ||
+    refusals="$refusals  - the head pipeline status is \"${pipeline_status:-none}\", not success
 "
-  [ "$pipeline_sha" = "$live_head" ] \
-    || refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
+  [ "$pipeline_sha" = "$live_head" ] ||
+    refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
 "
 
   if [ -n "$refusals" ]; then
@@ -576,8 +888,8 @@ github_verify_mergeable() {
   local total=0 named=0 refusals=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
-  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
-    || [ -z "$json" ]; then
+  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) ||
+    [ -z "$json" ]; then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
   fi
@@ -597,12 +909,12 @@ github_verify_mergeable() {
   while IFS= read -r line; do
     total=$((total + 1))
     case "$line" in
-      state=*) state=${line#state=} ;;
-      mergeable=*) mergeable=${line#mergeable=} ;;
-      merge_state=*) merge_state=${line#merge_state=} ;;
-      head=*) live_head=${line#head=} ;;
-      base=*) base=${line#base=} ;;
-      *) continue ;;
+    state=*) state=${line#state=} ;;
+    mergeable=*) mergeable=${line#mergeable=} ;;
+    merge_state=*) merge_state=${line#merge_state=} ;;
+    head=*) live_head=${line#head=} ;;
+    base=*) base=${line#base=} ;;
+    *) continue ;;
     esac
     named=$((named + 1))
   done <<FIELDS
@@ -624,20 +936,20 @@ FIELDS
   fi
 
   case "$state" in
-    [oO][pP][eE][nN]) ;;
-    *)
-      refusals="$refusals  - state is \"${state:-unreadable}\", not open
+  [oO][pP][eE][nN]) ;;
+  *)
+    refusals="$refusals  - state is \"${state:-unreadable}\", not open
 "
-      ;;
+    ;;
   esac
-  [ "$draft" = false ] \
-    || refusals="$refusals  - the pull request is a draft
+  [ "$draft" = false ] ||
+    refusals="$refusals  - the pull request is a draft
 "
-  [ "$mergeable" = MERGEABLE ] \
-    || refusals="$refusals  - mergeable is \"${mergeable:-unreadable}\", not MERGEABLE
+  [ "$mergeable" = MERGEABLE ] ||
+    refusals="$refusals  - mergeable is \"${mergeable:-unreadable}\", not MERGEABLE
 "
-  [ "$merge_state" != DIRTY ] \
-    || refusals="$refusals  - mergeStateStatus is DIRTY (conflicts)
+  [ "$merge_state" != DIRTY ] ||
+    refusals="$refusals  - mergeStateStatus is DIRTY (conflicts)
 "
 
   uncovered=''
@@ -696,20 +1008,20 @@ github_read_outcome_with_gh() {
   while IFS= read -r line; do
     total=$((total + 1))
     case "$line" in
-      state=*) state=${line#state=} ;;
-      merged=*) merged=${line#merged=} ;;
-      queued=*) queued=${line#queued=} ;;
-      base=*) base=${line#base=} ;;
-      *) continue ;;
+    state=*) state=${line#state=} ;;
+    merged=*) merged=${line#merged=} ;;
+    queued=*) queued=${line#queued=} ;;
+    base=*) base=${line#base=} ;;
+    *) continue ;;
     esac
     named=$((named + 1))
   done <<FIELDS
 $fields
 FIELDS
-  if [ "$named" -ne 4 ] || [ "$total" -ne 4 ] || [ -z "$state" ] \
-    || { [ "$merged" != true ] && [ "$merged" != false ]; } \
-    || { [ "$queued" != true ] && [ "$queued" != false ]; } \
-    || [ -z "$base" ]; then
+  if [ "$named" -ne 4 ] || [ "$total" -ne 4 ] || [ -z "$state" ] ||
+    { [ "$merged" != true ] && [ "$merged" != false ]; } ||
+    { [ "$queued" != true ] && [ "$queued" != false ]; } ||
+    [ -z "$base" ]; then
     return 1
   fi
 
@@ -732,16 +1044,16 @@ github_read_outcome_with_gh_axi() {
     return 1
   fi
   case "$state" in
-    merged)
-      FM_PR_GITHUB_STATE=MERGED
-      FM_PR_GITHUB_MERGED=true
-      FM_PR_GITHUB_QUEUED=false
-      ;;
-    *)
-      FM_PR_GITHUB_STATE=$state
-      FM_PR_GITHUB_MERGED=false
-      FM_PR_GITHUB_QUEUED=unknown
-      ;;
+  merged)
+    FM_PR_GITHUB_STATE=MERGED
+    FM_PR_GITHUB_MERGED=true
+    FM_PR_GITHUB_QUEUED=false
+    ;;
+  *)
+    FM_PR_GITHUB_STATE=$state
+    FM_PR_GITHUB_MERGED=false
+    FM_PR_GITHUB_QUEUED=unknown
+    ;;
   esac
   FM_PR_GITHUB_BASE=
   FM_PR_GITHUB_QUEUE_OBSERVED=false
@@ -773,13 +1085,13 @@ github_urlencode_path_segment() {
     char=${input%"${input#?}"}
     input=${input#?}
     case "$char" in
-      [-._~a-zA-Z0-9]) encoded=$encoded$char ;;
-      *)
-        printf -v octet '%d' "'$char"
-        [ "$octet" -ge 0 ] || octet=$((octet + 256))
-        printf -v hex '%02X' "$octet"
-        encoded=$encoded%$hex
-        ;;
+    [-._~a-zA-Z0-9]) encoded=$encoded$char ;;
+    *)
+      printf -v octet '%d' "'$char"
+      [ "$octet" -ge 0 ] || octet=$((octet + 256))
+      printf -v hex '%02X' "$octet"
+      encoded=$encoded%$hex
+      ;;
     esac
   done
   printf '%s' "$encoded"
@@ -817,9 +1129,9 @@ github_read_queue_method() {
     # no queue rather than the generic unreadable status. Any other failure
     # (auth, rate limit, network, a 404, an unrelated 403) stays unreadable.
     case "$api_err_text" in
-      *"Upgrade to GitHub Pro or make this repository public"*)
-        FM_PR_GITHUB_QUEUE_STATUS=none
-        ;;
+    *"Upgrade to GitHub Pro or make this repository public"*)
+      FM_PR_GITHUB_QUEUE_STATUS=none
+      ;;
     esac
     return 0
   fi
@@ -827,23 +1139,23 @@ github_read_queue_method() {
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in
-      merge_method=*) candidate=${line#merge_method=} ;;
-      *) return 0 ;;
+    merge_method=*) candidate=${line#merge_method=} ;;
+    *) return 0 ;;
     esac
     count=$((count + 1))
     case "$candidate" in
-      MERGE|SQUASH|REBASE) ;;
-      *) unrecognised=true ;;
+    MERGE | SQUASH | REBASE) ;;
+    *) unrecognised=true ;;
     esac
     if [ -z "$FM_PR_GITHUB_QUEUE_METHODS" ] && [ "$count" -eq 1 ]; then
       FM_PR_GITHUB_QUEUE_METHODS=$candidate
     else
       case ",$FM_PR_GITHUB_QUEUE_METHODS," in
-        *",$candidate,"*) ;;
-        *)
-          FM_PR_GITHUB_QUEUE_METHODS="$FM_PR_GITHUB_QUEUE_METHODS,$candidate"
-          conflicting=true
-          ;;
+      *",$candidate,"*) ;;
+      *)
+        FM_PR_GITHUB_QUEUE_METHODS="$FM_PR_GITHUB_QUEUE_METHODS,$candidate"
+        conflicting=true
+        ;;
       esac
     fi
     method=$candidate
@@ -877,15 +1189,15 @@ require_released_captain_hold() {
   FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
     "$SCRIPT_DIR/fm-captain-hold.sh" open "$ID" --distinguish-absent || hold_status=$?
   case "$hold_status" in
-    0)
-      echo "error: task $ID is still held for the captain; release it before merging" >&2
-      return 1
-      ;;
-    1|3) return 0 ;;
-    *)
-      echo "error: could not determine whether task $ID is still held for the captain; refusing to merge" >&2
-      return 1
-      ;;
+  0)
+    echo "error: task $ID is still held for the captain; release it before merging" >&2
+    return 1
+    ;;
+  1 | 3) return 0 ;;
+  *)
+    echo "error: could not determine whether task $ID is still held for the captain; refusing to merge" >&2
+    return 1
+    ;;
   esac
 }
 
@@ -925,8 +1237,8 @@ require_current_away_authority() {
       echo "error: --auto is attended-only; while the away-posture record exists only a synchronous merge may run under its authority lock" >&2
       return 2
     fi
-    if [ "$PROVIDER" = gitlab ] \
-      && { [ "$FM_PR_GITLAB_ASYNC_REQUESTED" = true ] || [ "$FM_PR_GITLAB_ASYNC_CONFIGURED" = true ]; }; then
+    if [ "$PROVIDER" = gitlab ] &&
+      { [ "$FM_PR_GITLAB_ASYNC_REQUESTED" = true ] || [ "$FM_PR_GITLAB_ASYNC_CONFIGURED" = true ]; }; then
       echo "error: GitLab auto-merge is attended-only; while the away-posture record exists only an immediate merge may run under its authority lock" >&2
       return 2
     fi
@@ -944,8 +1256,8 @@ persist_accepted_merge_authority() {
   MERGE_META_LOCK=$(fm_meta_lock_path "$META") || return 1
   fm_lock_acquire_wait "$MERGE_META_LOCK" || return 1
   fm_merge_authority_persist "$STATE" "$ID" "$META" \
-    "$PROVIDER" "$PR_HOST" "$PR_PATH" "$PR_NUMBER" "$FM_PR_MERGE_AUTHORITY" \
-    || status=1
+    "$PROVIDER" "$PR_HOST" "$PR_PATH" "$PR_NUMBER" "$FM_PR_MERGE_AUTHORITY" ||
+    status=1
   fm_lock_release "$MERGE_META_LOCK" || status=1
   MERGE_META_LOCK=
   if [ "$status" -eq 0 ]; then
@@ -1012,8 +1324,8 @@ OUTPUT
 
 github_state_is_open() {
   case "$FM_PR_GITHUB_STATE" in
-    [oO][pP][eE][nN]) return 0 ;;
-    *) return 1 ;;
+  [oO][pP][eE][nN]) return 0 ;;
+  *) return 1 ;;
   esac
 }
 
@@ -1021,10 +1333,10 @@ github_state_is_open() {
 # compared without regard to the spelling either side happens to use.
 github_caller_method_is() {
   case "$FM_PR_GITHUB_CALLER_METHOD" in
-    [mM][eE][rR][gG][eE]) [ "$1" = merge ] ;;
-    [sS][qQ][uU][aA][sS][hH]) [ "$1" = squash ] ;;
-    [rR][eE][bB][aA][sS][eE]) [ "$1" = rebase ] ;;
-    *) return 1 ;;
+  [mM][eE][rR][gG][eE]) [ "$1" = merge ] ;;
+  [sS][qQ][uU][aA][sS][hH]) [ "$1" = squash ] ;;
+  [rR][eE][bB][aA][sS][eE]) [ "$1" = rebase ] ;;
+  *) return 1 ;;
   esac
 }
 
@@ -1036,44 +1348,44 @@ github_report_queue_rules() {
   fi
   github_read_queue_method
   case "$FM_PR_GITHUB_QUEUE_STATUS" in
-    single)
-      case "$FM_PR_GITHUB_QUEUE_METHOD" in
-        MERGE) queue_method=merge ;;
-        SQUASH) queue_method=squash ;;
-        REBASE) queue_method=rebase ;;
-      esac
-      if github_merge_command_succeeded \
-        && [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ] \
-        && github_caller_method_is "$queue_method"; then
-        printf 'error: this run refuses even though the request for %s was accepted with the exact flags base branch %s requires (--auto --%s): the pull request has still not entered the merge queue, so no landed or queued outcome is proven; re-check the pull request'"'"'s merge queue state before retrying\n' \
-          "$URL" "$FM_PR_GITHUB_BASE" "$queue_method" >&2
-      else
-        printf 'error: base branch %s requires the merge queue; retry with: %s %s %s --attended-override -- --auto --%s\n' \
-          "$FM_PR_GITHUB_BASE" "$0" "$ID" "$URL" "$queue_method" >&2
-      fi
-      ;;
-    conflicting)
-      printf 'error: base branch %s has conflicting merge queue methods (%s); exact retry flags are ambiguous\n' \
-        "$FM_PR_GITHUB_BASE" "${FM_PR_GITHUB_QUEUE_METHODS//,/, }" >&2
-      ;;
-    unrecognised)
-      methods_display=${FM_PR_GITHUB_QUEUE_METHODS//,/, }
-      [ -n "$methods_display" ] || methods_display='<none reported>'
-      printf 'error: base branch %s requires the merge queue, but its configured merge method (%s) is not one this script recognises, so exact retry flags cannot be named\n' \
-        "$FM_PR_GITHUB_BASE" "$methods_display" >&2
-      ;;
-    unreadable)
-      printf 'error: the branch rules for base branch %s could not be read, so a merge queue requirement can be neither confirmed nor ruled out here\n' \
-        "${FM_PR_GITHUB_BASE:-<unknown>}" >&2
-      ;;
+  single)
+    case "$FM_PR_GITHUB_QUEUE_METHOD" in
+    MERGE) queue_method=merge ;;
+    SQUASH) queue_method=squash ;;
+    REBASE) queue_method=rebase ;;
+    esac
+    if github_merge_command_succeeded &&
+      [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ] &&
+      github_caller_method_is "$queue_method"; then
+      printf 'error: this run refuses even though the request for %s was accepted with the exact flags base branch %s requires (--auto --%s): the pull request has still not entered the merge queue, so no landed or queued outcome is proven; re-check the pull request'"'"'s merge queue state before retrying\n' \
+        "$URL" "$FM_PR_GITHUB_BASE" "$queue_method" >&2
+    else
+      printf 'error: base branch %s requires the merge queue; retry with: %s %s %s --attended-override -- --auto --%s\n' \
+        "$FM_PR_GITHUB_BASE" "$0" "$ID" "$URL" "$queue_method" >&2
+    fi
+    ;;
+  conflicting)
+    printf 'error: base branch %s has conflicting merge queue methods (%s); exact retry flags are ambiguous\n' \
+      "$FM_PR_GITHUB_BASE" "${FM_PR_GITHUB_QUEUE_METHODS//,/, }" >&2
+    ;;
+  unrecognised)
+    methods_display=${FM_PR_GITHUB_QUEUE_METHODS//,/, }
+    [ -n "$methods_display" ] || methods_display='<none reported>'
+    printf 'error: base branch %s requires the merge queue, but its configured merge method (%s) is not one this script recognises, so exact retry flags cannot be named\n' \
+      "$FM_PR_GITHUB_BASE" "$methods_display" >&2
+    ;;
+  unreadable)
+    printf 'error: the branch rules for base branch %s could not be read, so a merge queue requirement can be neither confirmed nor ruled out here\n' \
+      "${FM_PR_GITHUB_BASE:-<unknown>}" >&2
+    ;;
   esac
 }
 
 github_report_unmerged_outcome() {
   printf 'error: GitHub merge outcome was not successful: state=%s, merged=%s, isInMergeQueue=%s\n' \
     "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED" >&2
-  if ! github_state_is_open || [ "$FM_PR_GITHUB_MERGED" != false ] \
-    || [ "$FM_PR_GITHUB_QUEUED" = true ]; then
+  if ! github_state_is_open || [ "$FM_PR_GITHUB_MERGED" != false ] ||
+    [ "$FM_PR_GITHUB_QUEUED" = true ]; then
     return 0
   fi
   if [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ]; then
@@ -1130,100 +1442,103 @@ require_released_captain_hold || exit 1
 # stale-owner recovery can release the record for archive or replacement and
 # the orphaned forge child can still merge on the lapsed away authority.
 case "$PROVIDER" in
-  github)
-    merge_output=
-    merge_args=()
-    if ! caller_has_merge_method "$@"; then
-      merge_args=(--squash)
-    fi
-    FM_PR_GITHUB_CALLER_METHOD=$(caller_merge_method "$@")
-    github_verify_mergeable || exit 1
-    # The away record is locked first, so this last presence and authority read
-    # and the forge command below share one live-owner critical section.
-    hold_away_record_for_merge || exit 1
-    away_status=0
-    require_current_away_authority || away_status=$?
-    [ "$away_status" -eq 0 ] || exit "$away_status"
-    refuse_github_queue_while_away || exit 2
-    merge_status=0
-    merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
-      --match-head-commit "$FM_PR_MERGE_HEAD" \
-      "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
-    if [ "$merge_status" -eq 0 ]; then
-      FM_PR_GITHUB_MERGE_ACCEPTED=true
-      persist_accepted_merge_authority || exit 1
-      fm_afk_contract_lock_release || true
-      fm_lock_release "$MERGE_CONTROL_LOCK" || true
-      MERGE_CONTROL_LOCK=
-    else
-      fm_afk_contract_lock_release || true
-      fm_lock_release "$MERGE_CONTROL_LOCK" || true
-      MERGE_CONTROL_LOCK=
-      [ -z "$merge_output" ] || printf '%s\n' "$merge_output" >&2
-      if github_read_outcome; then
-        if [ "$FM_PR_GITHUB_MERGED" != true ] && [ "$FM_PR_GITHUB_QUEUED" != true ]; then
-          github_report_unmerged_outcome
-        else
-          printf 'actionable: the merge command for %s failed, but the pull request reads back as state=%s, merged=%s, isInMergeQueue=%s\n' \
-            "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED" >&2
-        fi
-      fi
-      exit "$merge_status"
-    fi
-    if ! github_read_outcome; then
-      github_report_forge_output "$merge_output"
-      exit 1
-    fi
-    if [ "$FM_PR_GITHUB_MERGED" = true ]; then
-      printf 'verified: %s is merged (state=%s, merged=%s, isInMergeQueue=%s)\n' \
-        "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED"
-    elif [ "$FM_PR_GITHUB_QUEUED" = true ]; then
-      printf 'verified: %s is queued (state=%s, merged=%s, isInMergeQueue=%s)\n' \
-        "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED"
-      exit 0
-    else
-      github_report_forge_output "$merge_output"
-      github_report_unmerged_outcome
-      exit 1
-    fi
-    ;;
-  gitlab)
-    gitlab_verify_mergeable || exit 1
-    # --sha binds the merge to the head this run verified, so a push that lands
-    # in between is refused by GitLab instead of merged unverified. --yes only
-    # skips the interactive confirmation, which no supervised run can answer;
-    # the conditions above are what authorize the merge.
-    # The away record is locked first, so this last presence and authority read
-    # and the forge command below share one live-owner critical section.
-    hold_away_record_for_merge || exit 1
-    away_status=0
-    require_current_away_authority || away_status=$?
-    [ "$away_status" -eq 0 ] || exit "$away_status"
-    merge_status=0
-    gitlab_merge_args=()
-    if [ "$FM_PR_AWAY_POSTURE" = true ]; then
-      gitlab_merge_args=(--auto-merge=false)
-    fi
-    GITLAB_HOST="$FM_PR_HOST" glab mr merge "$PR_NUMBER" -R "$PROJECT_URL" \
-      --sha "$FM_PR_MERGE_HEAD" --yes "$@" "${gitlab_merge_args[@]+"${gitlab_merge_args[@]}"}" || merge_status=$?
-    if [ "$merge_status" -ne 0 ]; then
-      fm_afk_contract_lock_release || true
-      fm_lock_release "$MERGE_CONTROL_LOCK" || true
-      MERGE_CONTROL_LOCK=
-      exit "$merge_status"
-    fi
+github)
+  merge_output=
+  merge_args=()
+  if [ "$DEFAULT_SQUASH" = yes ]; then
+    squash_default_guard || exit 1
+    merge_args=(--squash)
+  fi
+  forge_audit pr-merge "$ID" "$URL" || exit 1
+  FM_PR_GITHUB_CALLER_METHOD=$(caller_merge_method "$@")
+  github_verify_mergeable || exit 1
+  # The away record is locked first, so this last presence and authority read
+  # and the forge command below share one live-owner critical section.
+  hold_away_record_for_merge || exit 1
+  away_status=0
+  require_current_away_authority || away_status=$?
+  [ "$away_status" -eq 0 ] || exit "$away_status"
+  refuse_github_queue_while_away || exit 2
+  merge_status=0
+  merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
+    --match-head-commit "$FM_PR_MERGE_HEAD" \
+    "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
+  if [ "$merge_status" -eq 0 ]; then
+    FM_PR_GITHUB_MERGE_ACCEPTED=true
     persist_accepted_merge_authority || exit 1
     fm_afk_contract_lock_release || true
     fm_lock_release "$MERGE_CONTROL_LOCK" || true
     MERGE_CONTROL_LOCK=
-    gitlab_confirm_rc=0
-    gitlab_confirm_merged || gitlab_confirm_rc=$?
-    [ "$gitlab_confirm_rc" -eq 0 ] || exit 0
-    ;;
-  *)
-    echo "error: invalid PR merge request" >&2
-    exit 2
-    ;;
+  else
+    fm_afk_contract_lock_release || true
+    fm_lock_release "$MERGE_CONTROL_LOCK" || true
+    MERGE_CONTROL_LOCK=
+    [ -z "$merge_output" ] || printf '%s\n' "$merge_output" >&2
+    if github_read_outcome; then
+      if [ "$FM_PR_GITHUB_MERGED" != true ] && [ "$FM_PR_GITHUB_QUEUED" != true ]; then
+        github_report_unmerged_outcome
+      else
+        printf 'actionable: the merge command for %s failed, but the pull request reads back as state=%s, merged=%s, isInMergeQueue=%s\n' \
+          "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED" >&2
+      fi
+    fi
+    exit "$merge_status"
+  fi
+  if ! github_read_outcome; then
+    github_report_forge_output "$merge_output"
+    exit 1
+  fi
+  if [ "$FM_PR_GITHUB_MERGED" = true ]; then
+    printf 'verified: %s is merged (state=%s, merged=%s, isInMergeQueue=%s)\n' \
+      "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED"
+  elif [ "$FM_PR_GITHUB_QUEUED" = true ]; then
+    printf 'verified: %s is queued (state=%s, merged=%s, isInMergeQueue=%s)\n' \
+      "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED"
+    exit 0
+  else
+    github_report_forge_output "$merge_output"
+    github_report_unmerged_outcome
+    exit 1
+  fi
+  ;;
+gitlab)
+  gitlab_verify_mergeable || exit 1
+  forge_audit mr-merge "$ID" "$URL" "head=$FM_PR_MERGE_HEAD" || exit 1
+  # --sha binds the merge to the head this run verified, so a push that lands
+  # in between is refused by GitLab instead of merged unverified. --yes only
+  # skips the interactive confirmation, which no supervised run can answer;
+  # the conditions above are what authorize the merge.
+  # The away record is locked first, so this last presence and authority read
+  # and the forge command below share one live-owner critical section.
+  hold_away_record_for_merge || exit 1
+  away_status=0
+  require_current_away_authority || away_status=$?
+  [ "$away_status" -eq 0 ] || exit "$away_status"
+  merge_status=0
+  gitlab_merge_args=()
+  if [ "$FM_PR_AWAY_POSTURE" = true ]; then
+    gitlab_merge_args=(--auto-merge=false)
+  fi
+  GITLAB_HOST="$FM_PR_HOST" glab mr merge "$PR_NUMBER" -R "$PROJECT_URL" \
+    --sha "$FM_PR_MERGE_HEAD" --yes "$@" "${gitlab_merge_args[@]+"${gitlab_merge_args[@]}"}" || merge_status=$?
+  if [ "$merge_status" -ne 0 ]; then
+    fm_afk_contract_lock_release || true
+    fm_lock_release "$MERGE_CONTROL_LOCK" || true
+    MERGE_CONTROL_LOCK=
+    exit "$merge_status"
+  fi
+  persist_accepted_merge_authority || exit 1
+  fm_afk_contract_lock_release || true
+  fm_lock_release "$MERGE_CONTROL_LOCK" || true
+  MERGE_CONTROL_LOCK=
+  gitlab_confirm_rc=0
+  gitlab_confirm_merged || gitlab_confirm_rc=$?
+  [ "$gitlab_confirm_rc" -eq 0 ] || exit 0
+  ;;
+*)
+  echo "error: invalid PR merge request" >&2
+  exit 2
+  ;;
 esac
 
 # Reached only after the forge confirmed the merge landed: set -e exits on a
@@ -1233,12 +1548,12 @@ outcome_rc=0
 fm_merge_outcome_report "$FM_HOME" "$STATE" "$ID" "$URL" self \
   "${FM_PR_MERGE_AUTHORITY:-}" || outcome_rc=$?
 case "$outcome_rc" in
-  0) ;;
-  3)
-    printf 'actionable: merged %s but could not report it upward: this home has no readable secondmate identity or parent binding (.fm-secondmate-home, .fm-secondmate-parent)\n' \
-      "$URL" >&2
-    ;;
-  *)
-    printf 'actionable: merged %s but could not record the outcome for supervision\n' "$URL" >&2
-    ;;
+0) ;;
+3)
+  printf 'actionable: merged %s but could not report it upward: this home has no readable secondmate identity or parent binding (.fm-secondmate-home, .fm-secondmate-parent)\n' \
+    "$URL" >&2
+  ;;
+*)
+  printf 'actionable: merged %s but could not record the outcome for supervision\n' "$URL" >&2
+  ;;
 esac

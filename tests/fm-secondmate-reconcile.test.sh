@@ -418,7 +418,7 @@ test_a_failed_send_is_retried_on_the_next_run() {
 }
 
 test_busy_lifecycle_locks_never_hold_up_the_digest() {
-  local label home mate fakebin snap lock ready release holder notify out i
+  local label home mate fakebin snap lock ready release holder notify out waited
   for label in reconcile control meta; do
     { read -r home; read -r mate; read -r fakebin; } < <(make_main_home "busy-$label" mate)
     snap="$home/snapshot.json"
@@ -435,10 +435,13 @@ test_busy_lifecycle_locks_never_hold_up_the_digest() {
     while [ ! -f "$ready" ]; do sleep 0.01; done
     run_notify "$home" "$fakebin" "busy-$label" "$snap" > "$home/notify.out" 2>&1 &
     notify=$!
-    i=0
-    while kill -0 "$notify" 2>/dev/null && [ "$i" -lt 40 ]; do
-      i=$((i + 1))
-      sleep 0.05
+    # The property is that the run finishes while the lock is STILL held, not
+    # how fast this box starts a shell: the holder is released only after the
+    # run has exited, so a run that blocks on the lock can never finish here.
+    waited=0
+    while kill -0 "$notify" 2>/dev/null && [ "$waited" -lt 500 ]; do
+      sleep 0.02
+      waited=$((waited + 1))
     done
     if kill -0 "$notify" 2>/dev/null; then
       : > "$release"

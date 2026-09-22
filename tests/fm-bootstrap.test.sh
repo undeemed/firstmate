@@ -903,9 +903,11 @@ test_network_phase_partitions_the_run() {
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   fakebin=$(make_fake_toolchain "$case_dir")
-  # Break the two diagnostics that stand for the two halves: a local tool floor
-  # and the network GitHub-auth probe.
-  rm -f "$fakebin/node"
+  # Break the two diagnostics that stand for the two halves: a local
+  # configuration read and the network GitHub-auth probe. The local marker is a
+  # file this fixture owns, not an absent tool: a host that ships the tool in
+  # /usr/bin would otherwise make the local half look silent.
+  printf 'not-a-budget\n' > "$case_dir/home/config/startup-memory-budget"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 1
@@ -914,18 +916,18 @@ SH
 
   all_out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$all_out" "MISSING: node (install:" "the unsplit run lost its local diagnostic"
+  assert_contains "$all_out" "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget" "the unsplit run lost its local diagnostic"
   assert_contains "$all_out" "NEEDS_GH_AUTH" "the unsplit run lost its network diagnostic"
 
   skip_out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=skip "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$skip_out" "MISSING: node (install:" "the local half lost its own diagnostic"
+  assert_contains "$skip_out" "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget" "the local half lost its own diagnostic"
   assert_not_contains "$skip_out" "NEEDS_GH_AUTH" "the local half still made a network call"
 
   only_out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=only "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$only_out" "NEEDS_GH_AUTH" "the network half lost its own diagnostic"
-  assert_not_contains "$only_out" "MISSING: node" "the network half repeated the local half's work"
+  assert_not_contains "$only_out" "STARTUP_MEMORY_BUDGET:" "the network half repeated the local half's work"
 
   combined=$(printf '%s\n%s\n' "$skip_out" "$only_out" | LC_ALL=C sort)
   [ "$combined" = "$(printf '%s\n' "$all_out" | LC_ALL=C sort)" ] \
@@ -1148,6 +1150,8 @@ gemini profile with explicit provider is accepted^{"rules":[{"when":"gemini work
 agy low medium high efforts are accepted^{"rules":[{"when":"agy low","use":{"harness":"agy","effort":"low"}},{"when":"agy medium","use":{"harness":"agy","effort":"medium"}},{"when":"agy high","use":{"harness":"agy","effort":"high"}}]}^empty^
 unsupported agy xhigh effort is flagged^{"rules":[{"when":"agy xhigh","use":{"harness":"agy","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: agy:xhigh
 unsupported agy max effort is flagged^{"rules":[{"when":"agy max","use":{"harness":"agy","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: agy:max
+omp shared efforts are accepted^{"rules":[{"when":"omp low","use":{"harness":"omp","effort":"low"}},{"when":"omp medium","use":{"harness":"omp","effort":"medium"}},{"when":"omp high","use":{"harness":"omp","effort":"high"}},{"when":"omp xhigh","use":{"harness":"omp","effort":"xhigh"}},{"when":"omp max","use":{"harness":"omp","effort":"max"}}]}^empty^
+unsupported omp auto effort is flagged^{"rules":[{"when":"omp auto","use":{"harness":"omp","effort":"auto"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: omp:auto
 unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high","provider":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
 kimi model profile is accepted^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3"}}]}^empty^
 unsupported kimi effort is flagged^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: kimi:high

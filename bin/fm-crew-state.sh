@@ -22,7 +22,12 @@
 # Output is one stable, parseable, token-tight line firstmate can read every
 # heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
+#   state: <working|parked|done|blocked|paused|failed|unattended|unknown> · source: <run-step|pane|status-log|remote-endpoint|secondmate-home|none> · <detail>
+#
+# A run-step read whose `axi status` reports an ACTIVE step ends its detail with
+# one more field, `activity: <step> <seconds>`: how long ago that step last
+# recorded doing something. It comes free with the read this reader already makes;
+# crew_step_progress_evidence in bin/fm-classify-lib.sh owns what it is for.
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
@@ -118,6 +123,15 @@
 #      decisions. If it says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
+#      agree, and are reported as parked.
+#   3b. A LOCAL secondmate is a SUPERVISOR, so its own status log answers for
+#      the mate and says nothing about the tree it supervises. Its home's live
+#      child task records are part of this answer: a mate with live children is
+#      never reported idle or done, and one whose home has also left its own wake
+#      queue unconsumed past the shared bound, while the mate is not itself
+#      mid-turn, reports the distinct state `unattended`.
+#      bin/fm-secondmate-home-lib.sh owns that bound, what may be observed, and
+#      why - no child pane is read and no child tree is reconstructed here.
 #      agree, and are reported as parked. A `blocked:` line that reports a
 #      refused or missing daemon socket remains blocked even if an attributed
 #      run record is stale or terminal, for as long as that blocker is still the
@@ -168,6 +182,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-secondmate-home-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-home-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -313,6 +329,34 @@ crew_busy_verdict() {  # <target>
   tail40=$(fm_backend_capture "$TASK_BACKEND" "$1" 40 "$EXPECTED_LABEL" 2>/dev/null) || tail40=''
   fm_busy_classify "$TASK_BACKEND" "$1" "$HARNESS" "$ID" "$STATE" "$tail40"
 }
+
+# --- local secondmate: the home it supervises is part of its state ----------
+# Its own status log is truthful about the mate and silent about its tree; see
+# bin/fm-secondmate-home-lib.sh for the incident that fact produced, the shared
+# unconsumed-queue bound, and the limits on what may be observed here.
+if [ "$KIND" = secondmate ]; then
+  MATE_HOME=$(meta_value home)
+  if fm_secondmate_home_bound "$MATE_HOME" "$ID"; then
+    LIVE_CHILDREN=$(fm_secondmate_home_live_children "$MATE_HOME")
+    if [ "$LIVE_CHILDREN" -gt 0 ]; then
+      IFS=$(printf '\t') read -r QUEUE_DEPTH QUEUE_EPOCH _QUEUE_SEQ <<EOF
+$(fm_secondmate_home_queue_scan "$MATE_HOME")
+EOF
+      QUEUE_AGE=0
+      [ -n "$QUEUE_EPOCH" ] && QUEUE_AGE=$(( $(date +%s) - QUEUE_EPOCH ))
+      # A mate that is provably mid-turn cannot reach its own queue yet, so its
+      # unconsumed rows are not evidence that nobody is watching them. No
+      # recorded target means no busy evidence, which is not busy either.
+      MATE_VERDICT=${BACKEND_TARGET:+$(crew_busy_verdict "$BACKEND_TARGET")}
+      if [ "$QUEUE_AGE" -ge "$(fm_secondmate_wake_stall_secs)" ] && [ "${MATE_VERDICT%% *}" != busy ]; then
+        emit unattended secondmate-home \
+          "$LIVE_CHILDREN live child task record(s), and nothing in that home has consumed its $QUEUE_DEPTH queued wake row(s) for ${QUEUE_AGE}s"
+      fi
+      emit working secondmate-home \
+        "supervising $LIVE_CHILDREN live child task record(s), $QUEUE_DEPTH queued wake row(s) in its home"
+    fi
+  fi
+fi
 
 # --- no-mistakes run lookup (authoritative when a run matches this branch) --
 # trim, strip_quotes, the bounded nm_run call, nm_field's TOON parse, and the
@@ -831,13 +875,38 @@ nm_runs_list() {
 # scratch worktree); with no branch there is no run to attribute to this crew.
 CREW_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 
-# 0 if the active axi-status run's head field matches this worktree's code
-# identity. Branch match is a precondition (caller). Rule owned by
-# fm_nm_head_matches_worktree in bin/fm-nm-run-lib.sh.
-nm_run_head_matches_worktree() {
-  local run_head
-  run_head=$(strip_quotes "$(nm_field head)")
-  fm_nm_head_matches_worktree "$WT" "$run_head"
+# Fold every head a run reports into ONE binding verdict for this worktree,
+# using bin/fm-nm-run-lib.sh's four-valued rule per head. Precedence is
+# match > undetermined > stale > absent: one provable match attributes the run,
+# while one head that cannot be resolved here keeps the whole verdict honest at
+# undetermined rather than letting a second, older head force a confident answer.
+nm_binding_of_heads() {  # <head...> -> match|undetermined|stale|absent
+  local head binding verdict=absent
+  for head in "$@"; do
+    [ -n "$head" ] || continue
+    binding=$(fm_nm_head_binding "$WT" "$head")
+    case "$binding" in
+      match)        printf 'match'; return 0 ;;
+      undetermined) verdict=undetermined ;;
+      stale)        [ "$verdict" = undetermined ] || verdict=stale ;;
+    esac
+  done
+  printf '%s' "$verdict"
+}
+
+# Binding for the `axi status` run currently in $RUN_OUT. Branch match is a
+# precondition (caller). Besides the run's own head, the CLI's branch_sync block
+# reports the head the run was SUBMITTED from - the crew worktree's own head at
+# run start - plus the pipeline's current and pushed heads. submitted_head is
+# what binds a live run whose current head exists only in no-mistakes' managed
+# clone; an older CLI that omits the block returns empty fields, and the run
+# head decides alone.
+nm_run_binding() {
+  nm_binding_of_heads \
+    "$(strip_quotes "$(nm_field head)")" \
+    "$(strip_quotes "$(nm_field submitted_head)")" \
+    "$(strip_quotes "$(nm_field current_head)")" \
+    "$(strip_quotes "$(nm_field pushed_head)")"
 }
 
 HAVE_RUN=0
@@ -1139,6 +1208,12 @@ if [ "$HAVE_RUN" = 1 ]; then
   esac
 
   [ -z "$SELECTED_RUN_ID" ] || RUN_DETAIL="$RUN_DETAIL${SEP}run: $SELECTED_RUN_ID"
+  # The active step's progress record (see this file's header), off the $RUN_OUT
+  # this read already holds.
+  if [ "$RUN_SOURCE" = full ] && ACTIVITY=$(fm_nm_active_step_activity "$RUN_OUT"); then
+    RUN_DETAIL="$RUN_DETAIL${SEP}activity: $ACTIVITY"
+  fi
+
   emit "$RUN_STATE" run-step "$RUN_DETAIL"
 fi
 

@@ -183,12 +183,36 @@ case " $* " in
     ;;
   *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
   *" state "*)
+  # The REST head read behind bin/fm-pr-check.sh's pr_head lookup.
+  *" --jq .head.sha "*)
+    printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    exit 0
+    ;;
+  # The REST merge read behind bin/fm-pr-poll.sh. GraphQL `gh pr view --json
+  # state` is answered by nothing at all, so a return to it never reports a
+  # merge. FM_TEST_GH_STATE stays the knob: only MERGED is a merged resource,
+  # and any other value reaches the poll verbatim, so a malformed or empty
+  # reading is exercised too.
+  *" --jq .merged "*)
     [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
     [ -z "${FM_TEST_GH_STATE_STARTED:-}" ] || : > "$FM_TEST_GH_STATE_STARTED"
     [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
-    printf '%s\n' "${FM_TEST_GH_STATE:-OPEN}"
+    case "${FM_TEST_GH_STATE-OPEN}" in
+      MERGED) printf 'true\n' ;;
+      OPEN|CLOSED) printf 'false\n' ;;
+      *) printf '%s\n' "${FM_TEST_GH_STATE-}" ;;
+    esac
+    exit 0
     ;;
 esac
+if [ "${1:-}" = api ]; then
+  # The REST payload bin/fm-pr-merge.sh's squash guard reads before it applies
+  # the implicit --squash: an ordinary single-topic PR, which that guard lets
+  # through.
+  case "${2:-}" in
+    */pulls/*) printf '%s\n' '{"commits":1,"changed_files":2,"head":{"ref":"fm/task-a"},"body":""}' ;;
+  esac
+fi
 SH
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
@@ -569,6 +593,13 @@ test_valid_recording_and_merge_derivation() {
   grep -qxF 'pr=https://github.com/my-org/repo_name.with-dots/pull/37' "$dir/home/state/task-a.meta" \
     || fail "canonical pr metadata was not exact"
   grep -qxF "pr_head=$expected" "$dir/home/state/task-a.meta" || fail "PR head metadata was not exact"
+  # The head is read from REST, addressed by the owner, repository, and number
+  # already parsed from the URL. `gh pr view` is GraphQL, whose budget the whole
+  # fleet shares, and bin/fm-pr-merge.sh runs this path on every task merge.
+  grep -qxF 'api repos/my-org/repo_name.with-dots/pulls/37 --jq .head.sha' "$dir/gh.log" \
+    || fail "PR head was not read from the REST pull request resource"
+  assert_no_grep 'pr view' "$dir/gh.log" "PR head was read with GraphQL gh pr view"
+  assert_no_grep 'graphql' "$dir/gh.log" "arming a PR watch made a GraphQL call"
   cmp -s "$POLL" "$dir/home/state/task-a.check.sh" || fail "published check was not byte-for-byte static"
   [ "$(file_mode "$dir/home/state/task-a.check.sh")" = 600 ] || fail "published check mode was not 0600"
   [ "$(file_mode "$dir/home/state/task-a.pr-poll")" = 600 ] || fail "published sidecar mode was not 0600"
@@ -690,12 +721,17 @@ SH
   pass "valid direct and merge flows record exact metadata and reject multiline head metadata"
 }
 
+# The alarm is a hang tripwire, not a performance assertion: a healthy bounded
+# watcher run finishes in well under a second, and 10s produced spurious kills
+# (exit 124, empty stderr) whenever this box was running many lanes at once.
 run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   local check_timeout=${FM_TEST_CHECK_TIMEOUT:-1}
   shift 2
   perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 10; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
     env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT="$check_timeout" \
+  perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 90; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
+    env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
 
@@ -773,8 +809,14 @@ test_static_poll_contract() {
     out=$(FM_TEST_GH_STATE="$value" run_poll "$dir")
     [ -z "$out" ] || fail "static poll emitted for non-merged state"
   done
+  : > "$dir/gh.log"
   out=$(FM_TEST_GH_STATE=MERGED run_poll "$dir")
   [ "$out" = merged ] || fail "static poll did not emit exactly one merged line"
+  # This read runs on every check sweep for every armed PR, so it must stay on
+  # REST and off the budget the whole fleet shares.
+  grep -q 'repos/o/r/pulls/1' "$dir/gh.log" \
+    || fail "static poll did not read the REST pull request resource"
+  assert_no_grep 'pr view' "$dir/gh.log" "static poll read PR state with GraphQL gh pr view"
   out=$(FM_TEST_GH_FAIL=1 run_poll "$dir")
   [ -z "$out" ] || fail "static poll emitted after gh failure"
 
@@ -857,11 +899,11 @@ SH
       run_check_entry "$dir" task-a https://github.com/o/r/pull/1 > "$dir/direct.out" 2> "$dir/direct.err" &
     direct_pid=$!
     i=0
-    while [ "$i" -lt 100 ] && ! find "$dir/home/state" -name '.fm-pr-poll-check.*' -print | grep . >/dev/null; do
+    while [ "$i" -lt 1500 ] && ! find "$dir/home/state" -name '.fm-pr-poll-check.*' -print | grep . >/dev/null; do
       sleep 0.01
       i=$((i + 1))
     done
-    [ "$i" -lt 100 ] || fail "atomic publication did not reach staged check"
+    [ "$i" -lt 1500 ] || fail "atomic publication did not reach staged check"
 
     set +e
     FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
@@ -1139,7 +1181,7 @@ SH
     > "$dir/watch.out" 2> "$dir/watch.err" &
   pid=$!
   i=0
-  while [ "$i" -lt 100 ]; do
+  while [ "$i" -lt 1500 ]; do
     [ -s "$child_pid_file" ] && break
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.02
@@ -1151,7 +1193,7 @@ SH
   child_pid=$(cat "$child_pid_file")
   kill -TERM "$pid" 2>/dev/null || fail "could not signal watcher during custom check"
   i=0
-  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 1500 ]; do
     sleep 0.02
     i=$((i + 1))
   done
@@ -1432,6 +1474,21 @@ EOF
     > "$state/task-a.pr-poll"
   out=$(FM_TEST_GLAB_STATE=merged run_poll "$dir")
   [ -z "$out" ] || fail "GitLab poll emitted for a sidecar whose project was swapped"
+
+  # Arming a GitLab watch stays on glab: no GitHub CLI call is made at all, and
+  # no pr_head is recorded, because plain glab exposes the head only inside JSON
+  # this path deliberately does not parse.
+  write_task_meta "$dir" task-d
+  : > "$dir/gh.log"
+  run_check_entry "$dir" task-d "$url" >/dev/null 2>/dev/null \
+    || fail "arming a GitLab watch with glab present failed"
+  grep -qxF "pr=$url" "$dir/home/state/task-d.meta" \
+    || fail "arming a GitLab watch did not record the canonical merge request URL"
+  assert_no_grep 'pr_head=' "$dir/home/state/task-d.meta" \
+    "arming a GitLab watch recorded a head"
+  [ ! -s "$dir/gh.log" ] || fail "arming a GitLab watch called the GitHub CLI"
+  fm_pr_poll_artifacts_valid "$dir/home/state" task-d "$POLL" \
+    || fail "arming a GitLab watch did not publish a valid poll"
 
   # Arming is where a missing CLI can still be reported, so it refuses there.
   write_task_meta "$dir" task-b
@@ -2790,8 +2847,84 @@ SH
   pass "device re-record publication waits without rewriting its registration"
 }
 
+# An armed merge poll must survive the ordinary metadata writes that follow it:
+# a restarted worker's re-addressed window and pane ids, a recorded trace
+# context, a corrected delivery posture. Before this was fixed, any one of them
+# invalidated the poll's task binding, the watcher then classified the
+# byte-canonical poll as an unregistered custom check (mode 0700 required, the
+# owner path publishes 0600 on purpose because this file is never executed),
+# and the PR merged with nobody watching.
+test_armed_poll_survives_later_metadata_writes() {
+  local dir state url rc
+  url=https://github.com/o/r/pull/41
+
+  dir=$(make_case poll-survives-metadata-writes)
+  state="$dir/home/state"
+  write_task_meta "$dir"
+  FM_TEST_GH_HEAD=0123456789abcdef0123456789abcdef01234567 \
+    run_check_entry "$dir" task-a "$url" > "$dir/arm.out" 2> "$dir/arm.err" \
+    || fail "owner path could not arm the merge poll: $(cat "$dir/arm.err")"
+  assert_grep 'armed: state/task-a.check.sh' "$dir/arm.out" "owner path did not report an armed poll"
+  [ "$(file_mode "$state/task-a.check.sh")" = 600 ] || fail "owner path published a check mode it does not validate"
+
+  # Exactly what a supervisor writes after re-addressing a restarted worker.
+  printf 'window=default:wZZ:p2\nherdr_pane_id=wZZ:p2\ntraceparent=00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\n' \
+    >> "$state/task-a.meta"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "later metadata writes invalidated the armed poll's own validator"
+
+  set +e
+  FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" \
+    > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "watcher failed on a poll with later metadata writes: $(cat "$dir/watch.err")"
+  assert_no_grep 'rejected unauthenticated state checks' "$dir/watch.out" \
+    "watcher rejected the poll the owner path armed"
+  assert_no_grep 'unverifiable PR merge polls' "$dir/watch.out" \
+    "watcher could not verify the poll the owner path armed"
+  assert_grep "check: $state/task-a.check.sh: merged" "$dir/watch.out" \
+    "watcher did not run the armed poll to its merged result"
+
+  # A record that cannot say which PR it means is still refused, and it is
+  # reported as an unverifiable poll rather than as someone's unauthenticated
+  # check file, so the next operator repairs the record and not the file mode.
+  # The record goes ambiguous mid-sweep, the way a live one does: an earlier
+  # check in the same sweep writes the second pr= line before the poll itself
+  # is reached.
+  dir=$(make_case poll-ambiguous-record)
+  state="$dir/home/state"
+  write_task_meta "$dir"
+  FM_TEST_GH_HEAD=0123456789abcdef0123456789abcdef01234567 \
+    run_check_entry "$dir" task-a "$url" >/dev/null 2>/dev/null \
+    || fail "owner path could not arm the ambiguity fixture"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "pr=https://github.com/o/r/pull/42" >> "%s"\n' \
+    "$state/task-a.meta" > "$state/a-drift.check.sh"
+  chmod 0700 "$state/a-drift.check.sh"
+  FM_HOME="$dir/home" "$REGISTER" a-drift >/dev/null \
+    || fail "could not register the record-drift check"
+  set +e
+  FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" \
+    > "$dir/watch-ambiguous.out" 2> "$dir/watch-ambiguous.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "watcher failed on an ambiguous record: $(cat "$dir/watch-ambiguous.err")"
+  [ "$(grep -c '^pr=' "$state/task-a.meta")" -eq 2 ] \
+    || fail "the record-drift check did not make the task record ambiguous"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    && fail "a second recorded pull request left the poll validated"
+  assert_grep "check: unverifiable PR merge polls: $state/task-a.check.sh" "$dir/watch-ambiguous.out" \
+    "watcher did not name the canonical poll it could not verify"
+  assert_no_grep 'rejected unauthenticated state checks' "$dir/watch-ambiguous.out" \
+    "watcher reported its own canonical poll as an unauthenticated check"
+  assert_no_grep 'merged' "$dir/watch-ambiguous.out" \
+    "watcher ran a poll whose task record was ambiguous"
+  pass "an armed merge poll survives later metadata writes and names real ambiguity distinctly"
+}
+
 test_parser_matrix
 test_gitlab_merge_watch
+test_armed_poll_survives_later_metadata_writes
 test_merged_poll_retires_once
 test_merged_poll_reregistration_after_notification_is_absorbed
 test_merged_poll_retries_a_failed_upward_report

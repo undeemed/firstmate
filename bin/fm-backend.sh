@@ -953,9 +953,18 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 fm_backend_agent_state() {  # <backend> <target>
   local backend=$1 target=$2
   fm_backend_source "$backend" || { printf 'unverified'; return 0; }
+  # A classifier that did not load is exactly the `unverified` case above: an
+  # adapter whose own dependencies are absent answers nothing, and an empty
+  # answer must never read as a live endpoint to a caller that refuses on one.
   case "$backend" in
-    tmux) fm_backend_tmux_agent_state "$target" ;;
-    herdr) fm_backend_herdr_agent_state "$target" ;;
+    tmux)
+      declare -F fm_backend_tmux_agent_state >/dev/null 2>&1 || { printf 'unverified'; return 0; }
+      fm_backend_tmux_agent_state "$target"
+      ;;
+    herdr)
+      declare -F fm_backend_herdr_agent_state >/dev/null 2>&1 || { printf 'unverified'; return 0; }
+      fm_backend_herdr_agent_state "$target"
+      ;;
     *) printf 'unverified' ;;
   esac
 }

@@ -117,6 +117,38 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/animate-expo/RECIPES.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/animate-expo/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/animate/RECIPES.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/animate/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/animation-vocabulary/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/apple-design/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/ask-sonner/API.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/ask-sonner/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/ask-user-authority/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -141,6 +173,14 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/emil-design-eng/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/find-animation-opportunities/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/firstmate-codexapp/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -154,6 +194,10 @@
     },
     {
       "path": ".agents/skills/fmx-respond/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/gnhf/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -221,6 +265,22 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/improve-animations/AUDIT.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/improve-animations/PLAN-TEMPLATE.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/improve-animations/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pick-ui-library/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/harness-adapters/references/harness/rovo.md",
       "audience": "agent-runtime"
     },
@@ -237,7 +297,23 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/prototype/PICKER.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/prototype/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/quota-array-dispatch/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/review-animations/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/review-animations/STANDARDS.md",
       "audience": "agent-runtime"
     },
     {
@@ -305,12 +381,20 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/captain-hold-lifecycle.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/cd-guard.md",
       "audience": "maintainer-architecture"
     },
     {
       "path": "docs/cmux-backend.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/codegraph-pretool-check.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/codex-app-backend.md",
@@ -321,19 +405,19 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/captain-hold-lifecycle.md",
-      "audience": "maintainer-architecture"
+      "path": "docs/desktop-wall.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/documentation-audiences.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "docs/extension-bindings.md",
-      "audience": "maintainer-architecture"
+      "path": "docs/examples/crew-dispatch.json",
+      "audience": "operator-example"
     },
     {
-      "path": "docs/examples/crew-dispatch.json",
+      "path": "docs/examples/pilot-config.example.yaml",
       "audience": "operator-example"
     },
     {
@@ -351,6 +435,14 @@
     {
       "path": "docs/examples/wedge-alarm",
       "audience": "operator-example"
+    },
+    {
+      "path": "docs/extension-bindings.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/fleet-tui.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/fm-test-isolation-proof.md",
@@ -375,6 +467,14 @@
     {
       "path": "docs/pi-supervision-branch.md",
       "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/pilot.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/pxpipe-chain.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/remote-secondmates.md",
@@ -450,6 +550,10 @@
     },
     {
       "path": "docs/verification/dispatch-resolve.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/lint-memory.md",
       "audience": "maintainer-verification"
     },
     {

@@ -75,7 +75,8 @@
 #     current backlog rows). Does not invent live tasks; meta remains truth for
 #     workers. Bearings maps failures into omitted[] disclosure (and a Charted
 #     Next gate line) rather than silent empty Underway.
-#   secondmate_current: {records[],total,shown,truncated} - bounded current summaries
+#   secondmate_current: {registry,records[],total_registered,total,shown,truncated} -
+#     the bounded registry read plus bounded current summaries
 #     for registered secondmates, selected from validated structured state inside
 #     each home with explicit provenance, freshness, endpoint evidence, and unknown
 #     failure reasons. Parent status and bounded terminal evidence are historical,
@@ -1920,6 +1921,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
          parent_event:{raw:$event_raw,note:$event_note,age_seconds:$event_age,open_activities:$activities,open_decisions:$decisions,activity_scan:$activity_scan},
          terminal_evidence:$terminal,contradiction:false}' >> "$records_file" || return 1
     fi
+
   done <<EOF
 $rows
 EOF

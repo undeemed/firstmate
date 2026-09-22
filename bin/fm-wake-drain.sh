@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Present durable watcher wake records, retire rows no actor could ever consume,
-# optionally acknowledge handled records,
+# drop records naming a retired worker, optionally acknowledge handled records,
 # annotate every unread line for validated signal status keys, surface unread
 # informational status lines, latest captain-facing statuses not covered by a
-# newer branch outcome, OPEN DECISIONS, and captain-call record divergence,
-# then assert liveness.
+# newer branch outcome, OPEN DECISIONS, stated decision keys the fold could not
+# use as written, and captain-call record divergence, then assert liveness.
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
@@ -21,6 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-retire-lib.sh
+. "$SCRIPT_DIR/fm-retire-lib.sh"
 # shellcheck source=bin/fm-lease-lib.sh
 . "$SCRIPT_DIR/fm-lease-lib.sh"
 
@@ -222,6 +224,26 @@ esac
 # Never let a guard hiccup change the drain's exit status.
 assert_watcher_liveness() {
   "$SCRIPT_DIR/fm-guard.sh" || true
+}
+
+# Litter that outlives its task's records has nobody left to remove it, so the
+# sweep runs on a schedule instead of on any one teardown. bin/fm-orphan-sweep.sh
+# owns what is safe to remove and prints nothing when there is nothing to
+# reclaim; this owns only the cadence, the bound, and the marker that keeps it
+# to once an hour, dated by its own mtime. The bound is deliberately short: every category is
+# idempotent, so a run cut off part way simply continues when it is next due.
+# Reports on stderr with the drain's other operational notes, never on the
+# stdout a caller reads wake records from.
+ORPHAN_SWEEP_MARKER="$STATE/.orphan-sweep-last"
+
+run_orphan_sweep_if_due() {
+  [ "${FM_ORPHAN_SWEEP:-on}" = off ] && return 0
+  find "$ORPHAN_SWEEP_MARKER" -newermt '-1 hour' -print -quit 2>/dev/null | grep -q . && return 0
+  # Claim the slot before doing the work, so a second drain inside the same
+  # window skips it rather than repeating the scan.
+  touch "$ORPHAN_SWEEP_MARKER" 2>/dev/null || return 0
+  fm_run_timed 45 \
+    "$SCRIPT_DIR/fm-orphan-sweep.sh" >&2 || true
 }
 
 # Mark presentation-stage inactive terminal outcomes only after the handling
@@ -508,6 +530,99 @@ EOF
   printf "OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'\n" || return 1
 }
 
+# Print the KEY SYNTAX section: every newly appended decision line whose stated
+# "[key=...]" token the fold cannot use as written. It exists because that loss
+# is invisible in the listing above - the note still shows the literal token, so
+# the entry reads as correctly keyed while the fold placed it under "default" (or
+# skipped it), and the first symptom is fm-send refusing the answer. Warning is
+# the only available shape: workers append status with a plain `echo`, so there
+# is no write path to refuse at (contract: bin/fm-classify-lib.sh "stated-key
+# syntax guard"). Bounded and silent like the sections above, except that a row
+# the byte cap omits is not recorded as warned: the task's marker advances only
+# through the last row shown before the cut, so the omitted tail re-warns next
+# drain instead of vanishing behind the omission count.
+print_key_syntax_section() {
+  local snapshot=$1 rows task lineend reason line item_bytes=220 global_bytes=1500
+  local output='' used=0 shown=0 omitted=0 bytes hint
+  local tab cur_task='' cur_end='' cur_omitted=0 capped='' commit_rows='' s_task s_end s_ident frozen nl='
+'
+  tab=$(printf '\t')
+
+  rows=$(scan_key_syntax_warnings_snapshot "$STATE" "$snapshot") || return 1
+  if [ -z "$rows" ]; then
+    commit_key_syntax_markers "$STATE" "$snapshot"
+    return 0
+  fi
+
+  while IFS=$tab read -r task lineend reason line; do
+    [ -n "$task" ] || continue
+    if [ "$task" != "$cur_task" ]; then
+      if [ -n "$cur_task" ] && [ "$cur_omitted" -eq 1 ]; then
+        capped="$capped$cur_task$tab$cur_end$nl"
+      fi
+      cur_task=$task
+      cur_end=''
+      cur_omitted=0
+    fi
+    case "$reason" in
+      unplaced-key) hint='key token past the note head, so this line folded under "default"' ;;
+      invalid-slug) hint='key slug outside A-Za-z0-9._-, so the fold skipped this line entirely' ;;
+      late-key) hint='key token after the colon: honored, but write it before the colon' ;;
+      *) hint="$reason" ;;
+    esac
+    line="$task $hint: $line"
+    fm_cap_line_var "$line" $((item_bytes - 1))
+    line=$FM_LINE_CAP_LINE
+    bytes=$(( ${#line} + 1 ))
+    if [ $((used + bytes)) -gt "$global_bytes" ]; then
+      omitted=$((omitted + 1))
+      cur_omitted=1
+      continue
+    fi
+    output="$output$line
+"
+    used=$((used + bytes))
+    shown=$((shown + 1))
+    if [ "$cur_omitted" -eq 0 ]; then
+      cur_end=$lineend
+    fi
+  done <<EOF
+$rows
+EOF
+  if [ -n "$cur_task" ] && [ "$cur_omitted" -eq 1 ]; then
+    capped="$capped$cur_task$tab$cur_end$nl"
+  fi
+
+  [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || return 0
+  printf 'KEY SYNTAX (a stated decision key the fold could not use as written - not re-printed once recorded as warned):\n' || return 1
+  printf '%s' "$output" || return 1
+  if [ "$omitted" -gt 0 ]; then
+    printf 'KEY SYNTAX: %d more omitted (byte cap) - re-warned next drain\n' "$omitted" || return 1
+  fi
+  printf 'KEY SYNTAX: the documented position is before the colon - needs-decision [key=<slug>]: <summary>; steer the worker, and answer an affected decision by the key the open listing above actually shows.\n' || return 1
+
+  if [ -z "$capped" ]; then
+    commit_key_syntax_markers "$STATE" "$snapshot"
+    return 0
+  fi
+  while IFS=$tab read -r s_task s_end s_ident; do
+    [ -n "$s_task" ] || continue
+    case "$nl$capped" in
+      *"$nl$s_task$tab"*)
+        frozen=$nl$capped
+        frozen=${frozen#*"$nl$s_task$tab"}
+        frozen=${frozen%%"$nl"*}
+        [ -n "$frozen" ] || continue
+        commit_rows="$commit_rows$s_task$tab$frozen$tab$s_ident$nl"
+        ;;
+      *) commit_rows="$commit_rows$s_task$tab$s_end$tab$s_ident$nl" ;;
+    esac
+  done <<EOF
+$snapshot
+EOF
+  commit_key_syntax_markers "$STATE" "$commit_rows"
+}
+
 # Print the RECORD DIVERGENCE section: every captain call whose two records
 # contradict each other - the status log says a key was resolved outright while
 # the task held for the captain is still open. Nothing here closes anything; the
@@ -578,6 +693,7 @@ print_status_sections() {
     print_unread_status_section "$snapshot" \
       && print_status_outcome_backstop_section "$snapshot" \
       && print_open_decisions_section "$snapshot" \
+      && print_key_syntax_section "$snapshot" \
       && print_record_divergence_section
   } > "$prepared"; then
     rm -f -- "$prepared"
@@ -627,6 +743,32 @@ print_status_presentation() {  # [<deduped-raw-rows>]
   if [ "$rc" -eq 0 ] && [ -n "$snapshot" ]; then print_status_sections "$snapshot" "$fully_presented" || rc=1; fi
   fm_lock_release "$lock"
   return "$rc"
+}
+
+# Drop consumed records that name a worker this home has already retired.
+# bin/fm-teardown.sh purges such records at retirement; this is the backstop for
+# the one record a watcher cycle can still append while that teardown runs,
+# which would otherwise be delivered as an alarm the receiving home has no way
+# to clear. bin/fm-retire-lib.sh owns the positive-proof rule that keeps a live
+# worker's alarm untouched; anything it cannot prove retired is printed
+# unchanged. Dropped records are noted in the watcher's absorbed-wake debug log,
+# never on stdout, because naming the retired worker there is the alarm itself.
+drop_retired_rows() {  # <deduped-raw-rows>
+  local rows=$1 line kind key
+  [ -n "$rows" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    kind=$(printf '%s' "$line" | cut -f3)
+    key=$(printf '%s' "$line" | cut -f4)
+    if fm_retire_wake_record_is_retired "$STATE" "$kind" "$key"; then
+      fm_retire_log "$STATE" "dropped wake for a retired task at drain: $line"
+      continue
+    fi
+    printf '%s\n' "$line"
+  done <<EOF
+$rows
+EOF
+  return 0
 }
 
 # shellcheck disable=SC2317,SC2329 # Invoked by trap handlers below.
@@ -801,6 +943,7 @@ if [ ! -s "$FM_WAKE_QUEUE" ]; then
   if [ "$RECOVERY_ACK_REQUIRED" = true ]; then
     printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation %s\n' "${RECOVERY_MARKER_TOKEN##*:}" >&2
   fi
+  run_orphan_sweep_if_due
   assert_watcher_liveness
   exit 0
 fi
@@ -861,6 +1004,9 @@ RAW_ROWS=$(fm_wake_print_deduped "$DRAIN_VIEW_TMP") || exit "$?"
 rm -f -- "$DRAIN_VIEW_TMP" || exit 1
 DRAIN_VIEW_TMP=
 ACK_THROUGH=$(printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$2 ~ /^[0-9]+$/ && $2 > max { max=$2 } END { print max + 0 }') || exit 1
+# Retired-task rows are acknowledged (they are inside ACK_THROUGH above) but
+# never presented: their worker is gone, so the wake names nothing to handle.
+RAW_ROWS=$(drop_retired_rows "$RAW_ROWS")
 case "${FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
   0) ;;
   ''|*[!0-9]*) ;;

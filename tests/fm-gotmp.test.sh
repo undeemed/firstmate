@@ -80,7 +80,6 @@ SH
   # fm-timeout-lib.sh: the shared hard bound fm-classify-lib.sh sources for the
   # wedge detector's bounded worktree write probe.
   ln -s "$ROOT/bin/fm-timeout-lib.sh" "$fake/bin/fm-timeout-lib.sh"
-  ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
   # fm-gate-refuse-lib.sh: teardown sources it before any fleet mutation.
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
@@ -99,6 +98,12 @@ SH
   ln -s "$ROOT/bin/fm-pending-reply-lib.sh" "$fake/bin/fm-pending-reply-lib.sh"
   ln -s "$ROOT/bin/fm-marker-lib.sh" "$fake/bin/fm-marker-lib.sh"
   ln -s "$ROOT/bin/fm-operational-input.sh" "$fake/bin/fm-operational-input.sh"
+  # fm-wake-lib.sh: teardown sources it for serialized secondmate lifecycle locks.
+  ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
+  # fm-retire-lib.sh: teardown sources it for retirement-finality purges.
+  ln -s "$ROOT/bin/fm-retire-lib.sh" "$fake/bin/fm-retire-lib.sh"
+  # fm-worktree-claim-lib.sh: teardown sources it for the shared-checkout co-tenant rules.
+  ln -s "$ROOT/bin/fm-worktree-claim-lib.sh" "$fake/bin/fm-worktree-claim-lib.sh"
   # Ordinary teardown reports any final ledger outcome before removing records.
   ln -s "$ROOT/bin/fm-inactive-reconcile.sh" "$fake/bin/fm-inactive-reconcile.sh"
   ln -s "$ROOT/bin/fm-parent-channel-lib.sh" "$fake/bin/fm-parent-channel-lib.sh"
@@ -151,8 +156,8 @@ test_teardown_removes_tasktmp_dir() {
   # Sanity: dir + contents exist before teardown.
   [ -d "$task_tmp/gotmp" ] || fail "precondition: gotmp missing before teardown"
   # Run the REAL teardown against the fake root.
-  FM_HOME="$fake" bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \
-    || fail "teardown exited non-zero with a valid tasktmp"
+  FM_HOME="$fake" bash "$fake/bin/fm-teardown.sh" "$id" > "$TMP_ROOT/td-probe.out" 2>&1 \
+    || fail "teardown exited non-zero with a valid tasktmp: $(cat "$TMP_ROOT/td-probe.out")"
   [ ! -e "$task_tmp" ] \
     || fail "teardown did not remove the tasktmp dir ($task_tmp still exists)"
   pass "fm-teardown removes the dir pointed to by tasktmp= in meta"
@@ -181,7 +186,6 @@ SH
   # fm-timeout-lib.sh: the shared hard bound fm-classify-lib.sh sources for the
   # wedge detector's bounded worktree write probe.
   ln -s "$ROOT/bin/fm-timeout-lib.sh" "$fake/bin/fm-timeout-lib.sh"
-  ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
   # fm-gate-refuse-lib.sh: teardown sources it before any fleet mutation.
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
@@ -198,6 +202,11 @@ SH
   ln -s "$ROOT/bin/fm-pending-reply-lib.sh" "$fake/bin/fm-pending-reply-lib.sh"
   ln -s "$ROOT/bin/fm-marker-lib.sh" "$fake/bin/fm-marker-lib.sh"
   ln -s "$ROOT/bin/fm-operational-input.sh" "$fake/bin/fm-operational-input.sh"
+  ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
+  # fm-retire-lib.sh: teardown sources it for retirement-finality purges.
+  ln -s "$ROOT/bin/fm-retire-lib.sh" "$fake/bin/fm-retire-lib.sh"
+  # fm-worktree-claim-lib.sh: teardown sources it for the shared-checkout co-tenant rules.
+  ln -s "$ROOT/bin/fm-worktree-claim-lib.sh" "$fake/bin/fm-worktree-claim-lib.sh"
   ln -s "$ROOT/bin/fm-inactive-reconcile.sh" "$fake/bin/fm-inactive-reconcile.sh"
   ln -s "$ROOT/bin/fm-parent-channel-lib.sh" "$fake/bin/fm-parent-channel-lib.sh"
   cat > "$fake/bin/fm-guard.sh" <<'SH'

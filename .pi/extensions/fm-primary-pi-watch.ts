@@ -53,7 +53,7 @@ import {
   calmTranscriptClassIsVisible,
   FIRSTMATE_CALM_PRESENTATION_EVENT,
 } from "./lib/fm-calm-visibility.ts";
-import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.ts";
+import { encodeFirstmateOperationalInput } from "../../extensions/lib/fm-operational-input.ts";
 
 type ArmResult = {
   ok: boolean;

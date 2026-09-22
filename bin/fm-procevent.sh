@@ -18,6 +18,7 @@
 #   fm-procevent.sh extension-bind <bind|receive-transfer-bind> <binding-arguments...>
 #   fm-procevent.sh extension-process-event <process-event-arguments...>
 #   fm-procevent.sh list
+#   fm-procevent.sh alive <source-id>
 #
 # register   Record a built-in source: its adapter, its canonical id, and the
 #            exact argv to execute. argv is stored one argument per line and
@@ -113,6 +114,21 @@
 #            Serialize tracked binding publication against extension resolution,
 #            registration publication, and retirement in this home.
 # list       Show registered sources, owners, and pending captured results.
+#            Ownership is not liveness: a source can be registered, and even
+#            owned, while the process that was supposed to be blocking on it is
+#            gone.
+# alive      Prove one source is being consumed RIGHT NOW, for a caller about to
+#            promise that the far side is listening. It requires a registration,
+#            an owning claim whose runner leader is alive and identity-matched,
+#            and at least one other process still in that runner's own process
+#            group - the child it launched. Exit 0 prints `listening:`; exit 3
+#            prints `not-polling:` for a live runner whose group holds nothing
+#            else, a transient state rather than proof of a dead channel; exit 1
+#            prints `not-listening:` for everything else, including a
+#            registration nothing owns. This stays adapter-neutral: it inspects
+#            processes, never a result, so an adapter that must also prove its
+#            own far-side process (Lavish proves a live poll for the board)
+#            layers that on top.
 #
 # Terminal knowledge is adapter-owned. This runner never inspects a result and
 # never names an adapter-specific status: built-ins keep the existing
@@ -935,7 +951,7 @@ cmd_start_public() {
 }
 
 cmd_start() {
-  local id=${1-} adapter out rc claimed bound_rc published_capture=0 handled_capture=0 self_announcing=0 task_owner='' task_pending
+  local id=${1-} adapter out rc claimed bound_rc published_capture=0 handled_capture=0 self_announcing=0 autohandled_capture=0 task_owner='' task_pending
   local extension_owner=0 extension_load_state extension_sequence='' extension_request_id=''
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
   require_runner_group
@@ -1259,9 +1275,8 @@ EOF
   [ "$extension_owner" -eq 1 ] || rm -f -- "$runner"
   if [ "$self_announcing" -eq 1 ]; then
     if adapter_autohandle "$adapter" "$id" "$durable"; then
+      autohandled_capture=1
       printf 'autohandled: %s\n' "$id"
-    else
-      printf 'not-autohandled: %s (left for the handler; still unacknowledged)\n' "$id" >&2
     fi
     # publish_result's own handled guard keeps a fully autohandled capture
     # quiet here; anything the adapter left unhandled is announced exactly as
@@ -1270,6 +1285,13 @@ EOF
       published_capture=1
     fi
     publish_pending "$durable" >/dev/null
+    # Only a result that is still waiting for a handler is reported as
+    # unacknowledged. A routine no-op publish_result recorded as handled -
+    # silence the adapter positively identified - is neither autohandled nor
+    # outstanding, so saying it is unacknowledged would contradict the record.
+    if [ "$autohandled_capture" -eq 0 ] && [ "$published_capture" -eq 1 ]; then
+      printf 'not-autohandled: %s (left for the handler; still unacknowledged)\n' "$id" >&2
+    fi
   elif [ "$handled_capture" -eq 1 ]; then
     :
   elif [ "$extension_owner" -eq 0 ] \
@@ -2189,6 +2211,45 @@ cmd_sweep_home() {
   printf 'swept: attempted=%s\n' "$attempted"
 }
 
+# The one live member of a runner's process group that is not the leader itself:
+# the child the runner launched and is blocked on. Read from the process table,
+# so it is the same fact whichever home owns the claim.
+runner_group_child() {  # <leader-pid>
+  local leader=$1 child
+  case "$leader" in ''|*[!0-9]*) return 1 ;; esac
+  child=$(ps -eo pid=,pgid= 2>/dev/null \
+    | awk -v leader="$leader" '$2 == leader && $1 != leader { print $1; exit }')
+  [ -n "$child" ] || return 1
+  printf '%s\n' "$child"
+}
+
+cmd_alive() {
+  local id=${1-} state pid='' child
+  [ "$#" -eq 1 ] || usage
+  fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
+  if [ ! -f "$(source_file "$id")" ] || [ -L "$(source_file "$id")" ]; then
+    printf 'not-listening: %s (no registration)\n' "$id"
+    return 1
+  fi
+  fm_procevent_source_lock_acquire "$id" || die "cannot lock source: $id"
+  fm_procevent_claim_state_locked "$id"
+  state=$?
+  [ "$state" -eq 1 ] || pid=$FM_PROCEVENT_CLAIM_PID
+  fm_procevent_source_lock_release "$id"
+  case "$state" in
+    0) ;;
+    1) printf 'not-listening: %s (registered with no live owner)\n' "$id"; return 1 ;;
+    3) printf 'not-listening: %s (the runner leader died; its group is still up)\n' "$id"; return 1 ;;
+    4) printf 'not-listening: %s (retiring on a terminal result)\n' "$id"; return 1 ;;
+    *) printf 'not-listening: %s (ownership cannot be read)\n' "$id"; return 1 ;;
+  esac
+  if ! child=$(runner_group_child "$pid"); then
+    printf 'not-polling: %s (runner %s is alive with no source process)\n' "$id" "$pid"
+    return 3
+  fi
+  printf 'listening: %s runner=%s source-process=%s\n' "$id" "$pid" "$child"
+}
+
 cmd_list() {
   local rec id adapter owner pending claim_state kind task
   owner_lease_refresh
@@ -2351,6 +2412,7 @@ case "${1-}" in
   extension-bind) shift; cmd_extension_bind "$@" ;;
   extension-process-event) shift; cmd_extension_process_event "$@" ;;
   list)               shift; cmd_list "$@" ;;
+  alive)              shift; cmd_alive "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;
 esac

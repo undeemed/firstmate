@@ -359,6 +359,10 @@ case " $* " in
       # it kills, so delegating to the real binary at all - even after a pause -
       # lets an orphan complete the move the case requires left undone.
       handoff_pid=$(ps -o ppid= -p "$PPID" | tr -d '[:space:]')
+      # A PRE-move crash: the move must never land. Falling through to the real
+      # tasks-axi below would run it a second later, racing this test's own
+      # assertions - the item would sometimes move anyway and the recovery retry
+      # would then fail with NOT_FOUND.
       fm-crash-inject "$handoff_pid" || exit 1
       exit 137
     fi

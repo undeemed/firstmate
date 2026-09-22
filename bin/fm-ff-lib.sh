@@ -40,6 +40,8 @@
 SUB_HOME_MARKER="${SUB_HOME_MARKER:-.fm-secondmate-home}"
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-secondmate-registry-lib.sh"
+# shellcheck source=bin/fm-worktree-claim-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-worktree-claim-lib.sh"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -72,12 +74,6 @@ primary_head_commit() {
   local root=$1 default
   default=$(default_branch "$root") || return 1
   git -C "$root" rev-parse --verify --quiet "refs/heads/$default^{commit}" 2>/dev/null || return 1
-}
-
-resolve_path() {
-  # Resolve to a canonical absolute path, falling back to the literal input
-  # when the directory does not exist (so callers can still dedup/skip on it).
-  ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s\n' "$1"
 }
 
 resolved_existing_dir() {
@@ -237,6 +233,17 @@ changed_instr() {
   printf '%s' "$out"
 }
 
+# " (N commit(s) behind)" when the target is genuinely behind its fast-forward
+# base, and empty otherwise. Every skip below carries it, because a skip has to
+# say that real commits are being LEFT behind: a silent skip is how a whole fleet
+# kept running yesterday's instructions while every report still looked healthy.
+ff_behind_note() {
+  local dir=$1 base=$2 behind
+  behind=$(git -C "$dir" rev-list --count "HEAD..$base" 2>/dev/null) || return 0
+  case "$behind" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$behind" -gt 0 ] || return 0
+  printf ' (%s commit(s) behind)' "$behind"
+}
 # Translate one remote home sync leg's failure into an operator-actionable
 # reason. The remote leg refuses a command shape it does not recognize with this
 # status, which on this leg can only mean that host's Firstmate copy predates the
@@ -360,9 +367,10 @@ live_secondmate_meta_records() {
 #                  for a worktree of this same repo; a standalone clone that lacks
 #                  it is skipped rather than fetched.
 # Guards are identical in both modes: never force/merge/stash; skip a dirty or
-# wrong-branch target and leave its work untouched. An optional secondmate id
-# enables the content-equivalent divergence proof and durable marker described
-# in this file's header.
+# wrong-branch target and leave its work untouched. A skip that leaves real
+# commits behind says how many, so drift stays visible even where it cannot be
+# repaired. An optional secondmate id enables the content-equivalent divergence
+# proof and durable marker described in this file's header.
 FF_STATUS=""
 FF_INSTR=""
 ff_target() {
@@ -408,16 +416,16 @@ ff_target() {
 
   cur=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null || echo "")
   if [ -z "$cur" ] && [ "$allow_detached" != yes ]; then
-    echo "$label: skipped: detached HEAD, expected $default"
+    echo "$label: skipped: detached HEAD, expected $default$(ff_behind_note "$dir" "$base")"
     return 0
   fi
   if [ -n "$cur" ] && [ "$cur" != "$default" ]; then
-    echo "$label: skipped: on $cur, expected $default"
+    echo "$label: skipped: on $cur, expected $default$(ff_behind_note "$dir" "$base")"
     return 0
   fi
 
   if [ -n "$(dirty_status "$dir" "$ignore_seed_marker")" ]; then
-    echo "$label: skipped: dirty working tree"
+    echo "$label: skipped: dirty working tree$(ff_behind_note "$dir" "$base")"
     return 0
   fi
 
@@ -463,7 +471,7 @@ ff_target() {
         echo "$label: skipped: diverged from $base; reconciliation required, but its durable record could not be written"
       fi
     else
-      echo "$label: skipped: diverged from $base"
+      echo "$label: skipped: diverged from $base$(ff_behind_note "$dir" "$base")"
     fi
     return 0
   fi
@@ -471,7 +479,7 @@ ff_target() {
   instr=$(changed_instr "$dir" "$base")
   before=$(git -C "$dir" rev-parse --short HEAD)
   if ! out=$(git -C "$dir" merge --ff-only "$base" 2>&1); then
-    echo "$label: skipped: fast-forward failed: $(first_line "$out")"
+    echo "$label: skipped: fast-forward failed: $(first_line "$out")$(ff_behind_note "$dir" "$base")"
     return 0
   fi
   after=$(git -C "$dir" rev-parse --short HEAD)
@@ -519,8 +527,8 @@ process_secondmate() {
   local id=$1 home=$2 window=${3:-} base_mode=$4 nudge_requires_instr=${5:-no} home_real fm_root_real
   [ -n "$id" ] || return 0
   [ -n "$home" ] || return 0
-  fm_root_real=$(resolve_path "$FM_ROOT")
-  home_real=$(resolve_path "$home")
+  fm_root_real=$(fm_worktree_real_path "$FM_ROOT")
+  home_real=$(fm_worktree_real_path "$home")
   [ "$home_real" != "$fm_root_real" ] || return 0
   if ! validate_secondmate_home "$id" "$home"; then
     echo "secondmate $id: skipped: unsafe home: $VALIDATION_ERROR"

@@ -898,6 +898,204 @@ test_ship_and_scout_teach_validation_round_pause() {
   pass "fm-brief.sh: ship and scout scaffolds teach validation-round pauses"
 }
 
+# A finished-and-quiet worker must be distinguishable from a wedged one, so ship
+# and scout scaffolds require a declared stop before the pane goes still. The
+# secondmate charter is idle-by-default and deliberately keeps its own contract.
+test_ship_and_scout_declare_every_stop() {
+  local home kind id brief
+  home="$TMP_ROOT/declare-stop-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout; do
+    id="declare-stop-$kind"
+    case "$kind" in
+      ship)
+        FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
+          "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+        ;;
+      scout)
+        FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
+          "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+        ;;
+    esac
+    brief="$home/data/$id/brief.md"
+    assert_grep 'Declare every stop before you go quiet' "$brief" \
+      "$kind brief did not require a declared stop"
+    # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
+    assert_grep 'awaiting: {why}` or `blocked: {why}` first' "$brief" \
+      "$kind brief did not render both declared-stop verbs with the configured pause verb"
+    assert_grep 'Finishing a block with nothing queued' "$brief" \
+      "$kind brief did not count a finished block with nothing queued as stopping"
+    assert_grep 'say what is ready and where it sits' "$brief" \
+      "$kind brief did not require the ready-work location in a declared stop"
+    assert_grep 'A still pane with no declared state is indistinguishable from a wedge' "$brief" \
+      "$kind brief did not state the wedge-ambiguity reason"
+    assert_grep 'must spend a deep inspection to tell them apart' "$brief" \
+      "$kind brief did not state the deep-inspection cost"
+  done
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    "$ROOT/bin/fm-brief.sh" declare-stop-secondmate --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/declare-stop-secondmate/brief.md"
+  assert_no_grep 'Declare every stop before you go quiet' "$brief" \
+    "secondmate charter picked up the crewmate declared-stop requirement"
+  assert_grep 'An empty queue is a healthy resting state' "$brief" \
+    "secondmate charter lost its idle-by-default contract"
+  assert_grep 'never only in this chat' "$brief" \
+    "secondmate charter lost its marked-return-channel contract"
+  pass "fm-brief.sh: ship and scout briefs declare every stop; the charter keeps its idle contract"
+}
+
+# Every scaffold must make the worker visible while it works: the same progress
+# contract in all three kinds, every percentage from a real count, no bar at all
+# without a countable denominator, and no loosening of the sparse status
+# protocol it sits beside. The status-file prohibition is not cosmetic -
+# tests/fm-classify-decision-key.test.sh proves a stacked bar block appended
+# after a verb line hides that verb from every last-line consumer.
+test_every_scaffold_carries_the_progress_contract() {
+  local home kind id brief
+  home="$TMP_ROOT/progress-contract-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout secondmate; do
+    id="progress-$kind"
+    case "$kind" in
+      ship)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+        ;;
+      scout)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+        ;;
+      secondmate)
+        FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+          "$ROOT/bin/fm-brief.sh" "$id" --secondmate --no-projects >/dev/null 2>&1
+        ;;
+    esac
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$kind brief was not scaffolded"
+
+    assert_grep '# Progress - do not be a black box' "$brief" \
+      "$kind brief is missing the progress-visibility section"
+    assert_grep 'Agent repair   [██░░░░░░░░░░░░]  10%' "$brief" \
+      "$kind brief is missing the rendered stacked-bar example"
+    # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+    assert_grep 'Bar is exactly 14 cells between `[` and `]`' "$brief" \
+      "$kind brief is missing the fixed 14-cell bar width"
+    # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+    assert_grep 'filled cells = `round(percent * 14 / 100)`' "$brief" \
+      "$kind brief is missing the fill derivation"
+    assert_grep 'Percent right-aligned in 3 characters' "$brief" \
+      "$kind brief is missing the percent alignment"
+    assert_grep 'innermost first' "$brief" \
+      "$kind brief is missing the innermost-first track ordering"
+
+    assert_grep 'Every percentage must come from a real count you can name' "$brief" \
+      "$kind brief is missing the real-count rule"
+    # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+    assert_grep 'Derive it as `done / total`' "$brief" \
+      "$kind brief is missing the done/total derivation"
+    assert_grep 'Never invent a number to look busy' "$brief" \
+      "$kind brief is missing the never-invent prohibition"
+    assert_grep 'A fabricated 34% is worse than no bar' "$brief" \
+      "$kind brief does not say a fabricated percentage is worse than no bar"
+    assert_grep 'omit the bar entirely' "$brief" \
+      "$kind brief does not require omitting the bar without a denominator"
+    assert_grep 'Root cause     step 3, total unknown - still narrowing' "$brief" \
+      "$kind brief is missing the honest no-denominator shape"
+
+    assert_grep 'a bar is never a reason to append one' "$brief" \
+      "$kind brief lets a bar become a reason to append a status line"
+    assert_grep 'never append a stacked bar block to the status file' "$brief" \
+      "$kind brief does not keep stacked bar blocks out of the status file"
+    assert_grep 'supervision reads the LAST line of that file' "$brief" \
+      "$kind brief does not state why a stacked block cannot go in the status file"
+  done
+
+  # The progress contract rides ALONGSIDE the status protocol; it must not have
+  # replaced or relaxed the sparse-append rule in any kind.
+  assert_grep 'report sparingly' "$home/data/progress-ship/brief.md" \
+    "ship brief lost its sparse status-append rule"
+  assert_grep 'No step-by-step FYI progress lines' "$home/data/progress-ship/brief.md" \
+    "ship brief lost its no-FYI-progress rule"
+  assert_grep 'report sparingly' "$home/data/progress-scout/brief.md" \
+    "scout brief lost its sparse status-append rule"
+  assert_grep 'Use this only for material phase changes' "$home/data/progress-secondmate/brief.md" \
+    "secondmate charter lost its material-phase-change escalation rule"
+  pass "fm-brief.sh: every scaffold carries the progress-bar contract without loosening status appends"
+}
+
+# Three workers in one session appended `done:` with no deliverable - one with no
+# PR open at all. The prohibition must reach EVERY generated variant, so a future
+# scaffold change cannot leave one delivery mode reading an intention as
+# completion.
+test_every_scaffold_forbids_intention_as_completion() {
+  local home id brief
+  home="$TMP_ROOT/status-honesty-home"
+  mkdir -p "$home/data"
+
+  for id_mode in "honesty-a1:no-mistakes" "honesty-a2:direct-PR" "honesty-a3:local-only"; do
+    id=${id_mode%%:*}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_mode##*:}" >/dev/null 2>&1 \
+      || fail "$id: ship scaffold failed"
+  done
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" honesty-a4 some-proj --scout >/dev/null 2>&1 \
+    || fail "scout scaffold failed"
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" honesty-a5 --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "secondmate charter scaffold failed"
+
+  for id in honesty-a1 honesty-a2 honesty-a3 honesty-a4 honesty-a5; do
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep '# Status honesty' "$brief" \
+      "$id: brief is missing the status-honesty section"
+    # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+    assert_grep 'no PR where your definition of done requires one' "$brief" \
+      "$id: brief does not name the observed false-report failure shape"
+    assert_grep 'is a false report, not a status update' "$brief" \
+      "$id: brief does not call an unfinished done a false report"
+  done
+
+  # Wording of the rest of the block, pinned once: it is one interpolated
+  # variable, so the loop above already proves every kind carries these bytes.
+  brief="$home/data/honesty-a1/brief.md"
+  # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+  assert_grep 'Append `done:` ONLY when the deliverable your definition of done names provably exists' "$brief" \
+    "brief does not require the deliverable to exist before done"
+  assert_grep 'the pull request URL, the report path, the merged commit, or the committed branch' "$brief" \
+    "brief does not require the done line to name its evidence"
+  # shellcheck disable=SC2016 # Literal backticks must reach the brief unexpanded.
+  assert_grep 'the line is `working:`, or `blocked:` when you need help - never `done:`' "$brief" \
+    "brief does not send an unfinished worker to the working or blocked verb"
+  pass "fm-brief.sh: every scaffold forbids reporting an intention as completion"
+}
+
+# Every worker scaffold must ban the forge polling loop and name the armed merge
+# poll that replaces it; bin/fm-brief.sh owns the measured reason.
+test_every_worker_scaffold_forbids_forge_poll_loops() {
+  local home id brief
+  home="$TMP_ROOT/forge-poll-home"
+  mkdir -p "$home/data"
+
+  for id_mode in "poll-a1:no-mistakes" "poll-a2:direct-PR" "poll-a3:local-only"; do
+    id=${id_mode%%:*}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_mode##*:}" >/dev/null 2>&1 \
+      || fail "$id: ship scaffold failed"
+  done
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" poll-a4 some-proj --scout >/dev/null 2>&1 \
+    || fail "scout scaffold failed"
+
+  for id in poll-a1 poll-a2 poll-a3 poll-a4; do
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep 'Never wait on a forge by polling it in a shell loop' "$brief" \
+      "$id: brief does not forbid the shell polling loop"
+    assert_grep 'bin/fm-pr-check.sh' "$brief" \
+      "$id: brief does not point at the armed merge poll that replaces the loop"
+  done
+  pass "fm-brief.sh: every worker scaffold bans forge polling loops and names the armed poll"
+}
+
 test_scout_and_secondmate_load_decision_hold_policy() {
   local home scout charter
   home="$TMP_ROOT/decision-policy-home"
@@ -952,6 +1150,65 @@ ROWS
   pass "fm-brief.sh: scout Lavish hosting follows the bootstrap lavish-axi floor"
 }
 
+# The brief, not AGENTS.md, is what binds the worker: every ship mode must carry a
+# runnable lean gate with its exit codes, and neither scout nor charter may.
+test_ship_modes_carry_the_lean_gate_and_scout_charter_do_not() {
+  local home id mode brief
+  home="$TMP_ROOT/lean-gate-home"
+  mkdir -p "$home/data"
+
+  for id_mode in "brief-lean-d1:no-mistakes" "brief-lean-d2:direct-PR" "brief-lean-d3:local-only"; do
+    id=${id_mode%%:*}
+    mode=${id_mode##*:}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$id: ship scaffold failed"
+    brief="$home/data/$id/brief.md"
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    assert_grep 'run `ponytail-review <base>` against the branch base you started from' "$brief" \
+      "$mode: ship brief lost the runnable ponytail lean gate"
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    assert_no_grep 'bare `ponytail-review`' "$brief" \
+      "$mode: ship brief teaches the bare form, which reviews an empty diff on committed work and answers exit 1"
+    assert_no_grep '/ponytail-review' "$brief" \
+      "$mode: ship brief invokes the Claude-only slash command a non-Claude crewmate cannot run"
+    assert_grep 'exit 1 means the gate COULD NOT RUN' "$brief" \
+      "$mode: ship brief lost the could-not-run exit code, the one a worker must never read as a pass"
+    assert_grep 'name any finding you deliberately did not cut with the reason it earns its place' "$brief" \
+      "$mode: ship brief lost the kept-finding disclosure"
+    # The gate has answered exit 0 and exit 2 on one unchanged diff, and has
+    # reversed its own earlier ruling, so an unbounded re-run loop never lands.
+    assert_grep 'bounded at THREE rounds' "$brief" \
+      "$mode: ship brief lost the round bound, so the gate can loop forever"
+    assert_grep 'never obey a finding that reverses what an earlier round ruled' "$brief" \
+      "$mode: ship brief lost the contradiction rule, so a reversed ruling gets obeyed"
+    assert_grep 'When the third round still exits 2' "$brief" \
+      "$mode: ship brief lost what to do when the bound is reached"
+  done
+
+  assert_grep 'Carry that verdict into the PR body' "$home/data/brief-lean-d1/brief.md" \
+    "no-mistakes brief must gate before the pipeline opens the PR and report in the PR body"
+  assert_grep 'Report that verdict in the PR body' "$home/data/brief-lean-d2/brief.md" \
+    "direct-PR brief must gate before the worker opens the PR and report in the PR body"
+
+  # local-only stops at a clean branch, so its gate is worded for the handoff and
+  # must never inherit PR wording it can never satisfy.
+  assert_grep 'Record that verdict in your handoff' "$home/data/brief-lean-d3/brief.md" \
+    "local-only brief must record the verdict in the handoff"
+  assert_no_grep 'PR body' "$home/data/brief-lean-d3/brief.md" \
+    "local-only brief pasted PR wording into a no-PR delivery mode"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-lean-d4 some-proj --scout >/dev/null 2>&1 \
+    || fail "scout scaffold failed"
+  assert_no_grep 'ponytail-review' "$home/data/brief-lean-d4/brief.md" \
+    "scout brief inherited a PR gate it can never reach"
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-lean-d5 --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "secondmate charter scaffold failed"
+  assert_no_grep 'ponytail-review' "$home/data/brief-lean-d5/brief.md" \
+    "secondmate charter inherited a delivery gate it is not a contract for"
+  pass "fm-brief.sh: every ship mode carries the lean gate; scout and charter do not"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -978,6 +1235,58 @@ test_scout_and_secondmate_scaffold() {
     "secondmate charter must not carry the Firstmate spec placeholder"
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
+
+# The scaffolds are where a worker learns to name a decision. A "[key=<slug>]"
+# token stated later in the line is message text to the fold, so the decision
+# files under the shared "default" key, cannot be answered by its own key, and
+# collides with every other unkeyed decision on that task
+# (bin/fm-classify-lib.sh owns that grammar). Every generated variant must
+# therefore show the working position, on the opening line AND on the matching
+# resolved line.
+test_every_scaffold_states_the_key_before_the_colon() {
+  local home brief id
+  home="$TMP_ROOT/key-position-home"
+  mkdir -p "$home/data"
+
+  for id_mode in "brief-key-a1:no-mistakes" "brief-key-a2:direct-PR" "brief-key-a3:local-only"; do
+    id=${id_mode%%:*}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_mode##*:}" >/dev/null 2>&1 \
+      || fail "$id: ship scaffold failed"
+    brief="$home/data/$id/brief.md"
+    assert_grep "append \`needs-decision [key=<slug>]: {summary of options}\`" "$brief" \
+      "$id: ship brief does not show the key before the colon"
+    assert_grep "append \`resolved [key=<slug>]: {how it cleared}\`" "$brief" \
+      "$id: ship brief does not show the keyed resolved form"
+    assert_no_grep "append \`needs-decision: {summary of options}\`" "$brief" \
+      "$id: ship brief still teaches the unkeyed opening form"
+  done
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-key-a4 some-proj --scout >/dev/null 2>&1 \
+    || fail "scout scaffold failed"
+  brief="$home/data/brief-key-a4/brief.md"
+  assert_grep "append \`needs-decision [key=<slug>]: {summary of options}\`" "$brief" \
+    "scout brief does not show the key before the colon"
+  assert_grep "append \`resolved [key=<slug>]: {how it cleared}\`" "$brief" \
+    "scout brief does not show the keyed resolved form"
+  assert_no_grep "append \`needs-decision: {summary of options}\`" "$brief" \
+    "scout brief still teaches the unkeyed opening form"
+
+  FM_SECONDMATE_CHARTER='own the fixture domain' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-key-a5 --secondmate some-proj >/dev/null 2>&1 \
+    || fail "secondmate charter scaffold failed"
+  brief="$home/data/brief-key-a5/brief.md"
+  assert_grep "\`needs-decision [key=<slug>]: {summary}\`" "$brief" \
+    "secondmate charter does not show the key before the colon"
+  assert_grep "append \`resolved [key=<slug>]: {how it cleared}\`" "$brief" \
+    "secondmate charter does not show the keyed resolved form"
+
+  for id in brief-key-a1 brief-key-a4 brief-key-a5; do
+    assert_grep 'must sit BEFORE the colon' "$home/data/$id/brief.md" \
+      "$id: brief does not state the position rule the fold enforces"
+  done
+  pass "fm-brief.sh: every scaffold states a decision key before the colon"
+}
+
 
 test_worker_role_scope() {
   local kind home brief
@@ -1073,6 +1382,7 @@ test_no_mistakes_dod_wording
 test_pr_based_dod_requires_non_draft
 test_ask_user_escalation_format
 test_ship_project_memory_wording
+test_ship_modes_carry_the_lean_gate_and_scout_charter_do_not
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
@@ -1087,3 +1397,4 @@ test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_scout_lavish_line_follows_presentation_floor
 test_home_brief_include_is_appended_last
+test_every_scaffold_states_the_key_before_the_colon

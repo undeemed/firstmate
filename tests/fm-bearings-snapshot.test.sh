@@ -547,25 +547,6 @@ EOF
   pass "a structured child captain hold reaches Captain's Call"
 }
 
-make_valid_secondmate_home() {  # <id> <home>
-  local id=$1 home=$2
-  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects" "$home/bin"
-  printf '# Firstmate fixture\n' > "$home/AGENTS.md"
-  printf '%s\n' "$id" > "$home/.fm-secondmate-home"
-  cat > "$home/data/backlog.md" <<'EOF'
-## In flight
-
-## Queued
-
-## Done
-EOF
-}
-
-append_secondmate_registry() {  # <parent> <id> <home>
-  printf -- '- %s - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-07-13)\n' \
-    "$2" "$3" >> "$1/data/secondmates.md"
-}
-
 append_landed_row() {  # <secondmate-home> <id> <title> <date>
   printf -- '- [x] %s - %s (repo: firstmate) (kind: ship) (merged %s)\n' \
     "$2" "$3" "$4" >> "$1/data/backlog.md"
@@ -574,14 +555,9 @@ append_landed_row() {  # <secondmate-home> <id> <title> <date>
 make_landed_secondmate() {  # <parent> <id>
   local parent=$1 id=$2 mate
   mate="$TMP_ROOT/$(basename "$parent")-$id-home"
-  make_valid_secondmate_home "$id" "$mate"
-  append_secondmate_registry "$parent" "$id" "$mate"
+  fm_make_secondmate_home "$id" "$mate"
+  fm_append_secondmate_registry "$parent" "$id" "$mate"
   printf '%s\n' "$mate"
-}
-
-write_parent_secondmate_event() {  # <parent> <id> <home> <note>
-  fm_write_secondmate_meta "$1/state/$2.meta" "$3" "firstmate:fm-$2" sample
-  printf 'working [key=%s]: %s\n' "$2" "$4" > "$1/state/$2.status"
 }
 
 test_bad_secondmate_homes_never_revive_parent_work() {
@@ -594,24 +570,24 @@ test_bad_secondmate_homes_never_revive_parent_work() {
   malformed="$TMP_ROOT/malformed-home"
   unknown_child="$TMP_ROOT/unknown-child-home"
 
-  append_secondmate_registry "$home" missing "$missing"
+  fm_append_secondmate_registry "$home" missing "$missing"
 
-  make_valid_secondmate_home invalid "$invalid"
+  fm_make_secondmate_home invalid "$invalid"
   printf 'someone-else\n' > "$invalid/.fm-secondmate-home"
-  append_secondmate_registry "$home" invalid "$invalid"
-  write_parent_secondmate_event "$home" invalid "$invalid" "old invalid work"
+  fm_append_secondmate_registry "$home" invalid "$invalid"
+  fm_write_parent_secondmate_event "$home" invalid "$invalid" "old invalid work"
 
-  make_valid_secondmate_home unreadable "$unreadable"
+  fm_make_secondmate_home unreadable "$unreadable"
   chmod 000 "$unreadable/data"
-  append_secondmate_registry "$home" unreadable "$unreadable"
-  write_parent_secondmate_event "$home" unreadable "$unreadable" "old unreadable work"
+  fm_append_secondmate_registry "$home" unreadable "$unreadable"
+  fm_write_parent_secondmate_event "$home" unreadable "$unreadable" "old unreadable work"
 
-  make_valid_secondmate_home malformed "$malformed"
+  fm_make_secondmate_home malformed "$malformed"
   printf '## In flight\nthis current row is not structured\n' > "$malformed/data/backlog.md"
-  append_secondmate_registry "$home" malformed "$malformed"
-  write_parent_secondmate_event "$home" malformed "$malformed" "old malformed work"
+  fm_append_secondmate_registry "$home" malformed "$malformed"
+  fm_write_parent_secondmate_event "$home" malformed "$malformed" "old malformed work"
 
-  make_valid_secondmate_home unknown-child "$unknown_child"
+  fm_make_secondmate_home unknown-child "$unknown_child"
   wt="$unknown_child/projects/slow"
   fm_git_init_commit "$wt"
   git -C "$wt" checkout -q -b fm/slow
@@ -619,8 +595,8 @@ test_bad_secondmate_homes_never_revive_parent_work() {
   fm_write_meta "$unknown_child/state/slow.meta" \
     "window=firstmate:fm-slow" "worktree=$wt" "project=sample" \
     "harness=codex" "kind=ship" "mode=no-mistakes"
-  append_secondmate_registry "$home" unknown-child "$unknown_child"
-  write_parent_secondmate_event "$home" unknown-child "$unknown_child" "old unknown work"
+  fm_append_secondmate_registry "$home" unknown-child "$unknown_child"
+  fm_write_parent_secondmate_event "$home" unknown-child "$unknown_child" "old unknown work"
 
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
@@ -650,8 +626,8 @@ test_oversized_secondmate_summary_stays_strict_unknown() {
   local home mate fakebin json i
   home=$(make_home oversized-home)
   mate="$TMP_ROOT/oversized-secondmate-home"
-  make_valid_secondmate_home oversized "$mate"
-  append_secondmate_registry "$home" oversized "$mate"
+  fm_make_secondmate_home oversized "$mate"
+  fm_append_secondmate_registry "$home" oversized "$mate"
   fm_write_secondmate_meta "$home/state/oversized.meta" "$mate" "firstmate:fm-oversized" sample
   printf 'working [key=old]: stale parent activity\n' > "$home/state/oversized.status"
   cat > "$mate/data/backlog.md" <<'EOF'
@@ -686,8 +662,8 @@ test_secondmate_and_child_bounds_are_disclosed() {
   : > "$home/data/secondmates.md"
   for id in a b c; do
     mate="$TMP_ROOT/bounds-$id"
-    make_valid_secondmate_home "$id" "$mate"
-    append_secondmate_registry "$home" "$id" "$mate"
+    fm_make_secondmate_home "$id" "$mate"
+    fm_append_secondmate_registry "$home" "$id" "$mate"
   done
   mate="$TMP_ROOT/bounds-a"
   : > "$mate/data/backlog.md"
@@ -740,8 +716,8 @@ test_parent_decision_is_untrusted_contradiction_only() {
   local home mate fakebin canonical json
   home=$(make_home parent-decision-only)
   mate="$TMP_ROOT/parent-decision-only-home"
-  make_valid_secondmate_home authority "$mate"
-  append_secondmate_registry "$home" authority "$mate"
+  fm_make_secondmate_home authority "$mate"
+  fm_append_secondmate_registry "$home" authority "$mate"
   fm_write_secondmate_meta "$home/state/authority.meta" "$mate" "firstmate:fm-authority" sample
   printf 'needs-decision [key=stale]: old parent question\n' > "$home/state/authority.status"
   fakebin=$(make_fakebin "$home")
@@ -769,12 +745,12 @@ test_parent_evidence_reconciles_by_verb_and_key() {
   hold="$TMP_ROOT/keyed-parent-hold-home"
   blocked="$TMP_ROOT/keyed-parent-blocked-home"
   decision="$TMP_ROOT/keyed-parent-decision-home"
-  make_valid_secondmate_home hold "$hold"
-  make_valid_secondmate_home blocked "$blocked"
-  make_valid_secondmate_home decision "$decision"
-  append_secondmate_registry "$home" hold "$hold"
-  append_secondmate_registry "$home" blocked "$blocked"
-  append_secondmate_registry "$home" decision "$decision"
+  fm_make_secondmate_home hold "$hold"
+  fm_make_secondmate_home blocked "$blocked"
+  fm_make_secondmate_home decision "$decision"
+  fm_append_secondmate_registry "$home" hold "$hold"
+  fm_append_secondmate_registry "$home" blocked "$blocked"
+  fm_append_secondmate_registry "$home" decision "$decision"
   fm_write_secondmate_meta "$home/state/hold.meta" "$hold" "firstmate:fm-hold" sample
   fm_write_secondmate_meta "$home/state/blocked.meta" "$blocked" "firstmate:fm-blocked" sample
   fm_write_secondmate_meta "$home/state/decision.meta" "$decision" "firstmate:fm-decision" sample
@@ -854,8 +830,8 @@ test_nonprogressing_child_states_are_explicit() {
   local home mate fakebin canonical
   home=$(make_home child-state-classification)
   mate="$TMP_ROOT/child-state-classification-home"
-  make_valid_secondmate_home states "$mate"
-  append_secondmate_registry "$home" states "$mate"
+  fm_make_secondmate_home states "$mate"
+  fm_append_secondmate_registry "$home" states "$mate"
   mkdir -p "$mate/projects/parked" "$mate/projects/done" "$mate/projects/failed"
   cat > "$mate/data/backlog.md" <<'EOF'
 ## In flight
@@ -940,7 +916,7 @@ test_registry_unavailability_and_bounds_are_explicit() {
   local home fakebin json canonical id mate boundary
   home=$(make_home registry-unavailable)
   mate="$TMP_ROOT/registry-hidden"
-  make_valid_secondmate_home hidden "$mate"
+  fm_make_secondmate_home hidden "$mate"
   printf -- '- hidden - fixture (home: %s; scope: fixture; projects: sample; added 2026-07-11)\n' "$mate" > "$home/data/secondmates.md"
   fm_write_secondmate_meta "$home/state/hidden.meta" "$mate" "firstmate:fm-hidden" sample
   chmod 000 "$home/data/secondmates.md"
@@ -964,8 +940,8 @@ test_registry_unavailability_and_bounds_are_explicit() {
   : > "$home/data/secondmates.md"
   for id in one two three; do
     mate="$TMP_ROOT/registry-$id"
-    make_valid_secondmate_home "$id" "$mate"
-    append_secondmate_registry "$home" "$id" "$mate"
+    fm_make_secondmate_home "$id" "$mate"
+    fm_append_secondmate_registry "$home" "$id" "$mate"
   done
   fakebin=$(make_fakebin "$home")
   refresh_local_secondmate_ledgers "$home"
@@ -1006,8 +982,8 @@ test_registry_unavailability_and_bounds_are_explicit() {
     .omitted | any(.surface == "secondmate registry records omitted by bounded read")
   ' >/dev/null || fail "bearings omitted registry truncation disclosure: $json"
   mate="$TMP_ROOT/registry-z-hidden"
-  make_valid_secondmate_home z-hidden "$mate"
-  append_secondmate_registry "$home" z-hidden "$mate"
+  fm_make_secondmate_home z-hidden "$mate"
+  fm_append_secondmate_registry "$home" z-hidden "$mate"
   fm_write_secondmate_meta "$home/state/z-hidden.meta" "$mate" "firstmate:fm-z-hidden" sample
   refresh_local_secondmate_ledgers "$home"
   canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z \
@@ -2252,8 +2228,8 @@ test_working_captain_holds_keep_their_bucket_surfaces() {
   home=$(make_home working-hold-buckets)
   mate="$TMP_ROOT/working-hold-buckets-mate"
   : > "$home/data/secondmates.md"
-  make_valid_secondmate_home working-mate "$mate"
-  append_secondmate_registry "$home" working-mate "$mate"
+  fm_make_secondmate_home working-mate "$mate"
+  fm_append_secondmate_registry "$home" working-mate "$mate"
 
   for home in "$home" "$mate"; do
     cat > "$home/data/backlog.md" <<'EOF'
@@ -2344,8 +2320,8 @@ test_active_children_project_independent_of_home_captain_hold() {
   home=$(make_home underway-hold-parent)
   : > "$home/data/secondmates.md"
   mate="$TMP_ROOT/underway-hold-home"
-  make_valid_secondmate_home busy-hold "$mate"
-  append_secondmate_registry "$home" busy-hold "$mate"
+  fm_make_secondmate_home busy-hold "$mate"
+  fm_append_secondmate_registry "$home" busy-hold "$mate"
   fakebin=$(make_fakebin "$home")
 
   cat > "$mate/data/backlog.md" <<'EOF'
@@ -2549,14 +2525,14 @@ test_mixed_secondmate_roles_partial_state_and_captain_readiness() {
   wheel="$TMP_ROOT/mixed-wheel-home"
   sshhip="$TMP_ROOT/mixed-sshhip-home"
   ha="$TMP_ROOT/mixed-ha-home"
-  make_valid_secondmate_home hibit "$hibit"
-  make_valid_secondmate_home wheel "$wheel"
-  make_valid_secondmate_home sshhip "$sshhip"
-  make_valid_secondmate_home home-assistant "$ha"
-  append_secondmate_registry "$home" hibit "$hibit"
-  append_secondmate_registry "$home" wheel "$wheel"
-  append_secondmate_registry "$home" sshhip "$sshhip"
-  append_secondmate_registry "$home" home-assistant "$ha"
+  fm_make_secondmate_home hibit "$hibit"
+  fm_make_secondmate_home wheel "$wheel"
+  fm_make_secondmate_home sshhip "$sshhip"
+  fm_make_secondmate_home home-assistant "$ha"
+  fm_append_secondmate_registry "$home" hibit "$hibit"
+  fm_append_secondmate_registry "$home" wheel "$wheel"
+  fm_append_secondmate_registry "$home" sshhip "$sshhip"
+  fm_append_secondmate_registry "$home" home-assistant "$ha"
 
   mkdir -p "$hibit/projects/worker" "$wheel/projects/worker" "$sshhip/projects/child" "$ha/projects/prep"
   cat > "$hibit/data/backlog.md" <<'EOF'

@@ -12,6 +12,7 @@
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
+#                 "FIRSTMATE_SYNC: <primary instruction update or drift>",
 #                 "HOME_SUMMARY: <ledger never published|not republished since
 #                 <stamp>>; <n> failed attempt(s) ... last: <recorded failure>",
 #                 "BACKLOG_RECONCILE: <id>: <what this home could not reconcile>",
@@ -23,6 +24,16 @@
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "SECONDMATE_HANDOFF: secondmate <id>: pending delivery: <n> item(s)",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
+#          FIRSTMATE_SYNC lines come from the primary instruction refresh that
+#          opens the network sweeps. It fast-forwards the PRIMARY checkout
+#          (FM_ROOT) from origin, so a landed instruction change reaches this
+#          home and, through the secondmate sweep below it, every home that
+#          follows this checkout. It is fast-forward-only (bin/fm-ff-lib.sh) and
+#          prints a line only when the loaded instruction surface actually
+#          advanced - naming the re-read it now owes - or when the primary is
+#          behind origin and was left untouched, which is fleet-wide drift
+#          because every home converges to this checkout. A seeded secondmate
+#          home skips the step entirely and keeps following its parent's commit.
 #          When a RUNNING secondmate home is fast-forwarded, its target is
 #          firstmate's own current default-branch commit. A local worktree uses
 #          a purely local fast-forward with no origin fetch; a remote route hands
@@ -101,8 +112,8 @@
 #          The `code-root <file>` variant is a detect-only local check that runs
 #          even in a read-only session; detect_code_root_backlog_fork owns what
 #          it reports.
-#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the six MUTATING sweeps
-#          (backlog_record_reconcile, secondmate_sync,
+#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the seven MUTATING sweeps
+#          (backlog_record_reconcile, firstmate_origin_sync, secondmate_sync,
 #          secondmate_liveness_sweep, secondmate_handoff_resume, x_mode_setup,
 #          fleet_sync) while still
 #          printing every read-only detect line
@@ -112,7 +123,7 @@
 #          the fleet lock, so a second concurrent session never race-mutates
 #          secondmate homes, pending handoff outboxes and receiver wakes,
 #          X-mode artifacts, project clones, or repair instructions.
-#          Unset/0 (the default) runs all six sweeps - this flag is purely
+#          Unset/0 (the default) runs all seven sweeps - this flag is purely
 #          additive.
 #          Set FM_BOOTSTRAP_NETWORK to split this run by whether a step talks to
 #          the network, so a session start can print its digest from local reads
@@ -121,7 +132,8 @@
 #                 step. Unrecognized values fall back here on purpose: a typo
 #                 must never silently skip a safety sweep.
 #            skip - every LOCAL step, and none of the network ones. Skips
-#                 `gh auth status`, secondmate_liveness_sweep, secondmate_sync,
+#                 `gh auth status`, firstmate_origin_sync,
+#                 secondmate_liveness_sweep, secondmate_sync,
 #                 secondmate_handoff_resume, and fleet_sync.
 #            only - ONLY those network steps and nothing else. No tool detection,
 #                 no version floors, no tangle check, no backlog
@@ -358,6 +370,56 @@ fleet_sync() {
 
   fleet_sync_relay_filtered_output "$tmp"
   rm -f "$tmp"
+}
+
+# Advance the PRIMARY firstmate checkout from origin, so the secondmate sweep
+# below carries a landed instruction change into every home in the same startup.
+# Nothing else in the startup path fetches this repo: the only mover used to be
+# an explicit /updatefirstmate, so a primary left behind after a merge made every
+# home converge - truthfully, and silently - onto yesterday's instructions.
+# FAST-FORWARD ONLY, through the same bin/fm-ff-lib.sh guards /updatefirstmate
+# uses: a dirty, diverged, or off-default primary is left exactly as it is and
+# reported as drift instead of being forced, and the gitignored operational dirs
+# are never touched.
+firstmate_origin_sync() {
+  local tmp line reason default behind
+  # A secondmate home follows the PRIMARY's commit by design (fm-ff-lib.sh), so
+  # its own startup never fetches origin and never runs ahead of its parent.
+  [ ! -e "$FM_ROOT/$SUB_HOME_MARKER" ] || return 0
+  # The status line goes through a file, not a command substitution: a subshell
+  # would swallow the FF_STATUS and FF_INSTR the branches below read.
+  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-firstmate-sync.XXXXXX" 2>/dev/null) || return 0
+  ff_target "$FM_ROOT" "firstmate" origin no no >"$tmp"
+  line=$(cat "$tmp")
+  rm -f "$tmp"
+  case "$FF_STATUS" in
+    updated)
+      [ -n "$FF_INSTR" ] || return 0
+      echo "FIRSTMATE_SYNC: primary checkout ${line#firstmate: } - re-read AGENTS.md before acting further in this session"
+      ;;
+    current) : ;;
+    *)
+      reason=${line#firstmate: skipped: }
+      case "$reason" in
+        *' commit(s) behind)') reason=${reason% (*} ;;
+      esac
+      case "$reason" in
+        'no origin remote'|'not a directory'|'not a git repo') return 0 ;;
+        'fetch failed'|'cannot determine default branch'|'origin/'*' does not exist')
+          echo "FIRSTMATE_SYNC: primary checkout may be running stale instructions - origin could not be read ($reason), so the drift cannot be measured and the last known origin ref may itself be stale; every secondmate home converges to this checkout, so the whole fleet may be running stale instructions"
+          return 0
+          ;;
+      esac
+      default=$(default_branch "$FM_ROOT" 2>/dev/null || echo main)
+      behind=$(git -C "$FM_ROOT" rev-list --count "HEAD..origin/$default" 2>/dev/null || true)
+      case "$behind" in ''|*[!0-9]*) behind='' ;; esac
+      if [ -z "$behind" ]; then
+        echo "FIRSTMATE_SYNC: could not confirm the primary checkout is running the latest instructions ($reason); every secondmate home converges to this checkout, so the whole fleet may be running stale instructions"
+      elif [ "$behind" -gt 0 ]; then
+        echo "FIRSTMATE_SYNC: primary checkout is $behind commit(s) behind origin/$default and was left untouched ($reason); every secondmate home converges to this checkout, so the whole fleet keeps running these instructions until it is resolved"
+      fi
+      ;;
+  esac
 }
 
 secondmate_sync() {
@@ -1638,6 +1700,13 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     fi
   fi
   if network_phase; then
+    # First of the network sweeps: the secondmate ones below converge every home
+    # onto whatever commit this one leaves the primary at.
+    if network_sweep_authorized 'firstmate instruction refresh'; then
+      __fm_timing_stamp=$(fm_timing_now_ms)
+      firstmate_origin_sync
+      fm_timing_record phase firstmate-origin-sync "$__fm_timing_stamp"
+    fi
     if network_sweep_authorized 'dead-secondmate relaunch'; then
       __fm_timing_stamp=$(fm_timing_now_ms)
       secondmate_liveness_sweep

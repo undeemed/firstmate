@@ -27,6 +27,9 @@
 # docs/verification/process-event-sources.md "Lavish answer channel" entry.
 set -u
 
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 fail() {
@@ -35,18 +38,9 @@ fail() {
 }
 pass() { printf 'ok - %s\n' "$1"; }
 
-if [ "${FM_LAVISH_POLL_CHANNEL_LIVE_E2E:-0}" != 1 ]; then
-	echo "skip: set FM_LAVISH_POLL_CHANNEL_LIVE_E2E=1 to run the real lavish-axi answer-channel guard"
-	exit 0
-fi
-command -v lavish-axi >/dev/null 2>&1 || {
-	echo "skip: lavish-axi not found"
-	exit 0
-}
-command -v perl >/dev/null 2>&1 || {
-	echo "skip: perl not found"
-	exit 0
-}
+# One shared opt-in gate for every live guard, so FM_LIVE=0 and a missing tool
+# both report the same way (tests/fm-live-gate.test.sh asserts it).
+fm_live_gate opt-in FM_LAVISH_POLL_CHANNEL_LIVE_E2E lavish-axi perl
 
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-lavish-channel.XXXXXX")
 SCRATCH_PORT=$((41000 + ($$ % 2000)))

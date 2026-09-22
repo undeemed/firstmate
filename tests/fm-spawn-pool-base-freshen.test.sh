@@ -401,6 +401,13 @@ make_submodule_case() {  # <name> <id>
   git -C "$publisher" push --quiet origin main
   advanced=$(git -C "$publisher" rev-parse HEAD)
 
+  # The clone follows origin; only the pooled worktree stays back at the
+  # allocation-time commit, which is the drift these cases measure. A clone left
+  # behind would instead hit the stale-brief spawn refusal owned by
+  # tests/fm-spawn-clone-base-drift.test.sh.
+  git -C "$project" fetch --quiet origin
+  git -C "$project" merge --quiet --ff-only origin/main
+
   printf '%s\n' "$case_dir|$home|$project|$pool|$fakebin|$subpin1|$subpin2|$advanced"
 }
 
