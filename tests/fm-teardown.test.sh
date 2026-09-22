@@ -43,6 +43,13 @@
 #   (q4) no-mistakes + squash-merged rebased local plus extra commit -> REFUSE
 #   (q5) gh down + squash-merged stale local, content not in default -> REFUSE
 #
+# Build-cache reaping (fm-teardown.sh's reap_task_build_cache):
+#   (aa) task-owned, idle cache                 -> REAPED, bytes reported
+#   (ab) unlanded work refuses the teardown     -> cache untouched, no reap
+#   (ac) cache owned by another firstmate home  -> KEPT, skip reported
+#   (ad) secondmate's shared per-project cache  -> KEPT, skip reported
+#   (ae) live process inside the cache          -> KEPT, skip reported
+#
 # Also covers backlog teardown-lock-race: a git index.lock left in the worktree by a
 # killed crew process (bin/fm-teardown.sh's teardown_treehouse_return).
 #   (r) provably-stale index.lock (old mtime, no live holder) -> lock removed, ALLOW
@@ -3949,3 +3956,8 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_task_owned_build_cache_is_reaped_on_success
+test_build_cache_survives_refused_teardown
+test_cache_this_home_does_not_own_is_reported_not_reaped
+test_secondmate_teardown_leaves_shared_project_cache
+test_live_build_keeps_build_cache

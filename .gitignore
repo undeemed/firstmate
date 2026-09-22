@@ -1,7 +1,8 @@
 projects/
 state/
 data/
-scratchpad*
+build-caches/
+scratchpad/
 .no-mistakes/
 .lavish/
 .fm-secondmate-home
@@ -10,6 +11,7 @@ scratchpad*
 __pycache__/
 *.pyc
 .env
+super.env
 config/
 
 .tools/
