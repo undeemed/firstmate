@@ -1245,27 +1245,27 @@ _fm_pending_reply_publish_close() {  # <record-path> <corr_id> <note>
   [ -n "$parent_status" ] || return 1
   escalation=$(fm_pending_reply_escalation_line "$parent_status" "$rec" "$corr")
   [ -n "$escalation" ] || return 0
-  key=$(_fm_decision_key "$escalation") || key=''
-  open_note=$(status_line_note "$escalation")
-  while IFS= read -r open_line; do
-    [ -n "$open_line" ] || continue
-    open_key=${open_line%%$'\t'*}
-    [ "$open_key" = "$key" ] || continue
-    seen_note=${open_line#*$'\t'}
-    seen_note=${seen_note#*$'\t'}
-    [ "$seen_note" = "$open_note" ] || continue
-    # This close is the home's own bookkeeping, written by the same resolve
-    # or tick that already consumed the outcome, so it uses the guarded
-    # self-announced append (bin/fm-wake-lib.sh, sourced by this function's
-    # wrappers) and does not wake the home that wrote it; the escalation
+    key=$(_fm_decision_key "$escalation") || key=''
+    open_note=$(status_line_note "$escalation")
+    while IFS= read -r open_line; do
+      [ -n "$open_line" ] || continue
+      open_key=${open_line%%$'\t'*}
+      [ "$open_key" = "$key" ] || continue
+      seen_note=${open_line#*$'\t'}
+      seen_note=${seen_note#*$'\t'}
+      [ "$seen_note" = "$open_note" ] || continue
+      # This close is the home's own bookkeeping, written by the same resolve
+      # or tick that already consumed the outcome, so it uses the guarded
+      # self-announced append (bin/fm-wake-lib.sh, sourced by this function's
+      # wrappers) and does not wake the home that wrote it; the escalation
     # OPEN stays a plain append because a new blocker must wake.
     close_line="resolved [key=$key]: $note"
-    close_rc=0
-    fm_wake_status_append_self_announced "${parent_status%/*}" "$parent_status" "$close_line" \
-      2>/dev/null || close_rc=$?
-    [ "$close_rc" -ne 2 ] || return 1
-    break
-  done <<EOF
+      close_rc=0
+      fm_wake_status_append_self_announced "${parent_status%/*}" "$parent_status" "$close_line" \
+        2>/dev/null || close_rc=$?
+      [ "$close_rc" -ne 2 ] || return 1
+      break
+    done <<EOF
 $(status_open_decisions "$parent_status")
 EOF
   return 0
@@ -1643,7 +1643,7 @@ fm_pending_reply_tick() {  # <state-dir>
       # the retry that makes the close converge after a transient write failure.
       # A settled-without-answer record published its own close already.
       if [ "$phase" = resolved ]; then
-        fm_pending_reply_close_escalation "$state" "$corr" || true
+      fm_pending_reply_close_escalation "$state" "$corr" || true
       fi
       continue
     fi

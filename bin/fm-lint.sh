@@ -207,7 +207,7 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
             "$FM_LINT_MEMORY_LIMIT_KIB" "$root" >> "$output.mem"
           rc=2
           continue
-        fi
+    fi
         cat "$output.root" >> "$output.out"
         [ "$root_rc" -eq 0 ] || [ "$rc" -ne 0 ] || rc=$root_rc
       done

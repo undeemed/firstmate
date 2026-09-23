@@ -11,8 +11,8 @@ TMP_ROOT=$(fm_test_tmproot fm-on)
 # and physicalize macOS's /var -> /private/var alias before transport validation.
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
-# shellcheck source=bin/fm-remote-job-lib.sh
-. "$ROOT/bin/fm-remote-job-lib.sh"
+    # shellcheck source=bin/fm-remote-job-lib.sh
+    . "$ROOT/bin/fm-remote-job-lib.sh"
 # The recorded worker pid is the serving child, and killing it in the same
 # breath as `rm -rf` races the child's own shutdown writes: the dying worker
 # recreates a heartbeat or lock temp file between rm's readdir and its rmdir,

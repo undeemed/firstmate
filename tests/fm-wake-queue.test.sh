@@ -405,12 +405,8 @@ test_retirement_purges_dotted_id_seen_markers() {
 # plain drain-and-handle turn that runs no other supervision script. It must warn
 # when work is in flight with no live watcher, and stay silent right after a
 # normal fire from a live watcher with a fresh beacon, so it never false-alarms.
-# Budgets here are deliberately asymmetric: a checkpoint that is SUPPOSED to wake
-# returns the moment it does, so a generous --seconds only removes false negatives
-# on a loaded box, while a checkpoint asserted to stay silent pays its whole budget
-# on every run and stays short.
-test_secondmate_foreign_queue_stall_is_one_shot_and_read_only() {
-  local dir state sub fakebin out row_before row_after stall_count
+test_secondmate_foreign_queue_stall_tracks_progress_and_alerts_once() {
+  local dir state sub fakebin out row_before row_after stall_count real_date
   dir=$(make_case secondmate-foreign-stall)
   state="$dir/state"
   sub="$dir/secondmate"
@@ -465,24 +461,7 @@ SH
   row_before="$dir/foreign-before"
   row_after="$dir/foreign-after"
   cp "$sub/state/.wake-queue" "$row_before"
-  fakebin="$dir/fakebin"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-case "${1:-}" in
-  list-windows) printf '%s\n' "${FM_FAKE_TMUX_WINDOW:-}" ;;
-  capture-pane) cat "${FM_FAKE_TMUX_CAPTURE:-/dev/null}" ;;
-  display-message) printf '0\n' ;;
-  *) exit 0 ;;
-esac
-SH
-  chmod +x "$fakebin/tmux"
-  out="$dir/watch.out"
-
-  # A POSITIVE wake assertion needs a generous budget: the checkpoint returns as
-  # soon as the wake lands, so a larger budget costs nothing when the contract
-  # holds, while a tight one reaps the watcher during its bounded startup work on
-  # a loaded machine and reports a wake that did fire as missing. The negative
-  # assertions below keep their short budgets, which they always spend in full.
+  out="$dir/watch-stalled.out"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
@@ -490,10 +469,6 @@ SH
     "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 4 > "$out" 2> "$dir/watch-stalled.err" || true
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=8 idle=2s' "$out" >/dev/null \
     || fail "a foreign queue with no progress did not alert: $(cat "$out")"
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 30 > "$out" 2> "$dir/watch.err" || true
-  grep -F 'check: secondmate wake-loop stalled: mate=mate row=8' "$out" >/dev/null \
-    || fail "an aged foreign row did not wake the parent checkpoint: $(cat "$out"); err=$(cat "$dir/watch.err"); meta=$(cat "$state/mate.meta"); foreign=$(cat "$sub/state/.wake-queue")"
-  [ -s "$state/.wake-queue" ] || fail "the parent notification was not durable"
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
   [ "$stall_count" -eq 1 ] || fail "the stalled episode did not publish exactly one parent notification"
   cmp -s "$row_before" "$sub/state/.wake-queue" \
@@ -2863,6 +2838,9 @@ test_secondmate_declared_pause_rows_do_not_feed_stall_escalation
 test_secondmate_reprovisioned_queue_starts_a_fresh_interval
 test_secondmate_active_turn_defers_stall_until_the_turn_ends
 test_secondmate_long_lived_mate_mid_turn_is_not_a_stall
+test_secondmate_unattended_home_names_live_child_work
+test_secondmate_mid_turn_mate_is_not_reported_as_stalled
+test_secondmate_deep_backlog_reports_depth_and_keeps_escalating
 test_secondmate_proven_idle_ring_lets_the_child_drain
 test_secondmate_busy_and_unknown_panes_are_not_rung
 test_secondmate_genuine_stall_after_idle_ring_still_alarms

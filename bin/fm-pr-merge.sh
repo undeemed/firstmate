@@ -222,14 +222,8 @@ while [ "$#" -gt 0 ]; do
       exit 2
       ;;
     --allow-red)
-    [ -n "${2:-}" ] || {
-      echo "error: --allow-red requires a check name" >&2
-      exit 2
-    }
-    [ "${#ALLOW_RED[@]}" -eq 0 ] || {
-      echo "error: --allow-red may be specified only once" >&2
-      exit 2
-    }
+      [ -n "${2:-}" ] || { echo "error: --allow-red requires a check name" >&2; exit 2; }
+      [ "${#ALLOW_RED[@]}" -eq 0 ] || { echo "error: --allow-red may be specified only once" >&2; exit 2; }
       ALLOW_RED+=("$2")
       shift 2
       ;;
@@ -237,10 +231,7 @@ while [ "$#" -gt 0 ]; do
       echo "error: --allow-red requires a separate check name argument" >&2
       exit 2
       ;;
-  --)
-      shift
-    break
-    ;;
+    --) shift; break ;;
     *) break ;;
   esac
 done
@@ -253,7 +244,7 @@ caller_has_merge_method() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-    --squash | --merge | --rebase | --method | --method=*) return 0 ;;
+      --squash|--merge|--rebase|--method|--method=*) return 0 ;;
     esac
   done
   return 1
@@ -290,7 +281,7 @@ caller_requested_auto_merge() {
       --auto) requested=0 ;;
       --auto=*)
         case "${arg#--auto=}" in
-      [tT] | [tT][rR][uU][eE] | 1) requested=0 ;;
+          [tT]|[tT][rR][uU][eE]|1) requested=0 ;;
           *) requested=1 ;;
         esac
         ;;
@@ -304,7 +295,7 @@ reject_repo_overrides() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-    --repo | --repo=*)
+      --repo|--repo=*)
         echo "error: extra merge arguments must not override the repository" >&2
         return 1
         ;;
@@ -323,7 +314,7 @@ reject_head_overrides() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-    --sha | --sha=* | --match-head-commit | --match-head-commit=*)
+      --sha|--sha=*|--match-head-commit|--match-head-commit=*)
         echo "error: extra merge arguments must not override the head commit" >&2
         return 1
         ;;
@@ -336,7 +327,7 @@ reject_protected_forge_args() {
   [ "$ATTENDED_OVERRIDE" = true ] && return 0
   for arg in "$@"; do
     case "$arg" in
-    --auto | --auto=* | --admin | --admin=* | --delete-branch | --delete-branch=* | --remove-source-branch | --remove-source-branch=*)
+      --auto|--auto=*|--admin|--admin=*|--delete-branch|--delete-branch=*|--remove-source-branch|--remove-source-branch=*)
         echo "error: extra merge arguments must not request auto-merge, a protection bypass, or branch deletion; pass --attended-override only for an explicit captain instruction" >&2
         return 1
         ;;
@@ -604,11 +595,11 @@ FM_PR_GITLAB_ASYNC_REQUESTED=false
 if [ "$PROVIDER" = gitlab ]; then
   for arg in "$@"; do
     case "$arg" in
-    --auto-merge | --when-pipeline-succeeds) FM_PR_GITLAB_ASYNC_REQUESTED=true ;;
-    --auto-merge=* | --when-pipeline-succeeds=*)
+      --auto-merge|--when-pipeline-succeeds) FM_PR_GITLAB_ASYNC_REQUESTED=true ;;
+      --auto-merge=*|--when-pipeline-succeeds=*)
         case "${arg#*=}" in
-      [tT] | [tT][rR][uU][eE] | 1) FM_PR_GITLAB_ASYNC_REQUESTED=true ;;
-      [fF] | [fF][aA][lL][sS][eE] | 0) FM_PR_GITLAB_ASYNC_REQUESTED=false ;;
+          [tT]|[tT][rR][uU][eE]|1) FM_PR_GITLAB_ASYNC_REQUESTED=true ;;
+          [fF]|[fF][aA][lL][sS][eE]|0) FM_PR_GITLAB_ASYNC_REQUESTED=false ;;
         esac
         ;;
     esac
@@ -712,8 +703,8 @@ gitlab_verify_mergeable() {
   # GITLAB_HOST is set to the same host the project URL already carries, so the
   # instance is taken from the parsed URL by both signals and never from the
   # operator's configured default.
-  if ! json=$(GITLAB_HOST="$FM_PR_HOST" glab mr view "$PR_NUMBER" -R "$PROJECT_URL" -F json 2>/dev/null) ||
-    [ -z "$json" ]; then
+  if ! json=$(GITLAB_HOST="$FM_PR_HOST" glab mr view "$PR_NUMBER" -R "$PROJECT_URL" -F json 2>/dev/null) \
+    || [ -z "$json" ]; then
     echo "error: could not read the GitLab merge request state before merging" >&2
     return 1
   fi
@@ -773,23 +764,23 @@ FIELDS
       "$RECORDED_HEAD" "$live_head" >&2
   fi
 
-  [ "$state" = opened ] ||
-      refusals="$refusals  - state is \"${state:-unreadable}\", not open
+  [ "$state" = opened ] \
+    || refusals="$refusals  - state is \"${state:-unreadable}\", not open
 "
-  [ "$detail" = mergeable ] ||
-    refusals="$refusals  - detailed_merge_status is \"${detail:-unreadable}\", not mergeable
+  [ "$detail" = mergeable ] \
+    || refusals="$refusals  - detailed_merge_status is \"${detail:-unreadable}\", not mergeable
 "
-  [ "$conflicts" = false ] ||
-    refusals="$refusals  - has_conflicts is \"${conflicts:-unreadable}\", not false
+  [ "$conflicts" = false ] \
+    || refusals="$refusals  - has_conflicts is \"${conflicts:-unreadable}\", not false
 "
-  [ "$discussions" = true ] ||
-    refusals="$refusals  - blocking_discussions_resolved is \"${discussions:-unreadable}\", not true
+  [ "$discussions" = true ] \
+    || refusals="$refusals  - blocking_discussions_resolved is \"${discussions:-unreadable}\", not true
 "
-  [ "$pipeline_status" = success ] ||
-    refusals="$refusals  - the head pipeline status is \"${pipeline_status:-none}\", not success
+  [ "$pipeline_status" = success ] \
+    || refusals="$refusals  - the head pipeline status is \"${pipeline_status:-none}\", not success
 "
-  [ "$pipeline_sha" = "$live_head" ] ||
-    refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
+  [ "$pipeline_sha" = "$live_head" ] \
+    || refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
 "
 
   if [ -n "$refusals" ]; then
@@ -888,8 +879,8 @@ github_verify_mergeable() {
   local total=0 named=0 refusals=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
-  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) ||
-    [ -z "$json" ]; then
+  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
+    || [ -z "$json" ]; then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
   fi
@@ -942,14 +933,14 @@ FIELDS
 "
       ;;
   esac
-  [ "$draft" = false ] ||
-    refusals="$refusals  - the pull request is a draft
+  [ "$draft" = false ] \
+    || refusals="$refusals  - the pull request is a draft
 "
-  [ "$mergeable" = MERGEABLE ] ||
-    refusals="$refusals  - mergeable is \"${mergeable:-unreadable}\", not MERGEABLE
+  [ "$mergeable" = MERGEABLE ] \
+    || refusals="$refusals  - mergeable is \"${mergeable:-unreadable}\", not MERGEABLE
 "
-  [ "$merge_state" != DIRTY ] ||
-    refusals="$refusals  - mergeStateStatus is DIRTY (conflicts)
+  [ "$merge_state" != DIRTY ] \
+    || refusals="$refusals  - mergeStateStatus is DIRTY (conflicts)
 "
 
   uncovered=''
@@ -1018,10 +1009,10 @@ github_read_outcome_with_gh() {
   done <<FIELDS
 $fields
 FIELDS
-  if [ "$named" -ne 4 ] || [ "$total" -ne 4 ] || [ -z "$state" ] ||
-    { [ "$merged" != true ] && [ "$merged" != false ]; } ||
-    { [ "$queued" != true ] && [ "$queued" != false ]; } ||
-    [ -z "$base" ]; then
+  if [ "$named" -ne 4 ] || [ "$total" -ne 4 ] || [ -z "$state" ] \
+    || { [ "$merged" != true ] && [ "$merged" != false ]; } \
+    || { [ "$queued" != true ] && [ "$queued" != false ]; } \
+    || [ -z "$base" ]; then
     return 1
   fi
 
@@ -1144,7 +1135,7 @@ github_read_queue_method() {
     esac
     count=$((count + 1))
     case "$candidate" in
-    MERGE | SQUASH | REBASE) ;;
+      MERGE|SQUASH|REBASE) ;;
       *) unrecognised=true ;;
     esac
     if [ -z "$FM_PR_GITHUB_QUEUE_METHODS" ] && [ "$count" -eq 1 ]; then
@@ -1193,7 +1184,7 @@ require_released_captain_hold() {
       echo "error: task $ID is still held for the captain; release it before merging" >&2
       return 1
       ;;
-  1 | 3) return 0 ;;
+    1|3) return 0 ;;
     *)
       echo "error: could not determine whether task $ID is still held for the captain; refusing to merge" >&2
       return 1
@@ -1237,8 +1228,8 @@ require_current_away_authority() {
       echo "error: --auto is attended-only; while the away-posture record exists only a synchronous merge may run under its authority lock" >&2
       return 2
     fi
-    if [ "$PROVIDER" = gitlab ] &&
-      { [ "$FM_PR_GITLAB_ASYNC_REQUESTED" = true ] || [ "$FM_PR_GITLAB_ASYNC_CONFIGURED" = true ]; }; then
+    if [ "$PROVIDER" = gitlab ] \
+      && { [ "$FM_PR_GITLAB_ASYNC_REQUESTED" = true ] || [ "$FM_PR_GITLAB_ASYNC_CONFIGURED" = true ]; }; then
       echo "error: GitLab auto-merge is attended-only; while the away-posture record exists only an immediate merge may run under its authority lock" >&2
       return 2
     fi
@@ -1256,8 +1247,8 @@ persist_accepted_merge_authority() {
   MERGE_META_LOCK=$(fm_meta_lock_path "$META") || return 1
   fm_lock_acquire_wait "$MERGE_META_LOCK" || return 1
   fm_merge_authority_persist "$STATE" "$ID" "$META" \
-    "$PROVIDER" "$PR_HOST" "$PR_PATH" "$PR_NUMBER" "$FM_PR_MERGE_AUTHORITY" ||
-    status=1
+    "$PROVIDER" "$PR_HOST" "$PR_PATH" "$PR_NUMBER" "$FM_PR_MERGE_AUTHORITY" \
+    || status=1
   fm_lock_release "$MERGE_META_LOCK" || status=1
   MERGE_META_LOCK=
   if [ "$status" -eq 0 ]; then
@@ -1354,9 +1345,9 @@ github_report_queue_rules() {
         SQUASH) queue_method=squash ;;
         REBASE) queue_method=rebase ;;
       esac
-    if github_merge_command_succeeded &&
-      [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ] &&
-      github_caller_method_is "$queue_method"; then
+      if github_merge_command_succeeded \
+        && [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ] \
+        && github_caller_method_is "$queue_method"; then
         printf 'error: this run refuses even though the request for %s was accepted with the exact flags base branch %s requires (--auto --%s): the pull request has still not entered the merge queue, so no landed or queued outcome is proven; re-check the pull request'"'"'s merge queue state before retrying\n' \
           "$URL" "$FM_PR_GITHUB_BASE" "$queue_method" >&2
       else
@@ -1384,8 +1375,8 @@ github_report_queue_rules() {
 github_report_unmerged_outcome() {
   printf 'error: GitHub merge outcome was not successful: state=%s, merged=%s, isInMergeQueue=%s\n' \
     "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED" >&2
-  if ! github_state_is_open || [ "$FM_PR_GITHUB_MERGED" != false ] ||
-    [ "$FM_PR_GITHUB_QUEUED" = true ]; then
+  if ! github_state_is_open || [ "$FM_PR_GITHUB_MERGED" != false ] \
+    || [ "$FM_PR_GITHUB_QUEUED" = true ]; then
     return 0
   fi
   if [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ]; then

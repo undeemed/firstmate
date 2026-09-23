@@ -161,7 +161,12 @@
 #   For omp (Oh My Pi), fm-spawn resolves the `omp` executable from PATH once and
 #   refuses when it is absent. Every omp launch clears the foreign harness
 #   markers (omp publishes none of its own), sets the Firstmate-owned
-#   FM_OMP_HARNESS=omp detection marker, and forces --auto-approve; the
+#   FM_OMP_HARNESS=omp detection marker, suppresses the first-run provider
+#   wizard with OMP_SKIP_SETUP=1, forces --auto-approve, pins the working
+#   directory with --cwd, and passes the tracked worker posture overlay
+#   .omp/fm-worker-overlay.yml through --config. That overlay pins composer
+#   shape, plan mode off, prewalk off, and the non-interactive usage-reserve
+#   policy for the one session only (--auto-approve alone owns approval); the
 #   captain's own ~/.omp/agent/config.yml (model roles, providers, theme) is
 #   never written.
 #   A model written as <provider>/<id> is validated against `omp models --json`
@@ -322,15 +327,13 @@
 #     __PIGUARD__  absolute path to extensions/fm-swarms-platform-guard.ts, the tracked
 #                  PreToolUse seatbelt loaded next to __PIEXT__/__OMPEXT__ for every pi
 #                  and omp crewmate/scout (inert outside a swarms-platform checkout)
-#     __OMPEXT__   absolute path to state/<task-id>.omp-ext.ts (omp turn-end extension,
-#                  written by this script; outside the worktree for the same reason as __PIEXT__)
 #     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
 #     __PIWATCH__   absolute path to .pi/extensions/fm-primary-pi-watch.ts in a pi secondmate home
-#     __OMPTURNEND__ absolute path to .omp/extensions/fm-primary-turnend-guard.ts in an omp secondmate home
-#     __OMPWATCH__   absolute path to .omp/extensions/fm-primary-omp-watch.ts in an omp secondmate home
+#     __OMPBIN__   quoted concrete omp executable path resolved from PATH
 #     __OMPEXT__   absolute path to state/<task-id>.omp-ext.ts (omp busy-state and
 #                  turn-end extension, written by this script; outside the worktree so
 #                  omp's cwd-only auto-discovery cannot load it a second time)
+#     __OMPWORKERCFG__ absolute path to the tracked .omp/fm-worker-overlay.yml posture overlay
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
 #     __WORKTREE__  absolute path to the task worktree
 #     __CURSORBIN__ resolved, cursor-verified executable for a cursor launch
@@ -550,7 +553,7 @@ if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
   fi
   LAVISH_AXI_HOST=$(cat "$CONFIG/lavish-axi-host") || exit 1
   case "$LAVISH_AXI_HOST" in
- '' | *[[:space:][:cntrl:]]*)
+    ''|*[[:space:][:cntrl:]]*)
       echo "error: config/lavish-axi-host must contain one non-empty address without whitespace" >&2
       exit 1
       ;;
@@ -1258,7 +1261,7 @@ spawn_abort_cleanup() {
             [ -z "${MODE:-}" ] || echo "mode=$MODE"
             [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
             echo "tasktmp=${TASK_TMP:-}"
-      [ -z "${BUILD_CACHE:-}" ] || echo "build_cache=$BUILD_CACHE"
+            [ -z "${BUILD_CACHE:-}" ] || echo "build_cache=$BUILD_CACHE"
             echo "model=${MODEL:-default}"
             echo "effort=${EFFORT:-default}"
             echo "backend=orca"
@@ -1318,10 +1321,10 @@ spawn_abort_cleanup() {
     CONFIG_INHERIT_LOCK_HELD=0
     fm_lock_release "$CONFIG_INHERIT_LOCK" || true
   fi
- if [ "$WORKTREE_CLAIM_LOCK_HELD" = 1 ]; then
-  WORKTREE_CLAIM_LOCK_HELD=0
-  fm_lock_release "$WORKTREE_CLAIM_LOCK" || true
- fi
+  if [ "$WORKTREE_CLAIM_LOCK_HELD" = 1 ]; then
+    WORKTREE_CLAIM_LOCK_HELD=0
+    fm_lock_release "$WORKTREE_CLAIM_LOCK" || true
+  fi
   return "$status"
 }
 trap spawn_abort_cleanup EXIT
@@ -1608,7 +1611,7 @@ fi
 # the 2026-09-17 swap-exhaustion shape without destroying work. Relaunches
 # reuse an existing lane and skip it. See bin/fm-spawn-memory-floor-lib.sh.
 if [ "$RELAUNCH" -eq 0 ]; then
- fm_spawn_memory_floor_check || exit 1
+  fm_spawn_memory_floor_check || exit 1
 fi
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
 if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
@@ -1857,11 +1860,11 @@ omp_model_validate() { # <omp-bin> <model>
 # sign-in prompt can never block the spawn before any pane exists. An
 # unreachable listing establishes nothing (harness-adapters
 # model-and-effort.md) and launches unvalidated with a notice.
-agy_model_validate() { # <agy-bin> <model>
+agy_model_validate() {  # <agy-bin> <model>
   local bin=$1 model=$2 listing rc=0 bound=${FM_AGY_MODELS_TIMEOUT:-15}
- case "$bound" in '' | *[!0-9]* | 0*) bound=15 ;; esac
+  case "$bound" in ''|*[!0-9]*|0*) bound=15 ;; esac
   [ -n "$model" ] && [ "$model" != default ] || return 0
- listing=$(fm_run_timed "$bound" "$bin" models 2>/dev/null </dev/null) || rc=$?
+  listing=$(fm_run_timed "$bound" "$bin" models 2>/dev/null < /dev/null) || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$listing" ]; then
     if [ "$rc" -eq 124 ]; then
       echo "notice: 'agy models' did not answer within ${bound}s; launching with --model '$model' unvalidated" >&2
@@ -2689,13 +2692,13 @@ validate_firstmate_operational_dirs() {
   done
 }
 
-real_path_or_raw() { # <path>
+real_path_or_raw() {  # <path>
   local path=$1 real
   if real=$(cd "$path" 2>/dev/null && pwd -P); then
     printf '%s\n' "$real"
- else
+  else
     printf '%s\n' "$path"
- fi
+  fi
 }
 
 # Occupied-checkout refusal (see this script's header for the full contract).
@@ -2703,27 +2706,27 @@ real_path_or_raw() { # <path>
 # meta exists exactly while its task does, because fm-teardown.sh removes it as
 # part of landing the task. Process visibility is deliberately not consulted -
 # the whole failure mode is a live worker the pool could not see.
-worktree_meta_claimant() { # <worktree-raw> <worktree-real> -> prints the conflicting task id
- local wt_raw=$1 wt_real=$2 meta other_id other_wt other_real
- [ -d "$STATE" ] || return 1
+worktree_meta_claimant() {  # <worktree-raw> <worktree-real> -> prints the conflicting task id
+  local wt_raw=$1 wt_real=$2 meta other_id other_wt other_real
+  [ -d "$STATE" ] || return 1
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
-  other_id=${meta##*/}
-  other_id=${other_id%.meta}
-  [ "$other_id" != "$ID" ] || continue
-  other_wt=$(sed -n 's/^worktree=//p' "$meta" 2>/dev/null | head -n 1)
-  [ -n "$other_wt" ] || continue
-  if [ "$other_wt" = "$wt_raw" ] || [ "$other_wt" = "$wt_real" ]; then
-   printf '%s\n' "$other_id"
-   return 0
-  fi
-  other_real=$(real_path_or_raw "$other_wt")
-  if [ "$other_real" = "$wt_real" ]; then
-   printf '%s\n' "$other_id"
-   return 0
-  fi
- done
- return 1
+    other_id=${meta##*/}
+    other_id=${other_id%.meta}
+    [ "$other_id" != "$ID" ] || continue
+    other_wt=$(sed -n 's/^worktree=//p' "$meta" 2>/dev/null | head -n 1)
+    [ -n "$other_wt" ] || continue
+    if [ "$other_wt" = "$wt_raw" ] || [ "$other_wt" = "$wt_real" ]; then
+      printf '%s\n' "$other_id"
+      return 0
+    fi
+    other_real=$(real_path_or_raw "$other_wt")
+    if [ "$other_real" = "$wt_real" ]; then
+      printf '%s\n' "$other_id"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Record axis of the occupied-checkout refusal (see this script's header): the
@@ -2758,47 +2761,47 @@ worktree_meta_claimant() { # <worktree-raw> <worktree-real> -> prints the confli
 #
 # The superseded record is left exactly as written: bin/fm-teardown.sh already
 # survives reassignment through the slot-owner claim this spawn takes.
-worktree_claim_superseded() { # <source> <claimant-id>
- local source=$1 claimant=$2 meta window backend
- [ "$source" = "treehouse get" ] || return 1
- meta="$STATE/$claimant.meta"
+worktree_claim_superseded() {  # <source> <claimant-id>
+  local source=$1 claimant=$2 meta window backend
+  [ "$source" = "treehouse get" ] || return 1
+  meta="$STATE/$claimant.meta"
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
- window=$(fm_meta_get "$meta" window)
- [ -n "$window" ] || return 1
- backend=$(fm_meta_get "$meta" backend)
- [ -n "$backend" ] || backend=tmux
- [ "$(fm_backend_agent_alive "$backend" "$window")" = dead ] || return 1
- [ -z "$(git -C "$WT" -c core.quotePath=false status --porcelain 2>/dev/null)" ] || return 1
- git -C "$WT" rev-parse --verify --quiet HEAD >/dev/null 2>&1 || return 1
- [ -n "$(git -C "$WT" branch -r --contains HEAD 2>/dev/null)" ] || return 1
+  window=$(fm_meta_get "$meta" window)
+  [ -n "$window" ] || return 1
+  backend=$(fm_meta_get "$meta" backend)
+  [ -n "$backend" ] || backend=tmux
+  [ "$(fm_backend_agent_alive "$backend" "$window")" = dead ] || return 1
+  [ -z "$(git -C "$WT" -c core.quotePath=false status --porcelain 2>/dev/null)" ] || return 1
+  git -C "$WT" rev-parse --verify --quiet HEAD >/dev/null 2>&1 || return 1
+  [ -n "$(git -C "$WT" branch -r --contains HEAD 2>/dev/null)" ] || return 1
 }
 # Records this spawn already proved stale, so the locked pre-publication
 # re-check does not re-derive a proof the base refresh in between has erased:
 # once the base is reset the tree reads clean and current whatever it held
 # before, which would turn proof 3 into a tautology.
 SPAWN_SUPERSEDED_CLAIMS=
-spawn_claim_already_superseded() { # <claimant-id>
- case " $SPAWN_SUPERSEDED_CLAIMS " in
- *" $1 "*) return 0 ;;
- esac
- return 1
+spawn_claim_already_superseded() {  # <claimant-id>
+  case " $SPAWN_SUPERSEDED_CLAIMS " in
+  *" $1 "*) return 0 ;;
+  esac
+  return 1
 }
-assert_worktree_meta_unclaimed() { # <source> <inspect-target>
- local source=$1 inspect_target=$2 wt_real claimant
- wt_real=$(real_path_or_raw "$WT")
- if claimant=$(worktree_meta_claimant "$WT" "$wt_real"); then
-  spawn_claim_already_superseded "$claimant" && return 0
-  if worktree_claim_superseded "$source" "$claimant"; then
-   SPAWN_SUPERSEDED_CLAIMS="$SPAWN_SUPERSEDED_CLAIMS $claimant"
-   echo "note: $source handed back $WT, which task $claimant still records as its worktree ($STATE/$claimant.meta), but that task endpoint is gone and the checkout is clean with every commit already on a remote; $ID takes the slot over and $claimant record is left for its own teardown" >&2
-   return 0
+assert_worktree_meta_unclaimed() {  # <source> <inspect-target>
+  local source=$1 inspect_target=$2 wt_real claimant
+  wt_real=$(real_path_or_raw "$WT")
+  if claimant=$(worktree_meta_claimant "$WT" "$wt_real"); then
+    spawn_claim_already_superseded "$claimant" && return 0
+    if worktree_claim_superseded "$source" "$claimant"; then
+      SPAWN_SUPERSEDED_CLAIMS="$SPAWN_SUPERSEDED_CLAIMS $claimant"
+      echo "note: $source handed back $WT, which task $claimant still records as its worktree ($STATE/$claimant.meta), but that task endpoint is gone and the checkout is clean with every commit already on a remote; $ID takes the slot over and $claimant record is left for its own teardown" >&2
+      return 0
+    fi
+    echo "error: $source handed back $WT, which task $claimant already records as its worktree ($STATE/$claimant.meta); refusing to launch $ID into an occupied checkout" >&2
+    echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout, including task $claimant worker" >&2
+    HERDR_PROJECTION_ABORT_CLEANUP=0
+    ORCA_ABORT_CLEANUP=0
+    exit 1
   fi
-  echo "error: $source handed back $WT, which task $claimant already records as its worktree ($STATE/$claimant.meta); refusing to launch $ID into an occupied checkout" >&2
-  echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout, including task $claimant worker" >&2
-  HERDR_PROJECTION_ABORT_CLEANUP=0
-  ORCA_ABORT_CLEANUP=0
-  exit 1
- fi
 }
 
 if [ "$KIND" = secondmate ]; then
@@ -2828,12 +2831,12 @@ if [ "$KIND" = secondmate ]; then
     SECONDMATE_PROJECTS=$SECONDMATE_REGISTRY_MATCH_PROJECTS
   fi
   WT="$PROJ_ABS"
- # Record-axis occupied-checkout refusal at the first moment the home path is
- # known: every step below - the ff sync, the state directory, the inheritance
- # and trace-context propagation - writes into the home, and a contested home
- # must refuse before the first write. The authoritative locked re-check still
- # runs later, before this task's metadata is published.
- assert_worktree_meta_unclaimed "the secondmate home" "$WT"
+  # Record-axis occupied-checkout refusal at the first moment the home path is
+  # known: every step below - the ff sync, the state directory, the inheritance
+  # and trace-context propagation - writes into the home, and a contested home
+  # must refuse before the first write. The authoritative locked re-check still
+  # runs later, before this task's metadata is published.
+  assert_worktree_meta_unclaimed "the secondmate home" "$WT"
   # Local-HEAD sync: before launch, fast-forward this secondmate's worktree to the
   # PRIMARY checkout's current default-branch commit, so a freshly spawned or
   # recovery-respawned secondmate always runs the primary's version (AGENTS.md
@@ -2991,25 +2994,25 @@ fi
 
 # Stale-base guard for the brief's own source; this script's header owns the
 # mechanics and the rationale for refusing rather than fast-forwarding.
-assert_project_base_current() { # <project-dir>
- local proj=$1 name default behind
- name=$(basename "$proj")
- git -C "$proj" remote get-url origin >/dev/null 2>&1 || return 0
+assert_project_base_current() {  # <project-dir>
+  local proj=$1 name default behind
+  name=$(basename "$proj")
+  git -C "$proj" remote get-url origin >/dev/null 2>&1 || return 0
  if ! { default=$(default_branch "$proj") &&
   fm_run_timed 30 git -C "$proj" fetch --quiet origin "+refs/heads/$default:refs/remotes/origin/$default" &&
   behind=$(git -C "$proj" rev-list --count "HEAD..refs/remotes/origin/$default" 2>/dev/null); }; then
-  echo "warning: could not check $name against origin's default branch; launching without a base-freshness check - confirm the brief matches current origin" >&2
-  return 0
- fi
- [ "$behind" -gt 0 ] || return 0
- echo "error: $name is $behind commit(s) behind origin/$default, so $ID's brief was written from stale files; sync that copy with bin/fm-fleet-sync.sh $name, re-check the brief against the refreshed files, then spawn again" >&2
- return 1
+    echo "warning: could not check $name against origin's default branch; launching without a base-freshness check - confirm the brief matches current origin" >&2
+    return 0
+  fi
+  [ "$behind" -gt 0 ] || return 0
+  echo "error: $name is $behind commit(s) behind origin/$default, so $ID's brief was written from stale files; sync that copy with bin/fm-fleet-sync.sh $name, re-check the brief against the refreshed files, then spawn again" >&2
+  return 1
 }
 
 # A relaunch re-enters a worktree whose work is already under way, so its base is
 # whatever that task started from; only a fresh ship or scout brief is at risk.
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
- assert_project_base_current "$PROJ_ABS" || exit 1
+  assert_project_base_current "$PROJ_ABS" || exit 1
 fi
 
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
@@ -3224,23 +3227,23 @@ freshen_spawn_worktree_base() { # <worktree>
 # and 2 when the lease state cannot be read at all (no treehouse, no JSON
 # support, or no available JSON reader) - the caller then relies on the durable
 # meta records alone rather than refusing every spawn.
-worktree_pool_lease_state() { # <worktree-raw> <worktree-real>
- local wt_raw=$1 wt_real=$2 json out bound
- command -v treehouse >/dev/null 2>&1 || return 2
- # Bounded on every host by bin/fm-timeout-lib.sh: a pool scan walks every
- # worktree's processes, and this call happens while the claim lock is held. An
- # unreadable, slow, or timed-out pool is not a reason to block or refuse the
- # spawn - the durable meta records above still stand.
- bound=${FM_SPAWN_POOL_STATUS_TIMEOUT:-15}
- case "$bound" in '' | *[!0-9]* | 0) bound=15 ;; esac
- json=$( (cd "$PROJ_ABS" 2>/dev/null && fm_run_timed "$bound" treehouse status --json 2>/dev/null)) || return 2
- [ -n "$json" ] || return 2
- if command -v jq >/dev/null 2>&1; then
-  out=$(printf '%s' "$json" | jq -r --arg a "$wt_raw" --arg b "$wt_real" '
+worktree_pool_lease_state() {  # <worktree-raw> <worktree-real>
+  local wt_raw=$1 wt_real=$2 json out bound
+  command -v treehouse >/dev/null 2>&1 || return 2
+  # Bounded on every host by bin/fm-timeout-lib.sh: a pool scan walks every
+  # worktree's processes, and this call happens while the claim lock is held. An
+  # unreadable, slow, or timed-out pool is not a reason to block or refuse the
+  # spawn - the durable meta records above still stand.
+  bound=${FM_SPAWN_POOL_STATUS_TIMEOUT:-15}
+  case "$bound" in ''|*[!0-9]*|0) bound=15 ;; esac
+  json=$( (cd "$PROJ_ABS" 2>/dev/null && fm_run_timed "$bound" treehouse status --json 2>/dev/null) ) || return 2
+  [ -n "$json" ] || return 2
+  if command -v jq >/dev/null 2>&1; then
+    out=$(printf '%s' "$json" | jq -r --arg a "$wt_raw" --arg b "$wt_real" '
       .[]? | select((.path // "") == $a or (.path // "") == $b)
            | ((.status // "") + "\t" + (.lease_holder // ""))' 2>/dev/null) || return 2
- elif command -v python3 >/dev/null 2>&1; then
-  out=$(printf '%s' "$json" | python3 -c '
+  elif command -v python3 >/dev/null 2>&1; then
+    out=$(printf '%s' "$json" | python3 -c '
 import json, sys
 try:
     entries = json.load(sys.stdin)
@@ -3255,12 +3258,12 @@ for entry in entries:
     if entry.get("path", "") in wanted:
         print((entry.get("status") or "") + "\t" + (entry.get("lease_holder") or ""))
 ' "$wt_raw" "$wt_real" 2>/dev/null) || return 2
- else
+  else
     return 2
- fi
- out=$(printf '%s\n' "$out" | sed '/^$/d' | head -n 1)
- [ -n "$out" ] || return 1
- printf '%s\n' "$out"
+  fi
+  out=$(printf '%s\n' "$out" | sed '/^$/d' | head -n 1)
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
 }
 
 # Authoritative pre-publication occupied-checkout check: refuse to publish a
@@ -3272,29 +3275,29 @@ for entry in entries:
 # The durable-record check covers only tasks recorded in THIS home: two
 # firstmate homes sharing one worktree pool cannot see each other's records and
 # can still collide, until a durable pool-level claim exists (follow-up work).
-assert_worktree_unclaimed() { # <source> <inspect-target>
- local source=$1 inspect_target=$2 wt_real lease lease_status lease_holder
- assert_worktree_meta_unclaimed "$source" "$inspect_target"
- # A crewmate or scout worktree is never leased by firstmate, so any lease on it
- # is another holder's durable claim - in practice a secondmate home, because
- # firstmate leases only secondmate homes. A secondmate spawn legitimately
- # relaunches into its own leased home, so the lease axis does not apply to it.
+assert_worktree_unclaimed() {  # <source> <inspect-target>
+  local source=$1 inspect_target=$2 wt_real lease lease_status lease_holder
+  assert_worktree_meta_unclaimed "$source" "$inspect_target"
+  # A crewmate or scout worktree is never leased by firstmate, so any lease on it
+  # is another holder's durable claim - in practice a secondmate home, because
+  # firstmate leases only secondmate homes. A secondmate spawn legitimately
+  # relaunches into its own leased home, so the lease axis does not apply to it.
   [ "$KIND" != secondmate ] || return 0
- wt_real=$(real_path_or_raw "$WT")
- lease=$(worktree_pool_lease_state "$WT" "$wt_real") || return 0
- lease_status=${lease%%	*}
- lease_holder=${lease#*	}
- [ "$lease_status" = leased ] || return 0
- [ -n "$lease_holder" ] || lease_holder="an unnamed holder"
- [ "$lease_holder" != "$ID" ] || return 0
- echo "error: $source handed back $WT, which the treehouse pool records as leased to $lease_holder; refusing to launch $ID into a checkout another holder owns" >&2
- echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout" >&2
- HERDR_PROJECTION_ABORT_CLEANUP=0
- ORCA_ABORT_CLEANUP=0
- exit 1
+  wt_real=$(real_path_or_raw "$WT")
+  lease=$(worktree_pool_lease_state "$WT" "$wt_real") || return 0
+  lease_status=${lease%%	*}
+  lease_holder=${lease#*	}
+  [ "$lease_status" = leased ] || return 0
+  [ -n "$lease_holder" ] || lease_holder="an unnamed holder"
+  [ "$lease_holder" != "$ID" ] || return 0
+  echo "error: $source handed back $WT, which the treehouse pool records as leased to $lease_holder; refusing to launch $ID into a checkout another holder owns" >&2
+  echo "       leave target $inspect_target exactly as found - returning or closing it terminates every process whose cwd is inside that checkout" >&2
+  HERDR_PROJECTION_ABORT_CLEANUP=0
+  ORCA_ABORT_CLEANUP=0
+  exit 1
 }
 
-herdr_projection_meta_field_exact() { # <meta> <key>
+herdr_projection_meta_field_exact() {  # <meta> <key>
   local meta=$1 key=$2 count
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
   count=$(grep -c "^${key}=" "$meta" 2>/dev/null || true)
@@ -4050,11 +4053,11 @@ agy_capture() {
   fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
 }
 
-agy_pane_shows_trust_dialog() { # <plain-pane-capture>
+agy_pane_shows_trust_dialog() {  # <plain-pane-capture>
   printf '%s\n' "$1" | grep -Fq "$AGY_TRUST_DIALOG"
 }
 
-agy_pane_is_working() { # <plain-pane-capture>
+agy_pane_is_working() {  # <plain-pane-capture>
   case "$(fm_busy_classify "$BACKEND" "$T" agy "$ID" "$STATE" "$1")" in
     busy*) return 0 ;;
   esac
@@ -4079,7 +4082,7 @@ agy_wait_for_working() {
   return 1
 }
 
-agy_spawn_fail() { # <detail>
+agy_spawn_fail() {  # <detail>
   printf '%s\n' "$(status_stamp_line "failed: $1")" >>"$STATE/$ID.status"
   echo "error: $1; inspect window $T" >&2
   rovo_endpoint_cleanup
@@ -4241,25 +4244,25 @@ fi
 AGY_TRUST_PREREGISTERED=0
 case "$HARNESS" in
 claude*)
-  if [ "$KIND" = secondmate ]; then
-    spawn_trust_args=(--secondmate-home "$PROJ_ABS" "$ID")
-  else
-    spawn_trust_args=("$WT" "$PROJ_ABS")
-  fi
-  if ! "$FM_ROOT/bin/fm-claude-trust.sh" "${spawn_trust_args[@]}" >/dev/null; then
-    echo "error: could not pre-register Claude workspace trust for $WT; refusing to launch a claude worker that would wedge on the trust dialog; inspect window $T" >&2
-    exit 1
-  fi
-  ;;
+ if [ "$KIND" = secondmate ]; then
+  spawn_trust_args=(--secondmate-home "$PROJ_ABS" "$ID")
+ else
+  spawn_trust_args=("$WT" "$PROJ_ABS")
+ fi
+ if ! "$FM_ROOT/bin/fm-claude-trust.sh" "${spawn_trust_args[@]}" >/dev/null; then
+  echo "error: could not pre-register Claude workspace trust for $WT; refusing to launch a claude worker that would wedge on the trust dialog; inspect window $T" >&2
+  exit 1
+ fi
+ ;;
 agy)
-  if [ "$KIND" != secondmate ]; then
-    if "$FM_ROOT/bin/fm-agy-trust.sh" "$WT" "$PROJ_ABS" >/dev/null; then
-      AGY_TRUST_PREREGISTERED=1
-    else
-      echo "warning: could not pre-register agy workspace trust for $WT; the launch will answer the folder-trust dialog in window $T instead" >&2
-    fi
+ if [ "$KIND" != secondmate ]; then
+  if "$FM_ROOT/bin/fm-agy-trust.sh" "$WT" "$PROJ_ABS" >/dev/null; then
+   AGY_TRUST_PREREGISTERED=1
+  else
+   echo "warning: could not pre-register agy workspace trust for $WT; the launch will answer the folder-trust dialog in window $T instead" >&2
   fi
-  ;;
+ fi
+ ;;
 esac
 
 # Occupied-checkout refusal (see this script's header). The record axis runs as
@@ -4274,11 +4277,11 @@ esac
 # the same instant cannot both pass against records that do not mention either
 # worktree yet.
 if [ "$KIND" = secondmate ]; then
- WT_SOURCE="the secondmate home"
+  WT_SOURCE="the secondmate home"
 elif [ "$BACKEND" = orca ]; then
- WT_SOURCE="orca worktree create"
+  WT_SOURCE="orca worktree create"
 else
- WT_SOURCE="treehouse get"
+  WT_SOURCE="treehouse get"
 fi
 mkdir -p "$STATE"
 WORKTREE_CLAIM_LOCK="$STATE/.worktree-claim.lock"
@@ -4303,12 +4306,12 @@ assert_worktree_unclaimed "$WT_SOURCE" "$T"
 # identity, not in this shared per-id root.
 RELAUNCH_RECORDED_TASKTMP=
 if [ "$RELAUNCH" -eq 1 ]; then
- RELAUNCH_RECORDED_TASKTMP=$(fm_meta_get "$RELAUNCH_META" tasktmp)
+  RELAUNCH_RECORDED_TASKTMP=$(fm_meta_get "$RELAUNCH_META" tasktmp)
 fi
 if [ -n "$RELAUNCH_RECORDED_TASKTMP" ]; then
- TASK_TMP=$RELAUNCH_RECORDED_TASKTMP
+  TASK_TMP=$RELAUNCH_RECORDED_TASKTMP
 else
- TASK_TMP=$(fm_tasktmp_dir "$ID") || exit 1
+  TASK_TMP=$(fm_tasktmp_dir "$ID") || exit 1
 fi
 mkdir -p "$(dirname "$TASK_TMP")"
 if ! (umask 077 && mkdir "$TASK_TMP") 2>/dev/null; then
@@ -4327,8 +4330,8 @@ mkdir -p "$TASK_TMP/gotmp" "$TASK_TMP/tmp"
 # this task and nothing else. A secondmate is a home, not a build, and gets none.
 BUILD_CACHE=
 if [ "$KIND" != secondmate ]; then
- BUILD_CACHE="$FM_HOME/build-caches/$ID"
- mkdir -p "$BUILD_CACHE"
+  BUILD_CACHE="$FM_HOME/build-caches/$ID"
+  mkdir -p "$BUILD_CACHE"
 fi
 
 # Per-harness turn-end hook where enabled: a file that touches
@@ -4590,10 +4593,8 @@ const busyEvent = (state: string, event: string) =>
   });
 export default function (pi: any) {
   pi.on("agent_start", () => busyEvent("busy", "agent-start"));
-  pi.on("agent_end", (event: any, ctx: any) => {
-    if (event && event.willContinue) return;
-    if (ctx && typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
-    if (ctx && typeof ctx.hasPendingMessages === "function" && ctx.hasPendingMessages()) return;
+  pi.on("agent_end", (event: any) => {
+    if (event && event.willContinue === true) return;
     return busyEvent("idle", "agent-end");
   });
   pi.on("turn_end", () => execFile("touch", ["$TURNEND"]));
@@ -4807,7 +4808,7 @@ preserve_relaunch_meta() {
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   echo "tasktmp=$TASK_TMP"
- [ -z "$BUILD_CACHE" ] || echo "build_cache=$BUILD_CACHE"
+  [ -z "$BUILD_CACHE" ] || echo "build_cache=$BUILD_CACHE"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
@@ -4938,18 +4939,17 @@ fi
 # This task's worktree= claim is now durable, so a concurrent spawn's
 # occupied-checkout check can see it.
 if [ "$WORKTREE_CLAIM_LOCK_HELD" = 1 ]; then
- WORKTREE_CLAIM_LOCK_HELD=0
- fm_lock_release "$WORKTREE_CLAIM_LOCK" || true
+  WORKTREE_CLAIM_LOCK_HELD=0
+  fm_lock_release "$WORKTREE_CLAIM_LOCK" || true
 fi
 
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
-sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
-sq_ompturnend=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-turnend-guard.ts")
-sq_ompwatch=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-omp-watch.ts")
+sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
+sq_ompcfg=$(shell_quote "${OMP_WORKER_CFG:-$FM_ROOT/.omp/fm-worker-overlay.yml}")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 # The crewmate seatbelt (extensions/fm-swarms-platform-guard.ts) is a tracked
 # file of this checkout, loaded by every pi/omp crewmate and scout. Fail closed:
@@ -4985,9 +4985,8 @@ LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PIGUARD__/$sq_piguard}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
-LAUNCH=${LAUNCH//__OMPTURNEND__/$sq_ompturnend}
-LAUNCH=${LAUNCH//__OMPWATCH__/$sq_ompwatch}
 LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
+LAUNCH=${LAUNCH//__OMPWORKERCFG__/$sq_ompcfg}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
 case "$HARNESS" in
 pi | pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;
@@ -4998,7 +4997,7 @@ agy) LAUNCH=${LAUNCH//__AGYBIN__/"$(shell_quote "$AGY_BIN")"} ;;
 esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
 case "$HARNESS" in
-claude | codex | opencode | omp | pi | pi-signed | grok | kimi | gemini | muse | rovo | agy)
+claude | codex | opencode | pi | pi-signed | grok | kimi | gemini | muse | rovo | agy)
   LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
   ;;
 esac
@@ -5081,7 +5080,6 @@ spawn_record_traceparent() {
   return "$status"
 }
 
-LAUNCH="unset OMPCODE CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT; $LAUNCH"
 # Export TMPDIR and GOTMPDIR into the crewmate pane shell so the agent and every
 # child process (cargo, rustc, cc, ld, sort, go build, go test, ...) inherit them
 # and keep their scratch on disk. Sent before the launch command so the env is set
@@ -5104,7 +5102,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   spawn_send_text_line "$T" "export FM_TASK_ID=$ID"
 fi
 [ -z "$BUILD_CACHE" ] ||
- spawn_send_text_line "$T" "export CARGO_TARGET_DIR=$(shell_quote "$BUILD_CACHE")"
+  spawn_send_text_line "$T" "export CARGO_TARGET_DIR=$(shell_quote "$BUILD_CACHE")"
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.
@@ -5169,7 +5167,7 @@ spawn_launch_home_token() {
     return 1
   fi
   case "$hash" in
- *[!0-9a-fA-F]* | '') return 1 ;;
+    *[!0-9a-fA-F]*|'') return 1 ;;
   esac
   printf '%s' "$hash"
 }
@@ -5179,10 +5177,7 @@ if [ -z "$LAUNCH_HOME_TOKEN" ]; then
   exit 1
 fi
 case "$SPAWN_GEN" in
-*[!A-Za-z0-9.]* | '')
- echo "error: spawn incarnation token is not a usable launch-file nonce" >&2
- exit 1
- ;;
+  *[!A-Za-z0-9.]*|'') echo "error: spawn incarnation token is not a usable launch-file nonce" >&2; exit 1 ;;
 esac
 LAUNCH_DIR="/tmp/fm-$ID+$LAUNCH_HOME_TOKEN"
 if ! (umask 077 && mkdir "$LAUNCH_DIR") 2>/dev/null; then
