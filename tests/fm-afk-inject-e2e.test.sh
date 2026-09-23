@@ -31,6 +31,10 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DAEMON="$ROOT/bin/fm-supervise-daemon.sh"
+# This suite does not source tests/lib.sh, so it repeats that file's
+# FM_ORPHAN_SWEEP=off: every drain the daemon runs would otherwise start the
+# box-wide orphan sweep (tests/lib.sh says why a suite must never run it).
+export FM_ORPHAN_SWEEP=off
 
 # Skip gracefully if tmux is not installed.
 command -v tmux >/dev/null 2>&1 || { echo "skip: tmux not found"; exit 0; }

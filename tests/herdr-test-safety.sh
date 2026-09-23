@@ -13,6 +13,17 @@ set -u
 # which the no-mistakes gate runs from a gate worktree, must be exempt).
 export FM_GATE_REFUSE_BYPASS=1
 
+# The same gap leaves them without two more of tests/lib.sh's guards. Its
+# FM_ORPHAN_SWEEP=off keeps every drain these tests drive from running the
+# box-wide orphan sweep (tests/lib.sh says why), and its per-task scratch
+# isolation keeps every spawn from rooting scratch in the operator's real cache
+# (bin/fm-tasktmp-lib.sh), where a leftover from an older run refuses the next.
+export FM_ORPHAN_SWEEP=off
+if [ -z "${FM_TASKTMP_ROOT:-}" ]; then
+  FM_TASKTMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-herdr-tasktmp.XXXXXX") || exit 1
+  export FM_TASKTMP_ROOT
+fi
+
 HERDR_TEST_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 . "$HERDR_TEST_SAFETY_DIR/bin/fm-herdr-lab.sh"
