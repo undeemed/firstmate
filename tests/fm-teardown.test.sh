@@ -39,14 +39,7 @@
 #   (p) fm-pr-check when local HEAD lags                        -> record remote PR head
 #   (q) no-mistakes + NO pr= recorded, PR discovered by branch  -> ALLOW  (yolo/no-CI merge)
 #   (q1) no-mistakes + recorded PR still open                   -> REFUSE (not landed)
-#   (q2) no-mistakes + recorded PR closed without merging       -> REFUSE (not landed)
-#
-# Build-cache reaping (fm-teardown.sh's reap_task_build_cache):
-#   (aa) task-owned, idle cache                 -> REAPED, bytes reported
-#   (ab) unlanded work refuses the teardown     -> cache untouched, no reap
-#   (ac) cache owned by another firstmate home  -> KEPT, skip reported
-#   (ad) secondmate's shared per-project cache  -> KEPT, skip reported
-#   (ae) live process inside the cache          -> KEPT, skip reported
+#   (q1b) no-mistakes + recorded PR closed without merging      -> REFUSE (not landed)
 #   (q2) no-mistakes + squash-merged, local followed pipeline rebase -> ALLOW
 #   (q3) no-mistakes + squash-merged, same file, different content   -> REFUSE
 #   (q4) no-mistakes + squash-merged rebased local plus extra commit -> REFUSE

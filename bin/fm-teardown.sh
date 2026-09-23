@@ -2,9 +2,46 @@
 # Tear down a finished task: return the treehouse worktree, release the Orca
 # worktree, or retire a secondmate home; kill the recorded runtime endpoint,
 # clear volatile state, reap the per-task build cache spawn created outside the
-# worktree, refresh/prune the project's clone for PR-based ship
-# tasks, then print a backlog-refresh reminder for ship and scout teardowns
-# (a secondmate teardown prints none, since secondmates are not backlog items).
+# worktree, and transition this home's backlog item for ship and scout tasks
+# before reporting success (a secondmate teardown transitions none, since
+# secondmates are not backlog items), then refresh/prune the project's clone
+# for PR-based ship tasks.
+# An endpoint whose close could not do its job REFUSES before any record naming
+# it is removed: those records are the only thing that names what survived, so
+# reporting such a close as a completed cleanup strands the endpoint instead of
+# merely leaving it behind. endpoint_close_refusal below owns that refusal and
+# the one site where --force overrides it, and bin/fm-backend.sh's
+# fm_backend_kill owns what each backend can prove about its own close - an
+# already-exited endpoint is not a failure and stays silent.
+# Removing state/<id>.meta and landing the backlog transition are one step, not
+# two: bin/fm-backlog-transition-lib.sh owns that invariant, and both halves run
+# under the task's own meta lock before this script reports success. Because the
+# completion links (the PR, the report path, a local-main note) live only in the
+# record being removed, the intended transition is recorded in
+# state/<id>.backlog-close first, so a process killed between the halves leaves
+# the next session start enough to finish it; a landed close removes that record.
+# A close that fails is fatal and loud, preserves its pending-close record, and
+# is retried by the next session start. The transition is skipped on a
+# config/backlog-backend=manual home and in a markdown home that keeps no
+# data/backlog.md; those cases print the manual follow-up. A configured
+# non-markdown adapter remains active without a markdown file; any active
+# automatic backend without compatible tasks-axi refuses before cleanup.
+# None of this loosens the landed-work gates below: the transition runs only on
+# the paths that already proceed to remove the record.
+# The close - and only the close - is replaced by `tasks-axi reopen` with the
+# deliverable recorded while the backlog item is still an open captain call
+# (bin/fm-captain-hold.sh `open` owns that predicate), because the policy holds
+# the very work item a question gates and cleanup must never retire the
+# captain's own question.
+# NOTE: this uses `open`'s silent default and depends only on its unchanged
+# 0/1/2 exit-code contract. The optional `--identity` output that bin/fm-watch.sh
+# asks for prints only on an exit 0 and changes nothing read here.
+# The same pending-close record carries that intent as
+# `mode=retain`, so an interrupted cleanup replays the retention rather than a
+# close. "Cannot tell" refuses before any destructive step, --force does not
+# lift the deferral (it authorizes discarding unlanded WORK, never the
+# captain's question), and bin/fm-captain-hold.sh answer stays the only act
+# that closes the call.
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
 # hard-resets/removes the worktree and kills its processes. Work has landed when it is
 # reachable from any remote-tracking branch (a fork counts as a remote, so
@@ -209,11 +246,10 @@
 #     whatever step it is on.
 #     conclude_task_no_mistakes_run attributes the active-or-most-recent run to
 #     THIS task only when its branch AND code identity (bin/fm-nm-run-lib.sh's
-#     fm_nm_head_matches_worktree, the match-only wrapper over the
-#     fm_nm_head_binding rule bin/fm-crew-state.sh reads in four-valued form) both
-#     match this worktree, then runs `no-mistakes axi abort --run <id>` for
-#     that verified run instance. When the run head is absent from this copy's
-#     object store - the pipeline committed its fix round in its own repo and
+#     strict fm_nm_head_matches_worktree rule) both match this worktree, then
+#     runs `no-mistakes axi abort --run <id>` for that verified run instance.
+#     When the run head is absent from this copy's object store - the pipeline
+#     committed its fix round in its own repo and
 #     the task copy never fetched it - attribution falls to the same lib's
 #     shared fm_nm_runs_status_for_worktree ledger rule, which refuses every
 #     row shape it cannot prove and recognizes only an explicitly active
@@ -1965,6 +2001,8 @@ conclude_task_no_mistakes_run() { # <task-id> <kind> <worktree>
 # records named by <retain-msg>.
 verify_endpoint_closed_after_kill() { # <backend> <target> <task-label> <retain-msg>
   local backend=$1 target=$2 task_label=$3 retain_msg=$4
+  # A record with no endpoint at all (a windowless legacy leftover) has nothing to close.
+  [ -n "$target" ] || return 0
   case "$(fm_backend_agent_state "$backend" "$target")" in
   dead | missing) ;;
   unverified)

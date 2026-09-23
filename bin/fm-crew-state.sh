@@ -893,40 +893,6 @@ nm_runs_list() {
 # scratch worktree); with no branch there is no run to attribute to this crew.
 CREW_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 
-# Fold every head a run reports into ONE binding verdict for this worktree,
-# using bin/fm-nm-run-lib.sh's four-valued rule per head. Precedence is
-# match > undetermined > stale > absent: one provable match attributes the run,
-# while one head that cannot be resolved here keeps the whole verdict honest at
-# undetermined rather than letting a second, older head force a confident answer.
-nm_binding_of_heads() {  # <head...> -> match|undetermined|stale|absent
-  local head binding verdict=absent
-  for head in "$@"; do
-    [ -n "$head" ] || continue
-    binding=$(fm_nm_head_binding "$WT" "$head")
-    case "$binding" in
-      match)        printf 'match'; return 0 ;;
-      undetermined) verdict=undetermined ;;
-      stale)        [ "$verdict" = undetermined ] || verdict=stale ;;
-    esac
-  done
-  printf '%s' "$verdict"
-}
-
-# Binding for the `axi status` run currently in $RUN_OUT. Branch match is a
-# precondition (caller). Besides the run's own head, the CLI's branch_sync block
-# reports the head the run was SUBMITTED from - the crew worktree's own head at
-# run start - plus the pipeline's current and pushed heads. submitted_head is
-# what binds a live run whose current head exists only in no-mistakes' managed
-# clone; an older CLI that omits the block returns empty fields, and the run
-# head decides alone.
-nm_run_binding() {
-  nm_binding_of_heads \
-    "$(strip_quotes "$(nm_field head)")" \
-    "$(strip_quotes "$(nm_field submitted_head)")" \
-    "$(strip_quotes "$(nm_field current_head)")" \
-    "$(strip_quotes "$(nm_field pushed_head)")"
-}
-
 # 0 if the active axi-status run's head field matches this worktree's code
 # identity. Branch match is a precondition (caller). Rule owned by
 # fm_nm_head_matches_worktree in bin/fm-nm-run-lib.sh.
