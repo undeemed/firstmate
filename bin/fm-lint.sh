@@ -52,9 +52,10 @@
 # lint and backend-purity checks, keeping either invocation independently useful.
 #
 # Every ShellCheck process runs under an address-space ceiling
-# (FM_LINT_MEMORY_LIMIT_KIB, default 10485760 KiB = 10 GiB; raised from 6 GiB
-# when the upstream merge added the backlog-transition and supervision-lease
-# modules to bin/fm-teardown.sh's source graph, which needs about 7 GiB). ShellCheck's memory
+# (FM_LINT_MEMORY_LIMIT_KIB, default 16777216 KiB = 16 GiB; raised from 6 GiB and
+# then 10 GiB as upstream catch-ups grew bin/fm-teardown.sh's and
+# tests/fm-pending-reply.test.sh's source graphs, which now reserve about
+# 13.4 GiB of address space at a 9 GB peak RSS). ShellCheck's memory
 # cost is roughly proportional to the total lines it analyses, and
 # --external-sources inlines a module once per source directive, so a root that
 # imports the same module more than once pays for that module's whole graph
@@ -84,7 +85,7 @@
 set -u
 
 REQUIRED_SHELLCHECK=0.11.0
-DEFAULT_MEMORY_LIMIT_KIB=10485760
+DEFAULT_MEMORY_LIMIT_KIB=16777216
 # Cross-file codes that need --external-sources. Local changed-file mode
 # cannot judge them, so they stay CI-only.
 LOCAL_NOX_EXCLUDE=SC1091,SC2034,SC2153,SC2329
