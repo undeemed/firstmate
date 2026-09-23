@@ -274,27 +274,27 @@ cpu_count() {
 # lands in `unclassified` and stays serial until someone proves it.
 family_for_basename() {
   case "$1" in
- fm-arm-pretool-check.test.sh | fm-ask-user-authority.test.sh | \
-  fm-bearings-board.test.sh | \
-  fm-brief.test.sh | fm-vendor-auth-probe.test.sh | \
-  fm-calm-pi-extension.test.sh | fm-cd-pretool-check.test.sh | \
-  fm-classify-decision-key.test.sh | \
-  fm-composer-ghost.test.sh | fm-composer-lib.test.sh | \
-  fm-crew-state.test.sh | fm-captain-hold-lifecycle.test.sh | \
-  fm-documentation-audiences.test.sh | fm-ensure-agents-md.test.sh | fm-grok-harness.test.sh | \
-  fm-harness-precedence.test.sh | \
-  fm-kimi-harness.test.sh | fm-muse-harness.test.sh | fm-rovo-harness.test.sh | fm-agy-harness.test.sh | fm-omp-harness.test.sh | fm-herdr-lab.test.sh | fm-lint.test.sh | \
-  fm-lavish-server.test.sh | \
-  fm-lint-workflows.test.sh | \
-  fm-operational-input.test.sh | fm-pi-primary-types.test.sh | \
-  fm-calm-claude-mod.test.sh | \
-  fm-harness-adapter-references.test.sh | \
-  fm-send-popup-settle.test.sh | fm-send-settle.test.sh | \
-  fm-subagent-pretool-check.test.sh | \
-  fm-supervision-instructions.test.sh | fm-task-delivery.test.sh | \
-  fm-tmux-submit-busy.test.sh | fm-trace-context-lib.test.sh | \
-  fm-transition-lib.test.sh | \
-  fm-test-run.test.sh | fm-test-isolation-proof.test.sh)
+    fm-arm-pretool-check.test.sh|fm-ask-user-authority.test.sh|\
+    fm-bearings-board.test.sh|\
+    fm-brief.test.sh|fm-dod-lib.test.sh|fm-vendor-auth-probe.test.sh|\
+    fm-calm-pi-extension.test.sh|fm-cd-pretool-check.test.sh|\
+    fm-classify-decision-key.test.sh|\
+    fm-composer-ghost.test.sh|fm-composer-lib.test.sh|\
+    fm-crew-state.test.sh|fm-captain-hold-lifecycle.test.sh|\
+    fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|fm-grok-harness.test.sh|\
+    fm-harness-precedence.test.sh|\
+    fm-kimi-harness.test.sh|fm-muse-harness.test.sh|fm-rovo-harness.test.sh|fm-agy-harness.test.sh|fm-omp-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
+    fm-lavish-server.test.sh|\
+    fm-lint-workflows.test.sh|\
+    fm-operational-input.test.sh|fm-pi-primary-types.test.sh|\
+    fm-calm-claude-mod.test.sh|\
+    fm-harness-adapter-references.test.sh|\
+    fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
+    fm-subagent-pretool-check.test.sh|\
+    fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
+    fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
+    fm-transition-lib.test.sh|\
+    fm-test-run.test.sh|fm-test-isolation-proof.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
  fm-daemon.test.sh | fm-guard-stale-banner.test.sh | fm-pi-watch-extension.test.sh | \
@@ -726,6 +726,7 @@ tests/fm-cursor-primary.test.sh 52269
 tests/fm-daemon.test.sh 27262
 tests/fm-dispatch-resolve.test.sh 4397
 tests/fm-documentation-audiences.test.sh 847
+tests/fm-dod-lib.test.sh 4000
 tests/fm-extension-binding.test.sh 9053
 tests/fm-fleet-snapshot-view.test.sh 17465
 tests/fm-fleet-sync.test.sh 35983

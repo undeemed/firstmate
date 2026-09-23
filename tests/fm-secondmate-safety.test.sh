@@ -73,21 +73,26 @@ test_fm_home_parameterization() {
   brief="$home_one/data/task-c/brief.md"
   grep -F ">> '$home_one/state/task-c.status'" "$brief" >/dev/null || fail "secondmate brief did not shell-quote FM_HOME state path"
 
-  printf 'project=x\n' > "$home_one/state/task-a.meta"
+  # A pushed ship worktree, and a gh that supplies no forge head, so the PR
+  # check stays offline and its named-head gate reads the worktree's HEAD.
   # The audience read bin/fm-pr-check.sh makes on every published GitHub body
   # must be served here: this case is about FM_HOME parameterization, not the
   # audience contract, and an unreadable body refuses before the check script
   # is written.
-  fakebin=$(fm_fakebin "$TMP_ROOT/pr-check-gh")
-  cat > "$fakebin/gh" <<'SH'
+  fm_git_init_commit "$home_one/wt"
+  git -C "$home_one/wt" update-ref refs/remotes/origin/main "$(git -C "$home_one/wt" rev-parse HEAD)"
+  mkdir -p "$home_one/fakebin"
+  cat > "$home_one/fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 case " $* " in
   *" --jq .body"*) printf '%s\n' 'Adds the thing, described for the repository that receives it.' ; exit 0 ;;
 esac
 exit 1
 SH
-  chmod +x "$fakebin/gh"
-  PATH="$fakebin:$PATH" FM_HOME="$home_one" FM_GUARD_GRACE=999999 "$ROOT/bin/fm-pr-check.sh" task-a https://github.com/example/repo/pull/1 >/dev/null 2>/dev/null \
+  chmod +x "$home_one/fakebin/gh"
+  printf 'project=x\nworktree=%s\n' "$home_one/wt" > "$home_one/state/task-a.meta"
+  PATH="$home_one/fakebin:$PATH" FM_HOME="$home_one" FM_GUARD_GRACE=999999 \
+    "$ROOT/bin/fm-pr-check.sh" task-a https://github.com/example/repo/pull/1 >/dev/null 2>/dev/null \
     || fail "fm-pr-check failed under FM_HOME"
   [ -f "$home_one/state/task-a.check.sh" ] || fail "pr check was not written under FM_HOME/state"
   [ ! -e "$home_two/state/task-a.check.sh" ] || fail "pr check leaked into another home"
