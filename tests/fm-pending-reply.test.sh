@@ -1237,22 +1237,23 @@ test_superseded_report_settles_without_claiming_a_reply() {
   if open_decisions "$state/hibit.status" | grep -Fq "pending-reply-$corr"; then
     fail "a settled request must stop being folded as an open blocker"
   fi
-  grep -Fq "resolved [key=pending-reply-$corr]: pending-reply-unacknowledged:" \
-    "$state/hibit.status" || fail "the close should state the honest outcome"
+  sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" \
+    | grep -Fq "resolved [key=pending-reply-$corr]: pending-reply-unacknowledged:" \
+    || fail "the close should state the honest outcome"
   if grep -Fq "pending-reply-resolved: task=hibit pending-reply-id=$corr" "$state/hibit.status"; then
     fail "an unanswered request must never publish a resolved-report close"
   fi
   # Idempotent: repeated ticks publish exactly one close.
   fm_pending_reply_tick "$state" || fail "tick should stay idempotent after settling"
   fm_pending_reply_tick "$state" || fail "tick should stay idempotent after settling"
-  closes=$(grep -Fc "resolved [key=pending-reply-$corr]:" "$state/hibit.status")
+  closes=$(sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" | grep -Fc "resolved [key=pending-reply-$corr]:")
   [ "$closes" = 1 ] || fail "settling should publish one close, got $closes"
   # A late correlated line cannot reopen or re-close a settled request.
   printf 'done [corr=%s]: very late\n' "$corr" >> "$state/hibit.status"
   fm_pending_reply_tick "$state" || fail "tick should ignore a late line on a settled record"
   [ "$(phase_of "$state" "$corr")" = closed_unacknowledged ] \
     || fail "a settled request must stay settled"
-  closes=$(grep -Fc "resolved [key=pending-reply-$corr]:" "$state/hibit.status")
+  closes=$(sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" | grep -Fc "resolved [key=pending-reply-$corr]:")
   [ "$closes" = 1 ] || fail "a late line must not publish a second close, got $closes"
   pass "an unanswerable escalation settles once without claiming a reply"
 }

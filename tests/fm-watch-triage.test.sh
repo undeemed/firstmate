@@ -4802,8 +4802,11 @@ wedge_probe() { # <state> <age-secs> <escalations-recorded> [VAR=value...]
     printf "%s\n" "$3" > "$esc_file"
     fm_wake_append() { return 0; }
     triage_log() { :; }
+    # The probe pane has no endpoint, so the dead-record probe would report it
+    # gone; this probe measures the escalation cadence alone.
+    wedge_dead_record() { return 1; }
     wake() { printf "ESCALATED %s\n" "$1"; exit 0; }
-    wedge_timer_check test:fm-probe "$since_file" probe "$esc_file" ""
+    wedge_timer_check test:fm-probe "$since_file" probe "$esc_file" "" ""
     printf "ABSORBED\n"
   ' _ "$ROOT/bin/fm-watch.sh" "$age" "$count"
 }
