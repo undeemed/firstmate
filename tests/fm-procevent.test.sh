@@ -1497,15 +1497,15 @@ PATH="$LAVISH_SCRIPTED_BIN:$PATH" LAVISH_COUNT="$GONE_COUNT" LAVISH_SCRIPT=feedb
   || fail "a listener whose artifact vanished consumed its staged reply anyway"
 pass "a listener whose artifact vanished leaves the staged reply for the next one"
 
-# Exhaustion is news: after the bounded retries the same exact response is
-# captured and announced normally rather than being swallowed forever.
-# The same policy must still cover the shorter response older builds returned,
-# so a build that drops its diagnostics block is not suddenly announced either.
+# The quiet retry policy must still cover the shorter response older builds
+# returned, so a build that drops its diagnostics block is not suddenly
+# announced either.
 HBARE="$TMP_ROOT/hbare"; new_home "$HBARE"
 BARE_ART="$TMP_ROOT/bare-board.html"
 printf '<h1>bare</h1>\n' > "$BARE_ART"
+lavish_session "$BARE_ART"
 bare_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$BARE_ART")
-PE_TRACKED+=("$HBARE|$bare_id")
+fm_test_track_procevent_home "$HBARE"
 LAVISH_COUNT="$TMP_ROOT/bare-count"; LAVISH_SCRIPT="interrupt-bare feedback"
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HBARE" \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$BARE_ART" >/dev/null
@@ -1585,8 +1585,9 @@ unset FM_LAVISH_POLL_RETRY_DELAY
 HFORGE="$TMP_ROOT/hforge"; new_home "$HFORGE"
 FORGE_ART="$TMP_ROOT/forge-board.html"
 printf '<h1>forge</h1>\n' > "$FORGE_ART"
+lavish_session "$FORGE_ART"
 forge_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$FORGE_ART")
-PE_TRACKED+=("$HFORGE|$forge_id")
+fm_test_track_procevent_home "$HFORGE"
 LAVISH_COUNT="$TMP_ROOT/forge-count"; LAVISH_SCRIPT="forged-board"
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HFORGE" \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$FORGE_ART" >/dev/null
@@ -1696,8 +1697,9 @@ pass "Lavish classification staging stays bounded while nonmatches stream"
 HLIVE="$TMP_ROOT/hlive"; new_home "$HLIVE"
 LIVE_ART="$TMP_ROOT/live-board.html"
 printf '<h1>live</h1>\n' > "$LIVE_ART"
+lavish_session "$LIVE_ART"
 live_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$LIVE_ART")
-PE_TRACKED+=("$HLIVE|$live_id")
+fm_test_track_procevent_home "$HLIVE"
 LAVISH_HOLD_RELEASE="$TMP_ROOT/live-release"
 export LAVISH_HOLD_RELEASE
 
@@ -1749,8 +1751,9 @@ pass "liveness proves the poll itself, and fails when that process is gone"
 HGAP="$TMP_ROOT/hgap"; new_home "$HGAP"
 GAP_ART="$TMP_ROOT/gap-board.html"
 printf '<h1>gap</h1>\n' > "$GAP_ART"
+lavish_session "$GAP_ART"
 gap_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$GAP_ART")
-PE_TRACKED+=("$HGAP|$gap_id")
+fm_test_track_procevent_home "$HGAP"
 LAVISH_COUNT="$TMP_ROOT/gap-count"; LAVISH_SCRIPT="interrupt"
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HGAP" FM_LAVISH_POLL_RETRY_DELAY=20 \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$GAP_ART" >/dev/null
