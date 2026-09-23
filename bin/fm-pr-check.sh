@@ -130,20 +130,11 @@ if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/d
   if REMOTE_HEAD=$(cd "$WT" && gh api "repos/$OWNER/$REPO/pulls/$NUMBER" --jq .head.sha 2>/dev/null) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
+  # Only a REST read that yields no head spends the GraphQL read upstream uses.
+  elif REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
+    && fm_pr_head_valid "$REMOTE_HEAD"; then
+    PR_HEAD=$REMOTE_HEAD
   fi
-fi
-
-KIND=$(grep '^kind=' "$META" | tail -1 | cut -d= -f2- || true)
-MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
-PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-case "$MODE" in
-  no-mistakes|'') DONE_LINE="done: PR $URL checks green" ;;
-  *) DONE_LINE="done: PR $URL" ;;
-esac
-if { [ -z "$PR_HEAD" ] || ! fm_dod_forge_head_is_named_head "$MODE"; } \
-  && ! GATE_REASON=$(fm_dod_accept_ship_done "${KIND:-ship}" "$MODE" "$WT" "$PROJECT" "$DONE_LINE" "$STATE" "$ID" "$META"); then
-  echo "error: $GATE_REASON" >&2
-  exit 1
 fi
 
 # --- declared PR body contract ----------------------------------------------
@@ -266,6 +257,19 @@ if [ "$PROVIDER" = github ] && ! audience_repo_is_firstmate; then
     | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sort -u | paste -sd, -)
   [ -z "$AUDIENCE_HITS" ] \
     || audience_refuse "its published body carries fleet-internal vocabulary that must be rewritten in the project's own words first: $AUDIENCE_HITS"
+fi
+
+KIND=$(grep '^kind=' "$META" | tail -1 | cut -d= -f2- || true)
+MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
+PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+case "$MODE" in
+  no-mistakes|'') DONE_LINE="done: PR $URL checks green" ;;
+  *) DONE_LINE="done: PR $URL" ;;
+esac
+if { [ -z "$PR_HEAD" ] || ! fm_dod_forge_head_is_named_head "$MODE"; } \
+  && ! GATE_REASON=$(fm_dod_accept_ship_done "${KIND:-ship}" "$MODE" "$WT" "$PROJECT" "$DONE_LINE" "$STATE" "$ID" "$META"); then
+  echo "error: $GATE_REASON" >&2
+  exit 1
 fi
 
 META_TMP=
