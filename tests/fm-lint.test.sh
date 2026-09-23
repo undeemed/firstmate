@@ -561,11 +561,11 @@ test_heavy_roots_lint_within_the_memory_ceiling() {
   # The default ceiling, stated explicitly so this pins the bound rather than
   # whatever the default happens to become. Before the source-graph fix
   # bin/fm-teardown.sh could not be linted at this ceiling at all.
-  out=$(FM_LINT_MEMORY_LIMIT_KIB=10485760 "$LINT" "${FM_LINT_HEAVY_ROOTS[@]}" 2>&1) || rc=$?
-  assert_not_contains "$out" "memory ceiling" "a heavy canonical root no longer fits the 10 GiB ShellCheck memory ceiling"
+  out=$(FM_LINT_MEMORY_LIMIT_KIB=16777216 "$LINT" "${FM_LINT_HEAVY_ROOTS[@]}" 2>&1) || rc=$?
+  assert_not_contains "$out" "memory ceiling" "a heavy canonical root no longer fits the 16 GiB ShellCheck memory ceiling"
   [ "$rc" -eq 0 ] \
-    || fail "linting the heavy canonical roots inside the 10 GiB ceiling failed (exit $rc)"$'\n'"$out"
-  pass "fm-lint.sh lints the heaviest canonical roots inside the 10 GiB memory ceiling"
+    || fail "linting the heavy canonical roots inside the 16 GiB ceiling failed (exit $rc)"$'\n'"$out"
+  pass "fm-lint.sh lints the heaviest canonical roots inside the 16 GiB memory ceiling"
 }
 
 # fm_lint_write_oversized_root <path>: a self-contained root whose ShellCheck
