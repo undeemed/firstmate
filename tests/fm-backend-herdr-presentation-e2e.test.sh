@@ -695,9 +695,12 @@ pass "real Herdr lab: every projected create, task-tab create, seeded prune, and
 mkdir -p "$ACTIVE_SEEDED_CONTROL"
 printf '%s\n' requested > "$ACTIVE_SEEDED_CONTROL/stage"
 ACTIVE_SEEDED_START=$(log_line_count)
-ACTIVE_SEEDED_FOCUS_START=$(focus_audit_line_count)
-if spawn_task active-seeded "$HOME_DIR" > "$TMP_ROOT/active-seeded.out" 2> "$TMP_ROOT/active-seeded.err"; then
-  fail "active seeded-tab projection should refuse the prune"
+cp "$MOVE_CALL_LOG" "$TMP_ROOT/move-log-before-active-seeded"
+if ! spawn_task active-seeded "$HOME_DIR" > "$TMP_ROOT/active-seeded.out" 2> "$TMP_ROOT/active-seeded.err"; then
+  fail "detached persisted-focus seeded prune should succeed: $(cat "$TMP_ROOT/active-seeded.err")"
+fi
+if grep -F "target is the captain's active tab" "$TMP_ROOT/active-seeded.err" >/dev/null 2>&1; then
+  fail "detached persisted-focus seeded prune still used the live-viewer refusal"
 fi
 ACTIVE_SEEDED_PANE=$(cat "$ACTIVE_SEEDED_CONTROL/seeded-pane")
 ACTIVE_SEEDED_TASK_PANE=$(cat "$ACTIVE_SEEDED_CONTROL/task-pane")
@@ -1165,7 +1168,7 @@ CROSS_LOCK_PID=$!
 while [ ! -e "$CROSS_LOCK_READY" ] && kill -0 "$CROSS_LOCK_PID" 2>/dev/null; do sleep 0.01; done
 [ -e "$CROSS_LOCK_READY" ] || fail "could not hold the cross-home session presentation lock"
 mkdir -p "$SECOND_HOME_A/data/aflat"
-printf 'Flat fallback under session lock contention.\n' > "$SECOND_HOME_A/data/aflat/brief.md"
+write_ship_brief "$SECOND_HOME_A" aflat 'Flat fallback under session lock contention.'
 if spawn_task aflat "$SECOND_HOME_A" > "$TMP_ROOT/aflat.out" 2> "$TMP_ROOT/aflat.err"; then
   AFLAT_STATUS=0
 else
@@ -1279,7 +1282,7 @@ pass "real Herdr lab: Hi Bit and Wheelhouse-style same-identity restarts reclaim
 # A secondmate child binds and reclaims only inside its own home and parent.
 CROSS_RESTART_ID=wheel-child-resume
 mkdir -p "$SECOND_HOME_A/data/$CROSS_RESTART_ID"
-printf 'Cross-home restart fixture.\n' > "$SECOND_HOME_A/data/$CROSS_RESTART_ID/brief.md"
+write_ship_brief "$SECOND_HOME_A" "$CROSS_RESTART_ID" 'Cross-home restart fixture.'
 spawn_task "$CROSS_RESTART_ID" "$SECOND_HOME_A" > "$TMP_ROOT/cross-restart-first.out" 2> "$TMP_ROOT/cross-restart-first.err" \
   || fail "cross-home restart fixture failed: $(cat "$TMP_ROOT/cross-restart-first.err")"
 CROSS_RESTART_META="$SECOND_HOME_A/state/$CROSS_RESTART_ID.meta"
@@ -1316,8 +1319,8 @@ pass "real Herdr lab: secondmate restart binding and reclaim stay isolated to th
 PRIMARY_WAVE_ID=resume-wave-primary
 BRAVO_WAVE_ID=resume-wave-bravo
 mkdir -p "$HOME_DIR/data/$PRIMARY_WAVE_ID" "$SECOND_HOME_B/data/$BRAVO_WAVE_ID"
-printf 'Concurrent primary recovery fixture.\n' > "$HOME_DIR/data/$PRIMARY_WAVE_ID/brief.md"
-printf 'Concurrent secondmate recovery fixture.\n' > "$SECOND_HOME_B/data/$BRAVO_WAVE_ID/brief.md"
+write_ship_brief "$HOME_DIR" "$PRIMARY_WAVE_ID" 'Concurrent primary recovery fixture.'
+write_ship_brief "$SECOND_HOME_B" "$BRAVO_WAVE_ID" 'Concurrent secondmate recovery fixture.'
 spawn_task "$PRIMARY_WAVE_ID" "$HOME_DIR" > "$TMP_ROOT/primary-wave-first.out" 2> "$TMP_ROOT/primary-wave-first.err" \
   || fail "primary recovery-wave fixture failed: $(cat "$TMP_ROOT/primary-wave-first.err")"
 spawn_task "$BRAVO_WAVE_ID" "$SECOND_HOME_B" > "$TMP_ROOT/bravo-wave-first.out" 2> "$TMP_ROOT/bravo-wave-first.err" \
@@ -1375,7 +1378,7 @@ FLAT_TAB_OUT=$(lab tab create --workspace "$(lab workspace list | jq -r '.result
   || fail "could not seed a flat secondmate child tab"
 FLAT_TAB_ID=$(printf '%s' "$FLAT_TAB_OUT" | jq -r '.result.tab.tab_id // empty')
 mkdir -p "$HOME_DIR/data/post-legacy"
-printf 'Post-legacy primary child.\n' > "$HOME_DIR/data/post-legacy/brief.md"
+write_ship_brief "$HOME_DIR" post-legacy 'Post-legacy primary child.'
 spawn_task post-legacy "$HOME_DIR" > "$TMP_ROOT/post-legacy.out" 2> "$TMP_ROOT/post-legacy.err" \
   || fail "post-legacy projected spawn failed: $(cat "$TMP_ROOT/post-legacy.err")"
 remember_meta_worktree "$HOME_DIR/state/post-legacy.meta" >/dev/null
@@ -1462,13 +1465,33 @@ pass "real Herdr lab: missing, renamed, and duplicate tokens trigger zero destru
 # recorded checkout.
 printf 'on\n' > "$HOME_DIR/config/herdr-presentation-spaces"
 mkdir -p "$HOME_DIR/data/collide-live" "$HOME_DIR/data/collide-new"
-printf 'Projection collision live fixture.\n' > "$HOME_DIR/data/collide-live/brief.md"
-printf 'Projection collision new fixture.\n' > "$HOME_DIR/data/collide-new/brief.md"
+write_ship_brief "$HOME_DIR" collide-live 'Projection collision live fixture.'
+write_ship_brief "$HOME_DIR" collide-new 'Projection collision new fixture.'
 spawn_task collide-live "$HOME_DIR" > "$TMP_ROOT/collide-live.out" 2> "$TMP_ROOT/collide-live.err" \
   || fail "collide-live spawn failed: $(cat "$TMP_ROOT/collide-live.err")"
 COLLIDE_WT=$(remember_meta_worktree "$HOME_DIR/state/collide-live.meta")
 "$REAL_TREEHOUSE" return --force "$COLLIDE_WT" > /dev/null 2>&1 \
   || fail "could not force-return the collide-live worktree while its meta remains"
+# A returned slot is reset clean onto origin, and a claimant whose pane reads
+# dead is provably gone, so spawn would take the slot over instead of refusing.
+# Keep collide-live's recorded pane provably live instead - a registered agent
+# over a running non-shell process - because that live co-tenant is the one the
+# refusal exists to protect. The process runs outside the returned checkout, so
+# the pool still hands the slot back.
+COLLIDE_LIVE_PANE=$(grep '^herdr_pane_id=' "$HOME_DIR/state/collide-live.meta" | cut -d= -f2-)
+COLLIDE_LIVE_WINDOW=$(grep '^window=' "$HOME_DIR/state/collide-live.meta" | cut -d= -f2-)
+lab pane run "$COLLIDE_LIVE_PANE" 'cd / && exec sleep 3600' >/dev/null \
+  || fail "could not start a live process in collide-live's recorded pane"
+lab pane report-agent "$COLLIDE_LIVE_PANE" --source fm-projection-e2e --agent test-agent --state idle >/dev/null \
+  || fail "could not register an agent on collide-live's recorded pane"
+COLLIDE_LIVE_STATE=
+for _ in $(seq 1 50); do
+  COLLIDE_LIVE_STATE=$(fm_backend_herdr_agent_state "$COLLIDE_LIVE_WINDOW")
+  [ "$COLLIDE_LIVE_STATE" = alive ] && break
+  sleep 0.2
+done
+[ "$COLLIDE_LIVE_STATE" = alive ] \
+  || fail "collide-live's recorded pane never read alive, so the collision cannot be staged: $COLLIDE_LIVE_STATE"
 if FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" \
   "$ROOT/bin/fm-spawn.sh" collide-new "$TMP_ROOT/pool-collide-live" "$FAKE_WORKER_COMMAND" \
   --mode no-mistakes --yolo off --backend herdr \
