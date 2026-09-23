@@ -473,11 +473,11 @@ A marked request requires one correlated answer after the work; it does not requ
 Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started.
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
-When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>] [at=<epoch>]: {why it is no longer active}\`.
+When a keyed phase ends without another reportable state, append \`resolved [at=<epoch>] [key=<work-slug>]: {why it is no longer active}\`.
 An escalation is keyed the same way: \`needs-decision [key=<slug>]: {summary}\` and \`blocked [key=<slug>]: {why}\`.
 Every \`[key=...]\` token must sit BEFORE the colon; written later in the line it is read as message text, so the event files under the shared \`default\` key and cannot be answered by its own key.
 \`resolved\` separately closes an escalated decision or blocker, and only a \`resolved\` line carrying that decision's exact key closes it: a later \`done\` or \`working\` event never does, even when the answer is what started that work.
-The main firstmate's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main firstmate, append \`resolved [key=<slug>] [at=<epoch>]: {how it cleared}\` yourself (the same key you opened it with, or a bare \`resolved [at=<epoch>]: {how it cleared}\` when you opened it unkeyed) as your domain resumes.
+The main firstmate's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main firstmate, append \`resolved [at=<epoch>] [key=<slug>]: {how it cleared}\` yourself (the same key you opened it with, or a bare \`resolved [at=<epoch>]: {how it cleared}\` when you opened it unkeyed) as your domain resumes.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
 
 $STATUS_HONESTY
@@ -590,11 +590,11 @@ $FORGE_POLL_RULE
    must spend a deep inspection to tell them apart.
    5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision [key=<slug>] [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision [at=<epoch>] [key=<slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    The \`[key=<slug>]\` token names that decision and must sit BEFORE the colon; \`blocked [key=<slug>]: {why}\` names a blocker the same way.
    A token written later in the line is read as message text, so the decision files under the shared \`default\` key, cannot be answered by its own key, and shares that key with every other unkeyed decision on this task.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
-   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>] [at=<epoch>]: {how it cleared}\` yourself (the same key you opened it with) as you resume.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>] [key=<slug>]: {how it cleared}\` yourself (the same key you opened it with) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
    manages the daemon.
@@ -704,12 +704,12 @@ $FORGE_POLL_RULE
    must spend a deep inspection to tell them apart.
    5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
-   append \`needs-decision [key=<slug>] [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision [at=<epoch>] [key=<slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    The \`[key=<slug>]\` token names that decision and must sit BEFORE the colon; \`blocked [key=<slug>]: {why}\` names a blocker the same way.
    A token written later in the line is read as message text, so the decision files under the shared \`default\` key, cannot be answered by its own key, and shares that key with every other unkeyed decision on this task.
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
-   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>] [at=<epoch>]: {how it cleared}\` yourself (the same key you opened it with) as you resume.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>] [key=<slug>]: {how it cleared}\` yourself (the same key you opened it with) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
    manages the daemon.
