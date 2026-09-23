@@ -1752,7 +1752,6 @@ HGAP="$TMP_ROOT/hgap"; new_home "$HGAP"
 GAP_ART="$TMP_ROOT/gap-board.html"
 printf '<h1>gap</h1>\n' > "$GAP_ART"
 lavish_session "$GAP_ART"
-gap_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$GAP_ART")
 fm_test_track_procevent_home "$HGAP"
 LAVISH_COUNT="$TMP_ROOT/gap-count"; LAVISH_SCRIPT="interrupt"
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HGAP" FM_LAVISH_POLL_RETRY_DELAY=20 \
