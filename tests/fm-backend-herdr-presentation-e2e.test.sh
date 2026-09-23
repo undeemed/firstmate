@@ -393,6 +393,19 @@ make_project() {  # <dir>
   git -C "$dir" remote add origin "file://$dir.origin.git"
 }
 
+write_ship_brief() {  # <home> <id> [description]
+  local home=$1 id=$2 description=${3:-Herdr presentation fixture $2}
+  mkdir -p "$home/data/$id"
+  cat > "$home/data/$id/brief.md" <<EOF
+# Task
+## Captain's intent
+$description
+
+## Firstmate spec
+Verify projected workspace behavior for $id.
+EOF
+}
+
 # Stand-in worker for a real agent. It must outlive the whole suite, because a
 # pool worktree is freed the moment its holder exits.
 FAKE_WORKER_COMMAND="sh -c 'sleep ${FM_TEST_FAKE_WORKER_SECONDS:-3600}'"
