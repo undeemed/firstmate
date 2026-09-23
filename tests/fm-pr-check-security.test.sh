@@ -175,14 +175,13 @@ case " $* " in
   *" api repos/"*"/commits/"*"/statuses?per_page=100 "*)
     printf '%s\n' '[[]]'
     ;;
-  *" api repos/"*"/pulls/"*)
-    printf '%s\n' "{\"state\":\"open\",\"user\":{\"login\":\"author\"},\"head\":{\"sha\":\"${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}\"},\"draft\":false,\"mergeable\":true,\"merged_at\":null}"
+  # The published-body read behind bin/fm-pr-check.sh's audience contract: an
+  # empty body carries no fleet-internal vocabulary, so the check passes and the
+  # cases here stay about poll arming.
+  *" --jq .body"*)
+    printf '%s\n' "${FM_TEST_GH_BODY-}"
+    exit 0
     ;;
-  *" api repos/"*)
-    printf '%s\n' '{"permissions":{"push":false}}'
-    ;;
-  *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
-  *" state "*)
   # The REST head read behind bin/fm-pr-check.sh's pr_head lookup.
   *" --jq .head.sha "*)
     printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
@@ -204,15 +203,25 @@ case " $* " in
     esac
     exit 0
     ;;
+  *" api repos/"*"/pulls/"*)
+    # One payload for every REST pull read this suite makes: the fields the
+    # merge entrypoint checks, plus the commit and file counts bin/fm-pr-merge.sh's
+    # squash guard reads before it applies the implicit --squash. An ordinary
+    # single-topic pull request, which that guard lets through.
+    printf '%s\n' "{\"state\":\"open\",\"user\":{\"login\":\"author\"},\"head\":{\"sha\":\"${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}\",\"ref\":\"fm/task-a\"},\"draft\":false,\"mergeable\":true,\"merged_at\":null,\"commits\":1,\"changed_files\":2,\"body\":\"\"}"
+    exit 0
+    ;;
+  *" api repos/"*)
+    printf '%s\n' '{"permissions":{"push":false}}'
+    ;;
+  *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
+  *" state "*)
+    [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
+    [ -z "${FM_TEST_GH_STATE_STARTED:-}" ] || : > "$FM_TEST_GH_STATE_STARTED"
+    [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
+    printf '%s\n' "${FM_TEST_GH_STATE:-OPEN}"
+    ;;
 esac
-if [ "${1:-}" = api ]; then
-  # The REST payload bin/fm-pr-merge.sh's squash guard reads before it applies
-  # the implicit --squash: an ordinary single-topic PR, which that guard lets
-  # through.
-  case "${2:-}" in
-    */pulls/*) printf '%s\n' '{"commits":1,"changed_files":2,"head":{"ref":"fm/task-a"},"body":""}' ;;
-  esac
-fi
 SH
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
@@ -265,14 +274,29 @@ write_poll_meta() {
 }
 
 
+# Arming a PR also arms the contributions check. Its own wake is the first thing
+# a sweep publishes, and the watcher stops at the first wake, so a case about a
+# merge poll never reaches its own check while that one is armed. Retire it so
+# the bounded window belongs to the poll under test.
+retire_contributions_check() {  # <state>
+  rm -f "$1/contributions.check.sh" "$1/contributions.check-trust"
+}
+
 run_check_entry() {
-  local dir=$1
+  local dir=$1 rc=0
   shift
   FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
     FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
     FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     PATH="$dir/fakebin:$BASE_PATH" \
-    "$PR_CHECK" "$@"
+    "$PR_CHECK" "$@" || rc=$?
+  # Recording a pull request also arms the contributions check. Its own wake is
+  # the first thing a sweep publishes and the watcher stops at the first wake,
+  # so a case about a merge poll would never reach its own check. This suite is
+  # about poll authentication, so the contributions check is retired here rather
+  # than in every case that arms one.
+  retire_contributions_check "$dir/home/state"
+  return "$rc"
 }
 
 run_merge_entry() {
@@ -730,8 +754,6 @@ run_watcher_bounded() {
   shift 2
   perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 10; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
     env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT="$check_timeout" \
-  perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 90; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
-    env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
 
