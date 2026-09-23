@@ -130,9 +130,16 @@
 #                          while the mate was not in an active turn (a busy mate
 #                          is exempt only until the queue has been frozen for
 #                          BUSY_TURN_MAX_SECS); declared external-wait pause
-#                          rows do not feed this escalation, observation is
-#                          read-only, and one parent notification covers each
-#                          no-progress episode
+#                          rows do not feed this escalation; a mate whose
+#                          semantic busy class is exactly idle, whose agent is
+#                          alive, and whose composer is not pending is rung
+#                          once so its own home can drain, and the parent
+#                          notification is withheld until that same row stays
+#                          frozen for another stall interval; unknown or
+#                          ring-unsafe panes keep the parent alarm; empty
+#                          inbox and a fresh child beacon are not idle proof;
+#                          the foreign queue itself stays read-only, and one
+#                          parent notification covers each no-progress episode
 #   check: secondmate home UNATTENDED - <n> live child task(s) with nobody
 #     consuming their events: mate=<id> row=<seq> age=<seconds>s depth=<rows>
 #     (unchanged backlog not reported again before <seconds>s)
@@ -911,6 +918,60 @@ secondmate_in_active_turn() { # <window> <idle>
   window_is_busy "$w" "$tail40"
 }
 
+# First token of the semantic busy classification for <window>: busy, idle,
+# unknown, or dead. Capture failure and a missing window are unknown, never
+# idle. Empty inbox and a fresh watcher beacon are not consulted.
+secondmate_busy_class() {  # <window>
+  local w=$1 task meta tail40 verdict
+  task=$(window_to_task "$w" "$STATE")
+  meta="$STATE/$task.meta"
+  if [ -z "$w" ] || [ -z "$task" ] || [ ! -f "$meta" ]; then
+    printf 'unknown'
+    return 0
+  fi
+  tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || {
+    printf 'unknown'
+    return 0
+  }
+  verdict=$(fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
+  printf '%s' "${verdict%% *}"
+}
+
+# 0 iff a child ring is authorized: exact idle, a live agent, and a composer
+# that is not proven pending. Busy, unknown, dead, missing, and pending
+# composer all refuse, so a Kimi or Claude pane without an exact idle
+# verdict is never typed into.
+secondmate_idle_ring_safe() {  # <window>
+  local w=$1 backend agent_state cstate
+  [ -n "$w" ] || return 1
+  [ "$(secondmate_busy_class "$w")" = idle ] || return 1
+  backend=$(window_backend "$w")
+  agent_state=$(fm_backend_agent_state "$backend" "$w" 2>/dev/null || true)
+  [ "$agent_state" = alive ] || return 1
+  cstate=$(fm_backend_composer_state "$backend" "$w" "$(window_label "$w")" 2>/dev/null) || cstate=unknown
+  [ "$cstate" != pending ] || return 1
+  return 0
+}
+
+# Write one fire-and-forget drain steer and ring the child's doorbell. The
+# steer carries the same from-firstmate fire-and-forget carrier fm-send uses
+# for a secondmate (marker, then delivery=<16-hex-id>, then the text), so the
+# mate reads it as a parent request that expects no reply, never as captain
+# intervention. The worker's ordinary wake-handling turn drains its own home's
+# wake queue; this parent never rewrites that foreign queue. 0 iff the ring
+# call returned 0.
+secondmate_ring_to_drain() {  # <task> <window>
+  local task=$1 w=$2 rec backend delivery_id
+  backend=$(window_backend "$w")
+  delivery_id=$(LC_ALL=C od -An -v -tx1 -N 8 /dev/urandom 2>/dev/null | tr -d ' \n') || return 1
+  case "$delivery_id" in ''|*[!0-9a-f]*) return 1 ;; esac
+  [ "${#delivery_id}" -eq 16 ] || return 1
+  rec=$(fm_task_inbox_write "$STATE" "$task" \
+    "${FM_FROMFIRST_MARK}delivery=${delivery_id} Drain pending rows in this home's wake queue, then resume idle supervision." \
+    fire-and-forget) || return 1
+  fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")"
+}
+
 # Surface one durable parent check when the foreign queue's drain position has
 # not moved for the bounded interval. The progress marker records that position
 # as the same epoch-sequence row identity the stall receipts use, so the timer
@@ -923,6 +984,11 @@ secondmate_in_active_turn() { # <window> <idle>
 # a later genuine freeze remains visible. A mate demonstrably inside an active
 # turn defers its escalation, but only while this same interval is under
 # BUSY_TURN_MAX_SECS, so a turn that never ends cannot hide a frozen queue.
+# A mate whose busy class is exactly idle, whose agent is alive, and whose
+# composer is not pending is rung once so its own home can drain, and the
+# parent notification is withheld until that same row stays frozen for another
+# stall interval. Unknown, busy-over-bound, and ring-unsafe panes keep the
+# parent alarm. Empty inbox and a fresh child beacon are not idle proof.
 # Receipts close the append-before-marker crash window without changing the
 # foreign queue.
 
@@ -944,16 +1010,17 @@ secondmate_in_active_turn() { # <window> <idle>
 # behind queue with no live child work keeps the plain wake-loop wording
 # (bin/fm-secondmate-home-lib.sh's header owns why that distinction exists).
 secondmate_wake_stall_tick() {
- local now=$(($(date +%s))) threshold
- threshold=$(fm_secondmate_wake_stall_secs)
- local depth_limit=$SECONDMATE_WAKE_STALL_DEPTH behind=$SECONDMATE_WAKE_STALL_BEHIND_SECS
- local repeat_base=$SECONDMATE_WAKE_STALL_REPEAT_SECS repeat_max=$SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS
- local meta task kind remote_host home epoch seq row_key marker receipt receipt_dir notify_key queued age reason
- local depth children condition reported reported_age repeat
- case "$depth_limit" in '' | *[!0-9]* | 0) depth_limit=10 ;; esac
- case "$behind" in '' | *[!0-9]* | 0) behind=900 ;; esac
- case "$repeat_base" in '' | *[!0-9]* | 0) repeat_base=300 ;; esac
- case "$repeat_max" in '' | *[!0-9]* | 0) repeat_max=3600 ;; esac
+  local now=$(( $(date +%s) )) threshold
+  threshold=$(fm_secondmate_wake_stall_secs)
+  local depth_limit=$SECONDMATE_WAKE_STALL_DEPTH behind=$SECONDMATE_WAKE_STALL_BEHIND_SECS
+  local repeat_base=$SECONDMATE_WAKE_STALL_REPEAT_SECS repeat_max=$SECONDMATE_WAKE_STALL_REPEAT_MAX_SECS
+  local meta task kind remote_host home epoch seq row_key marker progress_marker ring_marker progress observed_at observed_key
+  local receipt receipt_dir notify_key queued idle age reason episode_alerted already_rung w
+  local depth children condition reported reported_age repeat
+  case "$depth_limit" in ''|*[!0-9]*|0) depth_limit=10 ;; esac
+  case "$behind" in ''|*[!0-9]*|0) behind=900 ;; esac
+  case "$repeat_base" in ''|*[!0-9]*|0) repeat_base=300 ;; esac
+  case "$repeat_max" in ''|*[!0-9]*|0) repeat_max=3600 ;; esac
   # Endpoint metadata admits this queue-loop check; secondmate-liveness owns registered mates whose endpoint is missing or dead.
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
@@ -963,26 +1030,27 @@ secondmate_wake_stall_tick() {
     [ -z "$remote_host" ] || continue
     task=${meta##*/}
     task=${task%.meta}
-  case "$task" in '' | *[!A-Za-z0-9._-]*) continue ;; esac
+    case "$task" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
     home=$(fm_meta_get "$meta" home)
     [ -n "$home" ] || continue
-  fm_secondmate_home_bound "$home" "$task" || continue
-  IFS=$(printf '\t') read -r depth epoch seq <<EOF
+    fm_secondmate_home_bound "$home" "$task" || continue
+    IFS=$(printf '\t') read -r depth epoch seq <<EOF
 $(fm_secondmate_home_queue_scan "$home")
 EOF
     marker="$STATE/.secondmate-wake-stall-$task"
     progress_marker="$STATE/.secondmate-wake-progress-$task"
+    ring_marker="$STATE/.secondmate-wake-ring-$task"
     receipt_dir="$STATE/.secondmate-wake-stall-receipts/$task"
-  if [ -z "$epoch" ]; then
-      rm -f "$marker"
+    if [ -z "$epoch" ]; then
+      rm -f "$marker" "$progress_marker" "$ring_marker"
       if [ -e "$receipt_dir" ] || [ -L "$receipt_dir" ]; then
         [ -d "$receipt_dir" ] && [ ! -L "$receipt_dir" ] || return 1
         rm -rf -- "$receipt_dir" || return 1
       fi
       continue
     fi
-  age=$((now - epoch))
-  [ "$age" -ge "$threshold" ] || continue
+    age=$((now - epoch))
+    [ "$age" -ge "$threshold" ] || continue
     row_key="$epoch-$seq"
     episode_alerted=0
     if [ -e "$marker" ] || [ -L "$marker" ]; then
@@ -997,59 +1065,70 @@ EOF
     else
       observed_key=${observed_key%%[[:space:]]*}
     fi
-  case "$observed_at" in '' | *[!0-9]*) observed_at= ;; esac
-  case "$observed_key" in '' | *[!0-9-]*) observed_key= ;; esac
-  if [ -z "$observed_at" ] || [ -z "$observed_key" ] ||
-   [ "$now" -lt "$observed_at" ] || [ "$row_key" != "$observed_key" ]; then
+    case "$observed_at" in ''|*[!0-9]*) observed_at= ;; esac
+    case "$observed_key" in ''|*[!0-9-]*) observed_key= ;; esac
+    if [ -z "$observed_at" ] || [ -z "$observed_key" ] \
+      || [ "$now" -lt "$observed_at" ] || [ "$row_key" != "$observed_key" ]; then
       fm_wake_secondmate_progress_marker_write "$task" "$now" "$row_key" || return 1
       [ "$episode_alerted" -eq 0 ] || rm -f "$marker" || return 1
+      rm -f "$ring_marker" || return 1
       continue
     fi
-  # An already-reported episode is not silenced outright: the decayed repeat
-  # interval below decides when an unchanged, still-behind backlog reports
-  # again, because a mate holding a deep hours-old queue must keep escalating
-  # rather than being muted by its first report (measured 2026-08-24).
+    # An already-reported episode is not silenced outright: the decayed repeat
+    # interval below decides when an unchanged, still-behind backlog reports
+    # again, because a mate holding a deep hours-old queue must keep escalating
+    # rather than being muted by its first report (measured 2026-08-24).
     idle=$((now - observed_at))
     [ "$idle" -ge "$threshold" ] || continue
-    ! secondmate_in_active_turn "$(fm_backend_target_of_meta "$meta")" "$idle" || continue
+    w=$(fm_backend_target_of_meta "$meta")
+    ! secondmate_in_active_turn "$w" "$idle" || continue
+    already_rung=0
+    if [ -e "$ring_marker" ] || [ -L "$ring_marker" ]; then
+      [ -f "$ring_marker" ] && [ ! -L "$ring_marker" ] || return 1
+      [ "$(cat "$ring_marker" 2>/dev/null || true)" = "$row_key" ] && already_rung=1
+    fi
+    if [ "$already_rung" -eq 0 ] && secondmate_idle_ring_safe "$w"; then
+      if secondmate_ring_to_drain "$task" "$w"; then
+        fm_wake_secondmate_ring_marker_write "$task" "$row_key" || return 1
+        fm_wake_secondmate_progress_marker_write "$task" "$now" "$row_key" || return 1
+        continue
+      fi
+    fi
     receipt="$receipt_dir/$row_key"
-    if [ -e "$marker" ] || [ -L "$marker" ]; then
-      [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
-  fi
-  # An acknowledged report DATES the last report rather than vetoing every
-  # later one: a mate that stays behind must keep escalating on the decayed
-  # interval below, which is what the receipt and marker ages feed.
-  repeat=$(decayed_interval "$age" "$repeat_base" "$repeat_max")
-  # When this exact row was last reported, from whichever record is newer: the
-  # marker this watcher writes at publication, or the receipt the drain writes at
-  # acknowledgement - which alone survives a crash between the two. 999999 (the
-  # age_of miss value) means never, so a first sighting is never throttled.
-  reported_age=999999
-  if [ "$(cat "$marker" 2>/dev/null || true)" = "$row_key" ]; then
-   reported_age=$(age_of "$marker")
-  fi
+    # An acknowledged report DATES the last report rather than vetoing every
+    # later one: a mate that stays behind must keep escalating on the decayed
+    # interval below, which is what the receipt and marker ages feed.
+    repeat=$(decayed_interval "$age" "$repeat_base" "$repeat_max")
+    # When this exact row was last reported, from whichever record is newer: the
+    # marker this watcher writes at publication, or the receipt the drain writes at
+    # acknowledgement - which alone survives a crash between the two. 999999 (the
+    # age_of miss value) means never, so a first sighting is never throttled.
+    reported_age=999999
+    if [ "$(cat "$marker" 2>/dev/null || true)" = "$row_key" ]; then
+      reported_age=$(age_of "$marker")
+    fi
     if [ "$(cat "$receipt" 2>/dev/null || true)" = "$row_key" ]; then
-   reported=$(age_of "$receipt")
-   [ "$reported" -lt "$reported_age" ] && reported_age=$reported
-  fi
-  [ "$reported_age" -ge "$repeat" ] || continue
-  # A mate that is mid-turn cannot drain its queue yet, so an aged row alone is no
-  # evidence its wake loop stalled. That excuse ends where the mate is measurably
-  # behind: a queue at least depth_limit deep, or an oldest row at least `behind`
-  # old, reports whatever the endpoint says.
-  if [ "$depth" -lt "$depth_limit" ] && [ "$age" -lt "$behind" ] &&
-   secondmate_mid_turn "$meta" "$task"; then
-   triage_log "absorbed secondmate wake-loop row (mate mid-turn, depth $depth, oldest ${age}s): $task"
+      reported=$(age_of "$receipt")
+      [ "$reported" -lt "$reported_age" ] && reported_age=$reported
+    fi
+    [ "$reported_age" -ge "$repeat" ] || continue
+    # A mate that is mid-turn cannot drain its queue yet, so an aged row alone is no
+    # evidence its wake loop stalled. That excuse ends where the mate is measurably
+    # behind: a queue at least depth_limit deep, or an oldest row at least `behind`
+    # old, reports whatever the endpoint says.
+    if [ "$depth" -lt "$depth_limit" ] && [ "$age" -lt "$behind" ] \
+      && secondmate_mid_turn "$meta" "$task"; then
+      triage_log "absorbed secondmate wake-loop row (mate mid-turn, depth $depth, oldest ${age}s): $task"
       continue
     fi
     notify_key="secondmate-wake-loop-$task-$row_key"
-  children=$(fm_secondmate_home_live_children "$home")
-  if [ "$children" -gt 0 ]; then
-   condition="secondmate home UNATTENDED - $children live child task(s) with nobody consuming their events"
-  else
-   condition="secondmate wake-loop stalled"
-  fi
-  reason="check: $condition: mate=$task row=$seq age=${age}s depth=$depth (unchanged backlog not reported again before ${repeat}s)"
+    children=$(fm_secondmate_home_live_children "$home")
+    if [ "$children" -gt 0 ]; then
+      condition="secondmate home UNATTENDED - $children live child task(s) with nobody consuming their events"
+    else
+      condition="secondmate wake-loop stalled"
+    fi
+    reason="check: $condition: mate=$task row=$seq age=${age}s depth=$depth (unchanged backlog not reported again before ${repeat}s)"
     queued=$(fm_wake_queued_keys check)
     if ! printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1; then
       fm_wake_append check "$notify_key" "$reason" || return 1
@@ -1993,6 +2072,10 @@ age_of() { # seconds since file mtime; "due immediately" if missing
 # -nt comparison.
 # Status signatures include observable file and readability state, while turn-end
 # markers retain their size-and-mtime signature.
+# A status file is asked the wider wake question instead, so it also stays quiet
+# when the only bytes it grew past the classified offset are this home's own
+# bookkeeping appends; fm_wake_signal_seen_current (bin/fm-wake-lib.sh) owns that
+# rule and every other signature change still reads as unreported.
 # Pure read: prints one "<seen-file>\t<sig>\t<file>" line per changed file.
 # The caller records reported state only after surfacing or intentional absorption,
 # and commits a status classification position only after a successful span read.
@@ -2141,6 +2224,20 @@ fm_active_check_stop() {
   FM_ACTIVE_CHECK_PGID=
 }
 
+# Stop-signal dispositions, installed with the EXIT trap below. HUP and TERM
+# keep bash's native fatal-signal handling, which runs watcher_cleanup through
+# the EXIT trap and then exits on every supported bash. A trap body such as
+# 'exit 1' is not reliable for them: bash 5.2 runs a pending trap inside the
+# parse of the next command substitution, the body then fails to parse ("trap:
+# line 2: unexpected EOF while looking for matching `)'", or nothing at all),
+# and the signal is consumed, so a stop request could leave this watcher
+# polling forever while its stopper waits (fixed upstream in bash 5.3). INT
+# keeps its trap because bash ignores a direct SIGINT while a child runs.
+watcher_stop_signals() {
+  trap - HUP TERM
+  trap 'exit 1' INT
+}
+
 run_check_capture() {
   local pgid
   fm_check_output_cleanup
@@ -2151,20 +2248,23 @@ run_check_capture() {
   return 1
  }
   FM_CHECK_SIGNAL_PENDING=
+  # Defer stop signals only until the check's process group is recorded for
+  # watcher_cleanup. Keep command substitutions out of this window: bash 5.2
+  # can drop a trap that is pending when one is parsed (watcher_stop_signals).
   trap 'FM_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   set -m
  (FM_CHECK_OWNED_GROUP=1 run_check_process "$@") >"$FM_CHECK_OUTPUT" 2>/dev/null &
   FM_ACTIVE_CHECK_PID=$!
   FM_ACTIVE_CHECK_PGID=$FM_ACTIVE_CHECK_PID
   set +m
+  watcher_stop_signals
+  [ -z "$FM_CHECK_SIGNAL_PENDING" ] || exit 1
   pgid=$(ps -o pgid= -p "$FM_ACTIVE_CHECK_PID" 2>/dev/null | tr -d '[:space:]')
-  trap 'exit 1' HUP INT TERM
   if [ -n "$pgid" ] && [ "$pgid" != "$FM_ACTIVE_CHECK_PGID" ]; then
     fm_active_check_stop || true
     fm_check_output_cleanup
     return 1
   fi
-  [ -z "$FM_CHECK_SIGNAL_PENDING" ] || exit 1
   wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null || true
   FM_ACTIVE_CHECK_PID=
   fm_active_check_stop || return 1
@@ -2519,7 +2619,7 @@ watcher_cleanup() {
   return "$cleanup_status"
 }
 trap watcher_cleanup EXIT
-trap 'exit 1' HUP INT TERM
+watcher_stop_signals
 # This watcher's own pid, as recorded in the lock by fm_lock_claim (which writes
 # ${BASHPID:-$$} from this same main shell). Read directly, never via a command
 # substitution, so it matches the stored holder pid for the self-eviction check.
