@@ -123,6 +123,8 @@ case "$*" in
     jq -n --arg head "$(cat "$FORGE/head")" '{headRefOid:$head,reviewDecision:"APPROVED"}' ;;
   'pr view '*headRefOid*) cat "$FORGE/head" ;;
   'pr view '*state*) printf 'OPEN\n' ;;
+  # The published-body read bin/fm-pr-check.sh makes before recording a PR.
+  'api repos/o/r/pulls/8 --jq '*body*) printf 'Adds the change.\n' ;;
   'api repos/o/r/pulls/8')
     jq -n --arg head "$(cat "$FORGE/head")" --arg state "$(cat "$FORGE/state" 2>/dev/null || printf open)" '
       {state:(if $state == "open" then "open" else "closed" end),user:{login:"author"},head:{sha:$head},draft:false,

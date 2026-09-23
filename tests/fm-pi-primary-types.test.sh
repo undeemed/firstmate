@@ -42,8 +42,9 @@ cp "$ROOT/.pi/extensions/lib/fm-calm-operational-user-layout.ts" "$TMP_ROOT/.pi/
 cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$TMP_ROOT/.pi/extensions/lib/fm-calm-visibility.ts"
 cp "$ROOT/.pi/extensions/lib/fm-calm-working-ship.ts" "$TMP_ROOT/.pi/extensions/lib/fm-calm-working-ship.ts"
 cp "$ROOT/.pi/extensions/lib/fm-calm-working-ship-sprite.ts" "$TMP_ROOT/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
-# The shared operational-input adapter is one owner, imported by both harnesses'
-# tracked extensions from the neutral extensions/lib/ (../../extensions/lib/).
+cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$TMP_ROOT/.pi/extensions/lib/fm-operational-input.ts"
+# The fork's own extensions/ import their copy of the operational-input adapter
+# from extensions/lib/.
 cp "$ROOT/extensions/lib/fm-operational-input.ts" "$TMP_ROOT/extensions/lib/fm-operational-input.ts"
 # The user-level CodeGraph guard is one portable file loaded by both runtimes, so
 # it is typechecked here with them (docs/codegraph-pretool-check.md).
