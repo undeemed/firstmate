@@ -2591,7 +2591,7 @@ EOF
 
   sleep 300 &
   holder_pid=$!
-  make_fake_ps_pi_holder "$fakebin" "$holder_pid"
+  make_fake_ps_harness_holder "$fakebin" pi "$holder_pid"
   install_pi_turnend_extension_fixture "$root"
   install_pi_watch_extension_fixture "$root"
   write_pi_loaded_markers "$home" "$root" "$holder_pid"
