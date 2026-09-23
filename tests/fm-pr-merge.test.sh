@@ -220,10 +220,12 @@ write_pull_json() {
 add_gh_mocks() {
   local case_dir=$1 head=$2
   write_github_live_json "$case_dir" "$head"
+  # A one-commit pull request by default, so the implicit --squash guard reads a
+  # count it allows; the squash-guard cases write their own shape over it.
+  write_pull_json "$case_dir"
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
-[ -z "${FM_TEST_AUDIT_SNAPSHOT:-}" ] || cp "$FM_STATE_OVERRIDE/forge-write-audit.log" "$FM_TEST_AUDIT_SNAPSHOT" 2>/dev/null || :
 case "${1:-} ${2:-}" in
   "pr view")
     [ "$#" -eq 5 ] && [ "${4:-}" = --repo ] || exit 2
@@ -286,6 +288,7 @@ case "${1:-} ${2:-}" in
     esac
     ;;
   "pr merge")
+    [ -z "${FM_TEST_AUDIT_SNAPSHOT:-}" ] || cp "$FM_STATE_OVERRIDE/forge-write-audit.log" "$FM_TEST_AUDIT_SNAPSHOT" 2>/dev/null || :
     if [ -n "${FM_TEST_META_AT_MERGE:-}" ] && [ -f "${FM_STATE_OVERRIDE:-}/task-x1.meta" ]; then
       cat "$FM_STATE_OVERRIDE/task-x1.meta" > "$FM_TEST_META_AT_MERGE"
     fi
@@ -349,32 +352,8 @@ add_gh_mocks_merge_fails() {
 # Flag the shared gh mock so GraphQL outcome reads fail while live verify and
 # merge still succeed. Args: case_dir [head_sha ignored]
 add_gh_mock_outcome_read_fails() {
-  local case_dir=$1 head=$2
-  cat > "$case_dir/fakebin/gh" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
-if [ "\${1:-}" = api ]; then
-  case " \$* " in
-    *" --jq .head.sha "*) printf '%s\n' '$head'; exit 0 ;;
-  esac
-  case "\${2:-}" in
-    */pulls/*) [ ! -f "$case_dir/pull.json" ] || { cat "$case_dir/pull.json"; exit 0; } ;;
-  esac
-fi
-case "\${1:-} \${2:-}" in
-  "pr view")
-    case " \$* " in
-      *headRefOid*) printf '%s\n' '$head' ; exit 0 ;;
-    esac
-    ;;
-  "api graphql")
-    echo 'error: could not reach the GitHub API' >&2
-    exit 1
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/gh"
+  local case_dir=$1
+  : > "$case_dir/github-graphql-fail"
 }
 
 # gh-axi mock that merges but cannot answer its own view, so a case can prove
@@ -600,14 +579,14 @@ test_verified_merge_records_pr_and_head() {
   assert_logged_gh_merge "$case_dir" 9 example/repo --squash
   assert_grep 'api repos/example/repo/pulls/9 --jq .head.sha' "$case_dir/gh.log" \
     "records-before-merge: pr_head= was not read from the REST pull request resource"
-  assert_no_grep 'pr view' "$case_dir/gh.log" \
+  # Upstream's merge preflight reads the pull request with gh pr view; only a
+  # head-only GraphQL read would mean the REST head read was skipped.
+  assert_no_grep '--json headRefOid -q' "$case_dir/gh.log" \
     "records-before-merge: the head was read with GraphQL gh pr view"
   # The one GraphQL call this path may make is the post-merge outcome read that
   # proves the pull request actually landed; the head itself stays on REST.
   [ "$(grep -c graphql "$case_dir/gh.log")" -le 1 ] \
     || fail "records-before-merge: an extra GraphQL call was introduced on the task merge path"
-  grep -qxF 'pr merge 9 --repo example/repo --squash' "$case_dir/gh-axi.log" \
-    || fail "records-before-merge: gh-axi pr merge was not invoked with number, --repo, and default --squash"
   pass "fm-pr-merge records pr= and pr_head= for a verified GitHub merge"
 }
 
@@ -984,32 +963,7 @@ test_github_unreadable_queue_rules_are_not_reported_as_no_queue() {
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" 8484848484848484848484848484848484848484
   write_github_outcome "$case_dir" OPEN false false main
-  cat > "$case_dir/fakebin/gh" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "\$FM_TEST_GH_LOG"
-if [ "\${1:-}" = api ]; then
-  case " \$* " in
-    *" --jq .head.sha "*) printf '%s\n' 8484848484848484848484848484848484848484; exit 0 ;;
-  esac
-  case "\${2:-}" in
-    */pulls/*) [ ! -f "$case_dir/pull.json" ] || { cat "$case_dir/pull.json"; exit 0; } ;;
-  esac
-fi
-case "\${1:-} \${2:-}" in
-  "pr view")
-    case " \$* " in
-      *headRefOid*) printf '%s\n' 8484848484848484848484848484848484848484 ; exit 0 ;;
-    esac
-    ;;
-  "api graphql")
-    cat "\$FM_TEST_GH_OUTCOME"
-    exit 0
-    ;;
-  api\ *) exit 1 ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/gh"
+  : > "$case_dir/github-rules-fail"
   : > "$case_dir/gh-axi.log"
   : > "$case_dir/gh.log"
 
@@ -2068,7 +2022,7 @@ test_default_squash_refused_for_stacked_pr() {
     "$case_dir/stderr" "squash-guard-stack: the refusal did not state the consequence"
   assert_grep 'pass --squash to squash it anyway' "$case_dir/stderr" \
     "squash-guard-stack: the refusal did not say how to proceed deliberately"
-  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "squash-guard-stack: the merge was attempted despite the refusal"
   assert_grep 'api repos/example/repo/pulls/241' "$case_dir/gh.log" \
     "squash-guard-stack: the counts were not read from REST at merge time"
@@ -2090,8 +2044,7 @@ test_squash_guard_boundary_is_more_than_the_threshold() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/249 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "squash-guard-at-threshold: a PR exactly at the threshold should still squash"
-  grep -qxF 'pr merge 249 --repo example/repo --squash' "$case_dir/gh-axi.log" \
-    || fail "squash-guard-at-threshold: the default --squash was not applied at the threshold"
+  assert_logged_gh_merge "$case_dir" 249 example/repo --squash
 
   case_dir=$(make_case squash-guard-past-threshold)
   mkdir -p "$case_dir/wt"
@@ -2108,7 +2061,7 @@ test_squash_guard_boundary_is_more_than_the_threshold() {
   expect_code 1 "$rc" "squash-guard-past-threshold: one commit past the threshold should refuse"
   assert_grep 'it carries 16 commits and 100 changed files' "$case_dir/stderr" \
     "squash-guard-past-threshold: the refusal did not name the counts it actually read"
-  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "squash-guard-past-threshold: the merge was attempted despite the refusal"
   pass "fm-pr-merge squashes at the guard threshold and refuses one commit past it"
 }
@@ -2131,7 +2084,7 @@ test_default_squash_refused_on_changed_file_threshold() {
   expect_code 1 "$rc" "squash-guard-files: fm-pr-merge should refuse on the changed-file threshold"
   assert_grep 'it carries 3 commits and 400 changed files' "$case_dir/stderr" \
     "squash-guard-files: the refusal did not name the counts it actually read"
-  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "squash-guard-files: the merge was attempted despite the refusal"
   pass "fm-pr-merge refuses the default squash when the changed-file count is too large"
 }
@@ -2148,8 +2101,7 @@ test_single_commit_pr_still_squashes_by_default() {
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "squash-guard-single-commit: an ordinary single-commit PR should still merge"
 
-  grep -qxF 'pr merge 243 --repo example/repo --squash' "$case_dir/gh-axi.log" \
-    || fail "squash-guard-single-commit: the default --squash was not applied as before"
+  assert_logged_gh_merge "$case_dir" 243 example/repo --squash
   assert_no_grep 'refusing to squash' "$case_dir/stderr" \
     "squash-guard-single-commit: a single-commit PR was refused"
   # One GraphQL call is the post-merge outcome read that proves the pull request
@@ -2171,8 +2123,7 @@ test_explicit_squash_overrides_the_refusal() {
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "squash-guard-explicit: an explicit --squash should still squash a stacked PR"
 
-  grep -qxF 'pr merge 244 --repo example/repo --squash' "$case_dir/gh-axi.log" \
-    || fail "squash-guard-explicit: an explicit --squash was not forwarded"
+  assert_logged_gh_merge "$case_dir" 244 example/repo --squash
   assert_no_grep 'refusing to squash' "$case_dir/stderr" \
     "squash-guard-explicit: an explicit --squash was refused"
   pass "fm-pr-merge lets an explicit --squash override the stacked-PR refusal"
@@ -2191,8 +2142,7 @@ test_merge_and_rebase_unaffected_by_squash_guard() {
       > "$case_dir/stdout" 2> "$case_dir/stderr" \
       || fail "squash-guard-explicit-$method: --$method should be unaffected by the squash guard"
 
-    grep -qxF "pr merge $number --repo example/repo --$method" "$case_dir/gh-axi.log" \
-      || fail "squash-guard-explicit-$method: --$method was not forwarded unchanged"
+    assert_logged_gh_merge "$case_dir" "$number" example/repo "--$method"
     assert_no_grep 'refusing to squash' "$case_dir/stderr" \
       "squash-guard-explicit-$method: an explicit --$method was refused"
     # The pr_head lookup reads the same REST resource, so the count read is
@@ -2221,7 +2171,7 @@ test_unreadable_commit_count_refuses_the_default_squash() {
   expect_code 1 "$rc" "squash-guard-unreadable: an unverifiable count should not be squashed by default"
   assert_grep 'its commit count could not be read' "$case_dir/stderr" \
     "squash-guard-unreadable: the refusal did not name the unreadable count"
-  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "squash-guard-unreadable: the merge was attempted on an unverified count"
   pass "fm-pr-merge refuses the default squash when the commit count cannot be read"
 }
@@ -2240,8 +2190,7 @@ test_stack_named_branch_warns_but_still_merges() {
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "squash-guard-stack-hint: the count check is the hard gate, so this should merge"
 
-  grep -qxF 'pr merge 248 --repo example/repo --squash' "$case_dir/gh-axi.log" \
-    || fail "squash-guard-stack-hint: the default --squash was not applied"
+  assert_logged_gh_merge "$case_dir" 248 example/repo --squash
   assert_grep 'the head branch "fm/stack-rung-02" names a stack' "$case_dir/stderr" \
     "squash-guard-stack-hint: a stack-named branch produced no warning"
   pass "fm-pr-merge warns on a stack-named branch while keeping the counts as the hard gate"
@@ -3926,7 +3875,9 @@ test_pipeline_refuses_auto_extra_arg() {
   set -e
 
   expect_code 1 "$rc" "pipeline-auto-override: fm-pr-merge should refuse a caller-supplied --auto"
-  assert_grep 'must not enable auto-merge' "$case_dir/stderr" \
+  # Upstream's shared protected-argument guard refuses --auto for every merge
+  # class before the pipeline's own head-pin guard is reached.
+  assert_grep 'must not request auto-merge' "$case_dir/stderr" \
     "pipeline-auto-override: refusal did not explain the auto-merge rejection"
   assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
     "pipeline-auto-override: gh-axi pr merge was invoked despite --auto"
@@ -4038,8 +3989,7 @@ test_audit_excludes_credential_material() {
   unset GH_TOKEN
 
   # Non-vacuous: the secret-shaped argument really did reach the forge call.
-  grep -qxF 'pr merge 33 --repo example/repo --squash --auth-token=ghp_argumentcredential111' \
-    "$case_dir/gh-axi.log" || fail "audit-no-secrets: the extra argument never reached the merge"
+  assert_logged_gh_merge "$case_dir" 33 example/repo --squash --auth-token=ghp_argumentcredential111
   assert_no_grep 'ghp_argumentcredential111' "$case_dir/$AUDIT_LOG" \
     "audit-no-secrets: a caller argument reached the audit log"
   assert_no_grep 'ghp_environmentcredential000' "$case_dir/$AUDIT_LOG" \

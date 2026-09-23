@@ -115,6 +115,11 @@ case "${1:-} ${2:-}" in
   "api graphql")
     printf '%s\n' 'state=MERGED' 'merged=true' 'queued=false' 'base=main'
     ;;
+  # The bare pull read is the implicit --squash guard's commit count; a
+  # one-commit pull request squashes by default.
+  "api repos/"*/pulls/*)
+    [ "$#" -ne 2 ] || printf '%s\n' '{"commits":1,"changed_files":1}'
+    ;;
 esac
 SH
   cat > "$home/fakebin/gh-axi" <<'SH'
