@@ -263,11 +263,6 @@ A blocked Pi is parked on an interactive prompt, so its blank composer region is
 A working Pi, pending middle row, missing identity, incomplete separator pair, or over-tall candidate remains unknown or pending.
 Identity stays a lazy second read, consulted only when a separator pair could change the verdict.
 
-Herdr's native `agent_status` for an omp pane is racy around Enter: it can report `idle` with `screen_detection_skipped` set while the turn has already started.
-A legible `idle` there is therefore not proof that the text was never submitted.
-`fm_backend_herdr_send_text_submit` already treats an explicitly empty composer after Enter as positive submission evidence whenever the native baseline stayed idle, which covers this race and can add a confirmation but never removes one and never suppresses an Enter retry.
-That ordering matches `bin/fm-busy-lib.sh`, which already ranks the omp extension's own records above Herdr's native status.
-
 ANSI capture preserves de-emphasized placeholder style.
 `bin/fm-composer-lib.sh` is the fleet-wide owner that strips dim or faint runs and dark truecolor placeholders while retaining bright typed input.
 If the ANSI capture ever fails, the plain fallback declares itself unstyled and the classifier degrades a glyph row carrying trailing text to `unknown` instead of misreading ghost suggestions as typed input, which safely defers injection and eventually raises the wedge alarm.

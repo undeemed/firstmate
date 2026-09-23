@@ -43,8 +43,7 @@ Muse, Gemini, and AGY are verified only for crewmate and scout work, never a sec
 A marker names its harness, but a structural ancestor of a different harness outranks it, because a marker is ordinary environment state a child or a multiplexer can retain while ancestry is what proves who owns the process tree.
 Only `FM_PI_HARNESS=pi-signed` at the launch boundary together with `PI_CODING_AGENT=true` selects Pi-signed; shared unmarked launcher ancestry remains Pi.
 omp publishes no marker of its own; `FM_OMP_HARNESS=omp` is Firstmate's launch marker and the anchored process name `omp` is its ancestry evidence, as `references/harness/omp.md` records.
-`../../../bin/fm-spawn.sh` owns worker marker establishment, scrubbing the known primary markers from every locally sent launch command so a primary's own marker never outranks a spawned worker's real ancestry.
-Any marker added to `../../../bin/fm-harness.sh` belongs in that scrub list too, and the README launch command owns the signed-primary boundary.
+`../../../bin/fm-spawn.sh` owns worker marker establishment, while the README launch command owns the signed-primary boundary.
 `../../../bin/fm-harness.sh crew` resolves `config/crew-harness`, where absent or `default` means firstmate's own harness.
 `../../../bin/fm-harness.sh secondmate` resolves `config/secondmate-harness` -> `config/crew-harness` -> firstmate's own harness.
 `../../../bin/fm-spawn.sh` re-resolves on every spawn, and an explicit per-spawn argument wins for that spawn.
@@ -87,7 +86,6 @@ A new tool remains undispatchable until the `verify` plan, its harness entry, ev
     "claude": "references/harness/claude.md",
     "codex": "references/harness/codex.md",
     "opencode": "references/harness/opencode.md",
-    "omp": "references/harness/omp.md",
     "pi": "references/harness/pi.md",
     "pi-signed": "references/harness/pi.md",
     "grok": "references/harness/grok.md",

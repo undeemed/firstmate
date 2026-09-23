@@ -588,7 +588,7 @@ $FORGE_POLL_RULE
    counts as stopping - say what is ready and where it sits rather than idling silently.
    A still pane with no declared state is indistinguishable from a wedge, and supervision
    must spend a deep inspection to tell them apart.
-   5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
+5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [at=<epoch>] [key=<slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    The \`[key=<slug>]\` token names that decision and must sit BEFORE the colon; \`blocked [key=<slug>]: {why}\` names a blocker the same way.
@@ -702,7 +702,7 @@ $FORGE_POLL_RULE
    counts as stopping - say what is ready and where it sits rather than idling silently.
    A still pane with no declared state is indistinguishable from a wedge, and supervision
    must spend a deep inspection to tell them apart.
-   5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
+5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [at=<epoch>] [key=<slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    The \`[key=<slug>]\` token names that decision and must sit BEFORE the colon; \`blocked [key=<slug>]: {why}\` names a blocker the same way.

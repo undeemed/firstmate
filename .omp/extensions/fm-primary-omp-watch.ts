@@ -26,39 +26,46 @@
 //
 // Session-generation ownership (stated once here):
 // omp emits session_shutdown for ordinary same-process replacements (/new,
-// /resume, /fork, reload) as well as terminal quit. This extension binds one
-// generation per session activation. Only the active live generation may start,
-// stop, rearm, or clear the arm child. Replacement session_start (or a fresh
-// factory bind) activates a new live generation so monitoring can arm again
-// without restarting omp. Terminal quit leaves the final generation stopped so
-// late callbacks cannot rearm. Stale callbacks from a prior generation are
-// no-ops against the active replacement.
+// /resume, /fork) as well as terminal quit. This extension binds one generation
+// per session activation. Only the active live generation may start, stop,
+// rearm, or clear the arm child. An owning replacement session_start (or fresh
+// factory bind) arms its new generation without a model turn. A replacement
+// handoff carries actionable closes that were still pending delivery; its
+// durable state lives at state/extensions/omp-primary-watch/session-replacement-actionable.json.
+// Stale callbacks from a prior generation are no-ops against the active replacement.
 //
-// Wake coalescing (contract stated once in docs/watcher-continuity.md):
-// each generation keeps one pending watcher wake until the run starts consuming
-// queued input, so a burst of distinct actionable lines queues one follow-up,
-// not one per cycle. The durable wake queue carries every underlying event.
-// The pending wake is released when a run starts consuming queued input
-// (agent_start), when a run settles without consuming it (agent_end), at
-// generation activation and retirement, and once it is older than
-// FM_WATCH_WAKE_COALESCE_TTL_MS; every uncertain case delivers, because a
-// duplicate wake is cheaper than a lost one.
-//
-// Delivery mode: omp queues an explicit deliverAs without starting a turn in
-// either state, and its idle-path auto-continue for a queued follow-up is gated
-// on the transcript tail being assistant/toolResult and on no prior user
-// interrupt (agent-session.ts #canAutoContinueForFollowUp), so a follow-up
-// queued into an idle session can sit unread indefinitely behind an advisor
-// card or an aborted turn. Omitting deliverAs starts the turn when the session
-// is idle and still queues as a steer if a stream began in the meantime, so an
-// idle wake is delivered without deliverAs and only a streaming wake keeps
-// followUp.
+// Delivery versus consumption (stated once here):
+// A main follow-up is delivered once omp accepts it (sendUserMessage returns).
+// The successor pipeline never waits for the model to read it: a follow-up
+// queued while main is streaming joins the running run without ever raising
+// before_agent_start, so waiting on that event stalls every later close.
+// Consumption is tracked only so a replacement can replay a follow-up omp had
+// not consumed. An idle main consumes at before_agent_start; a streaming main
+// consumes at the user message_start carrying the exact wake text; either
+// event finishes the pending record, and a still-unconsumed record rides the
+// replacement handoff.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { encodeFirstmateOperationalInput } from "../../extensions/lib/fm-operational-input.ts";
+// typebox resolves inside omp's extension loader (verified, omp 18.1.11); the
+// injected TypeBox compatibility shim keeps it available for tool parameters.
+import { Type } from "typebox";
+// The operational-input encoder is shared with the omp extensions; its owner
+// resolves bin/fm-operational-input.sh relative to its own location, which is
+// the same repository root this file lives in.
+import { encodeFirstmateOperationalInput } from "../../.pi/extensions/lib/fm-operational-input.ts";
+
+// The omp extension API surface this file uses. omp is a Pi fork and ships no
+// separately installable type package, so the contract is declared locally
+// rather than imported from the Pi package name.
+type ExtensionAPI = {
+  on?: (event: string, handler: (event: any, ctx: any) => unknown) => void;
+  sendUserMessage: (content: string, options?: { deliverAs?: string }) => unknown;
+  registerCommand?: (name: string, command: { description: string; handler: (args: string, ctx: any) => Promise<void> | void }) => void;
+  registerTool?: (tool: Record<string, unknown>) => void;
+};
 
 type ArmResult = {
   ok: boolean;
@@ -72,51 +79,46 @@ type CloseClassification = {
   message: string;
 };
 
+type PendingActionableClose = {
+  version: 1;
+  token: string;
+  message: string;
+  predecessorArmPid: string;
+  delivered?: true;
+};
+
+type ReplacementActionableHandoff = {
+  version: 2;
+  pending: PendingActionableClose[];
+};
+
+type UnconsumedWake = {
+  content: string;
+  pending: PendingActionableClose;
+};
+
 type SessionGeneration = {
   id: number;
   stopping: boolean;
+  replacement: boolean;
   child: ChildProcess | null;
-  retryTimer: NodeJS.Timeout | null;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  cleanupTimer: ReturnType<typeof setTimeout> | null;
   retryFailures: number;
   restoring: boolean;
   seq: number;
-  // When this generation queued a watcher wake the run has not read yet.
-  pendingWakeAt: number | null;
+  pendingActionables: PendingActionableClose[];
+  cleanupFailure: string;
+  // Main follow-ups omp has accepted but not yet consumed, by pending token.
+  // Never cleared at shutdown: a delivery continuation that runs after the
+  // replacement began reads it to tell a main-queued wake (replayed) from a
+  // branch-handled one (finished).
+  unconsumedWakes: Map<string, UnconsumedWake>;
+  // A verified successor's failure close that arrived while the pipeline was
+  // still delivering the wake it was started for; its bounded retry runs once
+  // that delivery settles instead of being skipped by the single-flight guard.
+  deferredClose: { message: string; predecessorArmPid: string } | null;
 };
-
-interface OmpToolSpec {
-  name: string;
-  label: string;
-  description: string;
-  promptSnippet: string;
-  promptGuidelines: string[];
-  // omp accepts a plain JSON-schema object for tool parameters; this tool takes
-  // none. The pi watcher used typebox Type.Object({}) here, which is not needed
-  // once the custom TUI rendering is dropped.
-  parameters: { type: "object"; properties: Record<string, unknown> };
-  execute: () => Promise<{
-    content: Array<{ type: "text"; text: string }>;
-    details: ArmResult;
-  }>;
-}
-
-interface OmpCommandSpec {
-  description: string;
-  handler: (
-    args: unknown,
-    ctx: { ui: { notify: (message: string, level: "info" | "warning") => void } },
-  ) => void | Promise<void>;
-}
-
-interface OmpExtensionApi {
-  on(event: "session_start" | "session_shutdown" | "agent_start", handler: () => void): void;
-  // willContinue marks a run the session will continue by itself, so it is not
-  // a settled idle boundary.
-  on(event: "agent_end", handler: (event: { willContinue?: boolean }) => void): void;
-  registerCommand(name: string, spec: OmpCommandSpec): void;
-  registerTool(spec: OmpToolSpec): void;
-  sendUserMessage(content: string, options?: { deliverAs: "followUp" }): Promise<void>;
-}
 
 const extensionFile = fileURLToPath(import.meta.url);
 const extensionDir = dirname(extensionFile);
@@ -127,6 +129,8 @@ const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
 const config = process.env.FM_CONFIG_OVERRIDE || `${fmHome}/config`;
 const armScript = `${fmRoot}/bin/fm-watch-arm.sh`;
 const marker = `${state}/.omp-watch-extension-loaded`;
+const handoffDir = `${state}/extensions/omp-primary-watch`;
+const actionableHandoff = `${handoffDir}/session-replacement-actionable.json`;
 const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(extensionFile)).digest("hex")}`;
 const retryBaseMs = positiveInteger("FM_WATCH_REARM_RETRY_BASE_MS", 250);
 const retryMaxMs = positiveInteger("FM_WATCH_REARM_RETRY_MAX_MS", 4000);
@@ -139,18 +143,49 @@ const armReadyTimeoutMs = positiveInteger(
   process.platform === "win32" ? 35000 : 12000,
 );
 const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
-const wakeCoalesceTtlMs = positiveInteger("FM_WATCH_WAKE_COALESCE_TTL_MS", 300000);
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 
 let nextGenerationId = 0;
+let nextHandoffId = 0;
 let activeGeneration: SessionGeneration | null = null;
-// True between agent_start and the agent_end that settles it. A wake raised
-// while this is false is delivered as a turn rather than queued behind omp's
-// idle-path auto-continue gate.
-let harnessStreaming = false;
+let replacementHandoff: PendingActionableClose[] | null = null;
+type ReplacementActionableReceiver = (pending: PendingActionableClose) => void;
+type ActionableDeliveryClaim = {
+  owner: SessionGeneration;
+  settlement: Promise<"delivered" | "failed">;
+};
+type ReplacementCoordinator = {
+  receiver: ReplacementActionableReceiver | null;
+  pending: PendingActionableClose[];
+  nextTokenId: number;
+  deliveries: Map<string, ActionableDeliveryClaim>;
+};
+type ReplacementCoordinatorGlobal = typeof globalThis & {
+  __firstmateOmpWatchReplacements?: Map<string, ReplacementCoordinator>;
+};
+const replacementCoordinatorGlobal = globalThis as ReplacementCoordinatorGlobal;
+const replacementCoordinators = replacementCoordinatorGlobal.__firstmateOmpWatchReplacements ??= new Map<string, ReplacementCoordinator>();
+function replacementCoordinatorFor(handoff: string): ReplacementCoordinator {
+  const existing = replacementCoordinators.get(handoff);
+  if (existing) return existing;
+  const created: ReplacementCoordinator = {
+    receiver: null,
+    pending: [],
+    nextTokenId: 0,
+    deliveries: new Map(),
+  };
+  replacementCoordinators.set(handoff, created);
+  return created;
+}
+const replacementCoordinator = replacementCoordinatorFor(actionableHandoff);
 const armReadiness = new WeakMap<ChildProcess, Promise<boolean>>();
 const armClose = new WeakMap<ChildProcess, Promise<void>>();
+// Children the extension itself asked to exit; their close is not a failure
+// of the successor and never earns a deferred retry.
+const armRetired = new WeakSet<ChildProcess>();
+const armRecovery = new WeakMap<ChildProcess, { generation: string; watcherPid: string }>();
+const armPendingActionable = new WeakMap<ChildProcess, PendingActionableClose>();
 
 function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -201,6 +236,142 @@ function actionableLine(output: string): string {
   return lines.find((line) => /^(signal:|stale:|check:|heartbeat($|:))/.test(line)) || "";
 }
 
+function completedActionableLine(output: string): string {
+  const newline = output.lastIndexOf("\n");
+  return newline < 0 ? "" : actionableLine(output.slice(0, newline + 1));
+}
+
+// The text omp carries in a user message_start: sendUserMessage wraps a string
+// as one text part, so the joined text parts equal the sent content.
+function userMessageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const part of content) {
+    if (
+      typeof part === "object" && part !== null &&
+      (part as { type?: unknown }).type === "text" &&
+      typeof (part as { text?: unknown }).text === "string"
+    ) {
+      parts.push((part as { text: string }).text);
+    }
+  }
+  return parts.join("\n");
+}
+
+function nodeErrorCode(error: unknown): string {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : "";
+}
+
+function createPendingActionable(message: string, predecessorArmPid: string): PendingActionableClose {
+  return {
+    version: 1,
+    token: `${process.pid}-${Date.now()}-${++replacementCoordinator.nextTokenId}`,
+    message,
+    predecessorArmPid,
+  };
+}
+
+function validatePendingActionable(value: unknown): PendingActionableClose {
+  if (
+    typeof value !== "object" || value === null ||
+    (value as { version?: unknown }).version !== 1 ||
+    typeof (value as { token?: unknown }).token !== "string" ||
+    !/^[0-9]+-[0-9]+-[0-9]+$/.test((value as { token: string }).token) ||
+    typeof (value as { message?: unknown }).message !== "string" ||
+    !actionableLine((value as { message: string }).message) ||
+    typeof (value as { predecessorArmPid?: unknown }).predecessorArmPid !== "string" ||
+    !/^[0-9]*$/.test((value as { predecessorArmPid: string }).predecessorArmPid) ||
+    ((value as { delivered?: unknown }).delivered !== undefined &&
+      (value as { delivered?: unknown }).delivered !== true)
+  ) {
+    throw new Error(`invalid omp replacement actionable handoff at ${actionableHandoff}`);
+  }
+  return value as PendingActionableClose;
+}
+
+function validateReplacementHandoff(value: unknown): PendingActionableClose[] {
+  if (
+    typeof value !== "object" || value === null ||
+    (value as { version?: unknown }).version !== 2 ||
+    !Array.isArray((value as { pending?: unknown }).pending) ||
+    (value as { pending: unknown[] }).pending.length === 0
+  ) {
+    throw new Error(`invalid omp replacement actionable handoff at ${actionableHandoff}`);
+  }
+  const pending = (value as { pending: unknown[] }).pending.map(validatePendingActionable);
+  if (new Set(pending.map((item) => item.token)).size !== pending.length) {
+    throw new Error(`invalid omp replacement actionable handoff at ${actionableHandoff}`);
+  }
+  return pending;
+}
+
+function writeReplacementHandoff(pending: PendingActionableClose[]): void {
+  replacementHandoff = [...pending];
+  mkdirSync(handoffDir, { recursive: true });
+  const temporary = `${actionableHandoff}.tmp-${process.pid}-${++nextHandoffId}`;
+  const handoff: ReplacementActionableHandoff = { version: 2, pending };
+  try {
+    writeFileSync(temporary, `${JSON.stringify(handoff)}\n`, { mode: 0o600 });
+    renameSync(temporary, actionableHandoff);
+  } catch (error) {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // Preserve the original handoff publication error.
+    }
+    throw error;
+  }
+}
+
+function persistReplacementHandoff(pending: PendingActionableClose[]): void {
+  if (pending.length === 0) return;
+  writeReplacementHandoff(pending);
+}
+
+function loadReplacementHandoff(): PendingActionableClose[] {
+  try {
+    const pending = validateReplacementHandoff(JSON.parse(readFileSync(actionableHandoff, "utf8")));
+    replacementHandoff = pending;
+    return [...pending];
+  } catch (error) {
+    if (nodeErrorCode(error) === "ENOENT") {
+      replacementHandoff = null;
+      return [];
+    }
+    throw error;
+  }
+}
+
+function mergeReplacementHandoff(pending: PendingActionableClose): void {
+  let stored: PendingActionableClose[] = [];
+  try {
+    stored = validateReplacementHandoff(JSON.parse(readFileSync(actionableHandoff, "utf8")));
+  } catch (error) {
+    if (nodeErrorCode(error) !== "ENOENT") throw error;
+  }
+  if (!stored.some((item) => item.token === pending.token)) stored.push(pending);
+  writeReplacementHandoff(stored);
+}
+
+function clearReplacementHandoff(pending: PendingActionableClose): void {
+  try {
+    const stored = validateReplacementHandoff(JSON.parse(readFileSync(actionableHandoff, "utf8")));
+    const remaining = stored.filter((item) => item.token !== pending.token);
+    if (remaining.length === stored.length) return;
+    if (remaining.length > 0) {
+      writeReplacementHandoff(remaining);
+    } else {
+      replacementHandoff = null;
+      unlinkSync(actionableHandoff);
+    }
+  } catch (error) {
+    if (nodeErrorCode(error) !== "ENOENT") throw error;
+  }
+}
+
 function classifyClose(stdout: string, stderr: string, code: number | null, signal: NodeJS.Signals | null): CloseClassification {
   const combined = `${stdout}\n${stderr}`.trim();
   const reason = actionableLine(combined);
@@ -236,48 +407,79 @@ function createGeneration(): SessionGeneration {
   return {
     id: ++nextGenerationId,
     stopping: false,
+    replacement: false,
     child: null,
     retryTimer: null,
+    cleanupTimer: null,
     retryFailures: 0,
     restoring: false,
     seq: 0,
-    pendingWakeAt: null,
+    pendingActionables: [],
+    cleanupFailure: "",
+    unconsumedWakes: new Map(),
+    deferredClose: null,
   };
+}
+
+function activateGeneration(generation: SessionGeneration): void {
+  activeGeneration = generation;
 }
 
 function generationIsLive(generation: SessionGeneration): boolean {
   return activeGeneration === generation && !generation.stopping;
 }
 
-function releasePendingWake(generation: SessionGeneration): void {
-  generation.pendingWakeAt = null;
-}
-
-// True when this watcher wake must be delivered. False only while one is already
-// queued, unread, and younger than the coalesce TTL. That TTL is unconditional:
-// omp clears queued messages when a turn aborts, so a claim kept for a
-// follow-up nobody will ever read would otherwise suppress every later wake for
-// the life of the session. A clock that moved backwards also delivers.
-function claimPendingWake(generation: SessionGeneration): boolean {
-  const now = Date.now();
-  const pendingSince = generation.pendingWakeAt;
-  if (pendingSince !== null) {
-    const age = now - pendingSince;
-    if (age >= 0 && age < wakeCoalesceTtlMs) return false;
-  }
-  generation.pendingWakeAt = now;
-  return true;
-}
-
-function stopGeneration(generation: SessionGeneration): void {
+function stopGeneration(generation: SessionGeneration): ChildProcess | null {
   generation.stopping = true;
-  if (generation.retryTimer) {
-    clearTimeout(generation.retryTimer);
-    generation.retryTimer = null;
-  }
-  if (generation.child) generation.child.kill("SIGTERM");
-  releasePendingWake(generation);
+  if (generation.retryTimer) clearTimeout(generation.retryTimer);
+  if (generation.cleanupTimer) clearTimeout(generation.cleanupTimer);
+  generation.retryTimer = null;
+  generation.cleanupTimer = null;
+  const child = generation.child;
+  if (child) child.kill("SIGTERM");
   generation.child = null;
+  return child;
+}
+
+async function waitForGenerationChildClose(armChild: ChildProcess | null): Promise<void> {
+  if (!armChild) return;
+  const closed = armClose.get(armChild);
+  if (!closed) return;
+  await new Promise<void>((resolveWait) => {
+    const timer = setTimeout(resolveWait, armRetireTimeoutMs);
+    void closed.then(() => {
+      clearTimeout(timer);
+      resolveWait();
+    });
+  });
+}
+
+async function stopSessionGeneration(generation: SessionGeneration, replacement: boolean): Promise<void> {
+  generation.replacement = replacement;
+  let persistedTokens = "";
+  try {
+    if (replacement && generation.pendingActionables.length > 0) {
+      persistReplacementHandoff(generation.pendingActionables);
+      persistedTokens = generation.pendingActionables.map((pending) => pending.token).join("\n");
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    for (const pending of generation.pendingActionables) {
+      if (replacementCoordinator.pending.some((item) => item.token === pending.token)) continue;
+      replacementCoordinator.pending.push({
+        ...pending,
+        message: `${pending.message}\n\nwatcher: FAILED - omp extension could not persist a replacement-session actionable wake\n${detail}`,
+      });
+    }
+    throw error;
+  } finally {
+    const child = stopGeneration(generation);
+    await waitForGenerationChildClose(child);
+  }
+  const currentTokens = generation.pendingActionables.map((pending) => pending.token).join("\n");
+  if (replacement && currentTokens && currentTokens !== persistedTokens) {
+    persistReplacementHandoff(generation.pendingActionables);
+  }
 }
 
 const cleanupOnProcessExit = () => {
@@ -285,24 +487,112 @@ const cleanupOnProcessExit = () => {
 };
 process.once("exit", cleanupOnProcessExit);
 
-export default function (pi: OmpExtensionApi) {
+export default function (pi: ExtensionAPI) {
   let generation = createGeneration();
-  activeGeneration = generation;
+  activateGeneration(generation);
 
-  async function sendWake(owner: SessionGeneration, message: string): Promise<void> {
-    if (!generationIsLive(owner)) return;
-    if (!claimPendingWake(owner)) return;
+  async function sendWake(
+    owner: SessionGeneration,
+    message: string,
+    pending?: PendingActionableClose,
+  ): Promise<boolean> {
+    if (!generationIsLive(owner)) return false;
+    const content = encodeFirstmateOperationalInput(
+      "watcher",
+      `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.`,
+    );
+    if (pending) owner.unconsumedWakes.set(pending.token, { content, pending });
     try {
-      const content = encodeFirstmateOperationalInput(
-        "watcher",
-        `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.`,
-      );
-      await pi.sendUserMessage(content, harnessStreaming ? { deliverAs: "followUp" } : undefined);
+      await pi.sendUserMessage(content, { deliverAs: "followUp" });
     } catch (error) {
-      // Nothing was queued, so no wake is pending.
-      releasePendingWake(owner);
+      if (pending) owner.unconsumedWakes.delete(pending.token);
       throw error;
     }
+    // Accepted by omp (sendUserMessage returns synchronously there; awaiting a
+    // non-promise resolves at once). A generation replaced while omp was
+    // accepting it may have lost the follow-up with the old session, so report
+    // it undelivered and let the replacement replay the still-pending record.
+    return generationIsLive(owner);
+  }
+
+  // omp consumed a main follow-up: an idle main at before_agent_start, a
+  // streaming main at the user message_start that joins the running run.
+  function consumeWake(owner: SessionGeneration, text: string): void {
+    for (const [token, wake] of owner.unconsumedWakes) {
+      if (wake.content !== text) continue;
+      owner.unconsumedWakes.delete(token);
+      wake.pending.delivered = true;
+      try {
+        finishPendingActionable(owner, wake.pending);
+      } catch (error) {
+        surfaceCleanupFailure(owner, error);
+        schedulePendingCleanup(owner);
+      }
+      return;
+    }
+  }
+
+  function confirmHandlingDelivery(recovery: { generation: string; watcherPid: string }): {
+    ok: boolean;
+    detail: string;
+  } {
+    try {
+      const result = spawnSync(
+        "bash",
+        [armScript, "--handling-delivered", recovery.generation, "--watcher-pid", recovery.watcherPid],
+        {
+          cwd: fmRoot,
+          encoding: "utf8",
+          env: { ...process.env, FM_HOME: fmHome, FM_STATE_OVERRIDE: state, FM_ROOT_OVERRIDE: fmRoot },
+        },
+      );
+      if (result.status === 0) return { ok: true, detail: "" };
+      const stderr = (result.stderr || "").trim();
+      return {
+        ok: false,
+        detail: `watcher: FAILED - handling delivery confirmation was rejected (status=${result.status ?? "none"} generation=${recovery.generation} watcherPid=${recovery.watcherPid})${stderr ? `\n${stderr}` : ""}`,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        detail: `watcher: FAILED - handling delivery confirmation could not be executed (generation=${recovery.generation} watcherPid=${recovery.watcherPid})\n${message}`,
+      };
+    }
+  }
+
+  function confirmHandlingDeliveryWithRetry(
+    owner: SessionGeneration,
+    recovery: { generation: string; watcherPid: string },
+  ): { ok: boolean; detail: string } {
+    const snapshot = (): { generation: string; watcherPid: string } => {
+      const current = owner.child ? armRecovery.get(owner.child) : undefined;
+      return current ?? recovery;
+    };
+    const first = confirmHandlingDelivery(snapshot());
+    if (first.ok) return first;
+    return confirmHandlingDelivery(snapshot());
+  }
+
+  async function deliverActionableWake(
+    owner: SessionGeneration,
+    message: string,
+    pending: PendingActionableClose,
+    recovery?: { generation: string; watcherPid: string },
+  ): Promise<boolean> {
+    if (!generationIsLive(owner)) return false;
+    if (recovery) {
+      const confirmed = confirmHandlingDeliveryWithRetry(owner, recovery);
+      if (!confirmed.ok) {
+        const watcherPid = recovery.watcherPid;
+        if (!pidAlive(watcherPid)) {
+          await retireArm(owner.child);
+        }
+        return await sendWake(owner, `${message}\n\n${confirmed.detail}`, pending);
+      }
+    }
+    // No supervision branch on omp: every actionable wake goes to main.
+    return await sendWake(owner, message, pending);
   }
 
   function surfaceFailure(owner: SessionGeneration, message: string): void {
@@ -310,6 +600,174 @@ export default function (pi: OmpExtensionApi) {
       // omp owns delivery errors; continuity restoration never waits on prompting.
     });
   }
+
+  function enqueuePendingActionable(
+    owner: SessionGeneration,
+    pending: PendingActionableClose,
+  ): void {
+    if (owner.pendingActionables.some((item) => item.token === pending.token)) return;
+    owner.pendingActionables.push(pending);
+    if (owner.stopping && owner.replacement) {
+      let replacementPending = pending;
+      try {
+        mergeReplacementHandoff(pending);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        replacementPending = {
+          ...pending,
+          message: `${pending.message}\n\nwatcher: FAILED - omp extension could not persist a late replacement-session actionable wake\n${detail}`,
+        };
+      }
+      if (replacementCoordinator.receiver) {
+        replacementCoordinator.receiver(replacementPending);
+      } else if (replacementPending !== pending) {
+        replacementCoordinator.pending.push(replacementPending);
+      }
+    }
+  }
+
+  function finishPendingActionable(owner: SessionGeneration, pending: PendingActionableClose): void {
+    clearReplacementHandoff(pending);
+    const index = owner.pendingActionables.findIndex((item) => item.token === pending.token);
+    if (index >= 0) owner.pendingActionables.splice(index, 1);
+    owner.cleanupFailure = "";
+  }
+
+  function surfaceCleanupFailure(
+    owner: SessionGeneration,
+    error: unknown,
+  ): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (owner.cleanupFailure === detail) return;
+    owner.cleanupFailure = detail;
+    surfaceFailure(owner, `watcher: FAILED - omp extension could not clear a delivered replacement-session actionable wake\n${detail}`);
+  }
+
+  function schedulePendingCleanup(owner: SessionGeneration): void {
+    if (!generationIsLive(owner) || owner.cleanupTimer) return;
+    const timer = setTimeout(() => {
+      if (owner.cleanupTimer === timer) owner.cleanupTimer = null;
+      void processPendingActionables(owner);
+    }, retryDelay(1));
+    timer.unref();
+    owner.cleanupTimer = timer;
+  }
+
+  async function processPendingActionables(owner: SessionGeneration): Promise<void> {
+    if (!generationIsLive(owner) || owner.restoring || owner.pendingActionables.length === 0) return;
+    owner.restoring = true;
+    const attemptedCleanup = new Set<string>();
+    try {
+      while (generationIsLive(owner) && owner.pendingActionables.length > 0) {
+        for (const delivered of owner.pendingActionables.filter((item) => item.delivered && !attemptedCleanup.has(item.token))) {
+          attemptedCleanup.add(delivered.token);
+          try {
+            finishPendingActionable(owner, delivered);
+          } catch (error) {
+            surfaceCleanupFailure(owner, error);
+          }
+        }
+        // A record omp has accepted but not consumed is neither redelivered
+        // nor finished here: consumption finishes it, replacement replays it.
+        const pending = owner.pendingActionables.find(
+          (item) => !item.delivered && !owner.unconsumedWakes.has(item.token),
+        );
+        if (!pending) break;
+        const existingClaim = replacementCoordinator.deliveries.get(pending.token);
+        if (existingClaim && existingClaim.owner !== owner) {
+          const settlement = await existingClaim.settlement;
+          if (!generationIsLive(owner)) return;
+          if (settlement === "delivered") {
+            pending.delivered = true;
+            continue;
+          }
+          if (replacementCoordinator.deliveries.get(pending.token) === existingClaim) {
+            replacementCoordinator.deliveries.delete(pending.token);
+          }
+        }
+        let settleClaim: (settlement: "delivered" | "failed") => void = () => {};
+        const settlement = new Promise<"delivered" | "failed">((resolveSettlement) => {
+          settleClaim = resolveSettlement;
+        });
+        const deliveryClaim = { owner, settlement };
+        replacementCoordinator.deliveries.set(pending.token, deliveryClaim);
+        const releaseClaim = (): void => {
+          if (replacementCoordinator.deliveries.get(pending.token) === deliveryClaim) {
+            replacementCoordinator.deliveries.delete(pending.token);
+          }
+        };
+        try {
+          // A new restoration supersedes whatever became of the previous
+          // successor; only a failure during this delivery is retried after it.
+          owner.deferredClose = null;
+          const restoration = await restoreAfterActionableClose(owner, pending.predecessorArmPid);
+          if (!generationIsLive(owner)) {
+            settleClaim("failed");
+            releaseClaim();
+            return;
+          }
+          const message = restoration.failure ? `${pending.message}\n\n${restoration.failure}` : pending.message;
+          const delivered = await deliverActionableWake(owner, message, pending, restoration.recovery);
+          if (!delivered) {
+            settleClaim("failed");
+            releaseClaim();
+            return;
+          }
+          const awaitingConsumption = owner.unconsumedWakes.has(pending.token);
+          if (awaitingConsumption && !generationIsLive(owner)) {
+            // omp accepted the follow-up, then the session was replaced before
+            // this continuation ran: the shutdown persisted the still-pending
+            // record, so a replacement waiting on this claim must replay it.
+            settleClaim("failed");
+            releaseClaim();
+            return;
+          }
+          settleClaim("delivered");
+          if (!awaitingConsumption) {
+            // omp consumed it before this ran.
+            pending.delivered = true;
+            try {
+              finishPendingActionable(owner, pending);
+            } catch (error) {
+              surfaceCleanupFailure(owner, error);
+            }
+          }
+          releaseClaim();
+        } catch (error) {
+          settleClaim("failed");
+          releaseClaim();
+          throw error;
+        }
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      surfaceFailure(owner, `watcher: FAILED - omp extension could not deliver an actionable wake\n${detail}`);
+    } finally {
+      if (generationIsLive(owner)) {
+        owner.restoring = false;
+        if (owner.pendingActionables.some((pending) => pending.delivered)) schedulePendingCleanup(owner);
+        // No bare arm is launched here. A generation without a child at this
+        // point has either delivered a typed restoration failure after its
+        // bounded retries, which hands repair to main through fm_watch_arm_omp
+        // (one more silent launch past the bound could hold a hung child that
+        // the repair call would then report as "unchanged"), or lost a
+        // verified successor during the delivery, which takes the ordinary
+        // bounded, lock-checked retry it would have taken had the pipeline
+        // been idle.
+        const deferred = owner.deferredClose;
+        owner.deferredClose = null;
+        if (deferred && !owner.child && !owner.retryTimer) {
+          scheduleRetry(owner, deferred.message, deferred.predecessorArmPid);
+        }
+      }
+    }
+  }
+
+  const receiveReplacementActionable: ReplacementActionableReceiver = (pending) => {
+    if (!generationIsLive(generation)) return;
+    enqueuePendingActionable(generation, pending);
+    void processPendingActionables(generation);
+  };
 
   function retryDelay(attempt: number): number {
     return Math.min(retryMaxMs, retryBaseMs * 2 ** Math.max(0, attempt - 1));
@@ -337,6 +795,7 @@ export default function (pi: OmpExtensionApi) {
 
   async function retireArm(armChild: ChildProcess | null): Promise<boolean> {
     if (!armChild) return true;
+    armRetired.add(armChild);
     armChild.kill("SIGTERM");
     const closed = armClose.get(armChild);
     if (!closed) return false;
@@ -350,17 +809,24 @@ export default function (pi: OmpExtensionApi) {
     });
   }
 
-  async function restoreAfterActionableClose(owner: SessionGeneration, predecessorArmPid: string): Promise<string> {
+  async function restoreAfterActionableClose(owner: SessionGeneration, predecessorArmPid: string): Promise<{
+    failure: string;
+    recovery?: { generation: string; watcherPid: string };
+  }> {
     let failure = "";
     for (let attempt = 0; attempt <= retryLimit; attempt += 1) {
-      if (!generationIsLive(owner)) return "";
+      if (!generationIsLive(owner)) return { failure: "" };
       const replacement = startArm(owner, predecessorArmPid);
       const successorChild = owner.child;
-      if (replacement.ok && successorChild && await waitForReadiness(successorChild)) return "";
+      if (replacement.ok && successorChild && await waitForReadiness(successorChild)) {
+        return { failure: "", recovery: armRecovery.get(successorChild) };
+      }
       if (replacement.ok) {
         failure = "watcher: FAILED - omp extension could not verify a ready successor watcher";
         if (!(await retireArm(successorChild))) {
-          return `${failure}\nwatcher: FAILED - omp extension could not restore watcher continuity because the unready successor arm did not exit within ${armRetireTimeoutMs}ms`;
+          return {
+            failure: `${failure}\nwatcher: FAILED - omp extension could not restore watcher continuity because the unready successor arm did not exit within ${armRetireTimeoutMs}ms`,
+          };
         }
       } else {
         failure = /(?:read-only|no live session)/.test(replacement.message)
@@ -371,7 +837,7 @@ export default function (pi: OmpExtensionApi) {
       if (attempt === retryLimit) break;
       await waitForRetry(attempt + 1);
     }
-    return `${failure}\nwatcher: FAILED - omp extension could not restore watcher continuity after ${retryLimit} retries`;
+    return { failure: `${failure}\nwatcher: FAILED - omp extension could not restore watcher continuity after ${retryLimit} retries` };
   }
 
   function scheduleRetry(owner: SessionGeneration, message: string, predecessorArmPid: string): void {
@@ -440,6 +906,7 @@ export default function (pi: OmpExtensionApi) {
     let stderr = "";
     let settled = false;
     let readinessSettled = false;
+    let verified = false;
     let resolveReadiness: (ready: boolean) => void = () => {};
     let resolveClosed: () => void = () => {};
     const readiness = new Promise<boolean>((resolveReady) => {
@@ -453,11 +920,21 @@ export default function (pi: OmpExtensionApi) {
     const settleReadiness = (ready: boolean): void => {
       if (readinessSettled) return;
       readinessSettled = true;
+      verified = ready;
       resolveReadiness(ready);
     };
     const observeEstablishedArm = (): void => {
-      if (/^watcher: (?:started|attached)\b/m.test(`${stdout}\n${stderr}`)) {
+      const combined = `${stdout}\n${stderr}`;
+      const recovery = combined.match(/^watcher: started pid=([0-9]+).* recovery-generation=([A-Za-z0-9._-]+)$/m);
+      if (recovery) armRecovery.set(armChild, { watcherPid: recovery[1], generation: recovery[2] });
+      if (/^watcher: (?:started|attached)\b/m.test(combined)) {
         settleReadiness(true);
+      }
+      const reason = completedActionableLine(stdout) || completedActionableLine(stderr);
+      if (reason && !armPendingActionable.has(armChild)) {
+        const pending = createPendingActionable(reason, String(armChild.pid ?? ""));
+        armPendingActionable.set(armChild, pending);
+        enqueuePendingActionable(owner, pending);
       }
     };
     const releaseChild = (): void => {
@@ -477,23 +954,27 @@ export default function (pi: OmpExtensionApi) {
       resolveClosed();
       settleReadiness(false);
       releaseChild();
-      if (!generationIsLive(owner)) return;
       const classification = classifyClose(stdout, stderr, code, signal);
       const predecessor = String(armChild.pid ?? "");
       if (classification.kind === "actionable") {
+        const pending = armPendingActionable.get(armChild) ?? createPendingActionable(classification.message, predecessor);
+        enqueuePendingActionable(owner, pending);
+        if (!generationIsLive(owner)) return;
         owner.retryFailures = 0;
-        owner.restoring = true;
-        void (async () => {
-          const failure = await restoreAfterActionableClose(owner, predecessor);
-          if (generationIsLive(owner)) owner.restoring = false;
-          if (!generationIsLive(owner)) return;
-          const message = failure ? `${classification.message}\n\n${failure}` : classification.message;
-          await sendWake(owner, message);
-        })().catch(() => {
-        });
+        void processPendingActionables(owner);
         return;
       }
-      if (owner.restoring) return;
+      if (!generationIsLive(owner)) return;
+      if (owner.restoring) {
+        // The pipeline is still delivering the wake this successor was
+        // started for. A verified successor that failed on its own keeps its
+        // bounded retry for the end of that delivery; an unready child closing
+        // here was retired by the restoration itself.
+        if (verified && !armRetired.has(armChild)) {
+          owner.deferredClose = { message: classification.message, predecessorArmPid: predecessor };
+        }
+        return;
+      }
       scheduleRetry(owner, classification.message, predecessor);
     });
     armChild.on("error", (error: Error) => {
@@ -512,34 +993,65 @@ export default function (pi: OmpExtensionApi) {
     };
   }
 
-  pi.on?.("agent_start", () => {
-    harnessStreaming = true;
-    releasePendingWake(generation);
+  function activateOwnedWatch(owner: SessionGeneration): ArmResult {
+    if (!generationIsLive(owner)) return { ok: false, message: shuttingDownMessage };
+    if (lockOwnership() !== "owned") return startArm(owner);
+    replacementCoordinator.receiver = receiveReplacementActionable;
+    let pending: PendingActionableClose[] = [];
+    let loadFailure = "";
+    try {
+      pending = loadReplacementHandoff();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      loadFailure = `watcher: FAILED - omp extension could not load a replacement-session actionable wake\n${detail}`;
+    }
+    const inProcessPending = replacementCoordinator.pending.splice(0);
+    for (const actionable of [...pending, ...inProcessPending]) {
+      enqueuePendingActionable(owner, actionable);
+    }
+    if (owner.pendingActionables.length > 0) {
+      if (loadFailure) surfaceFailure(owner, loadFailure);
+      const armResult = startArm(owner, owner.pendingActionables[0].predecessorArmPid);
+      if (!armResult.ok) {
+        surfaceFailure(owner, `watcher: FAILED - omp extension could not arm before replacement wake delivery\n${armResult.message}`);
+      }
+      void processPendingActionables(owner);
+      return armResult;
+    }
+    const result = startArm(owner);
+    if (loadFailure) surfaceFailure(owner, `${loadFailure}\n${result.message}`);
+    return result;
+  }
+
+  pi.on?.("before_agent_start", (event) => {
+    consumeWake(generation, String((event as { prompt?: unknown })?.prompt ?? ""));
   });
-  // A run that ends without reading the queued wake leaves a claim nothing will
-  // ever clear, which is how one dropped follow-up silenced a whole session.
-  // Releasing it here costs at most one duplicate wake.
-  pi.on?.("agent_end", (event) => {
-    if (event?.willContinue) return;
-    harnessStreaming = false;
-    releasePendingWake(generation);
+  pi.on?.("message_start", (event) => {
+    const message = (event as { message?: { role?: unknown; content?: unknown } })?.message;
+    if (!message || message.role !== "user") return;
+    consumeWake(generation, userMessageText(message.content));
   });
-  pi.on?.("session_start", () => {
+
+  pi.on?.("session_start", async () => {
     if (generation.stopping) generation = createGeneration();
-    activeGeneration = generation;
-    harnessStreaming = false;
-    releasePendingWake(generation);
+    activateGeneration(generation);
     markLoaded();
+    if (lockOwnership() !== "owned") return;
+    activateOwnedWatch(generation);
   });
-  pi.on?.("session_shutdown", () => {
-    stopGeneration(generation);
+  pi.on?.("session_shutdown", async () => {
+    // omp carries no shutdown reason (verified: `reason` is undefined), so the
+    // replacement handoff is always persisted when anything is pending; a
+    // terminal quit then merely replays an already-drained wake next start.
+    if (replacementCoordinator.receiver === receiveReplacementActionable) replacementCoordinator.receiver = null;
+    await stopSessionGeneration(generation, true);
   });
 
   pi.registerCommand?.("fm-watch-arm-omp", {
     description: "Arm firstmate watcher supervision through the omp extension instead of foreground bash.",
-    handler: (_args, ctx) => {
-      const result = startArm(generation);
-      ctx.ui.notify(result.message, result.ok ? "info" : "warning");
+    handler: async (_args, ctx) => {
+      const result = activateOwnedWatch(generation);
+      ctx?.ui?.notify?.(result.message, result.ok ? "info" : "warning");
     },
   });
 
@@ -551,9 +1063,9 @@ export default function (pi: OmpExtensionApi) {
     promptGuidelines: [
       "Call fm_watch_arm_omp only for the first required cycle or after a notification says the cycle is missing, failed, or unhealthy. Do not call it after ordinary work, turn completion, or ordinary signal, stale, check, or heartbeat handling because the omp extension owns re-arming. Never run bin/fm-watch-arm.sh through bash.",
     ],
-    parameters: { type: "object", properties: {} },
+    parameters: Type.Object({}),
     execute: async () => {
-      const result = startArm(generation);
+      const result = activateOwnedWatch(generation);
       return {
         content: [{ type: "text", text: result.message }],
         details: result,

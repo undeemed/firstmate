@@ -277,8 +277,8 @@ EOF
 fm_dod_block() {  # <mode> <task-id>
   local mode=$1 id=$2
   case "$mode" in
-  direct-PR)
-    cat <<EOF
+    direct-PR)
+      cat <<EOF
 # Definition of done
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
@@ -293,9 +293,9 @@ That \`done:\` is accepted only when this copy's HEAD - your latest commit - is 
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
-    ;;
-  local-only)
-    cat <<EOF
+      ;;
+    local-only)
+      cat <<EOF
 # Definition of done
 Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
@@ -307,9 +307,9 @@ Record that verdict in your handoff, and name any finding you deliberately did n
 When it is implemented and committed, append \`done [at=<epoch>]: ready in branch fm/$id\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
-    ;;
-  no-mistakes)
-    cat <<EOF
+      ;;
+    no-mistakes)
+      cat <<EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
@@ -354,11 +354,10 @@ Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finis
 That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 EOF
-    ;;
-  *)
-    echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2
-    return 1
-    ;;
+      ;;
+    *)
+      echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2
+      return 1 ;;
   esac
 }
 
