@@ -3404,11 +3404,14 @@ working: still parked at that gate'
   unarmed_probes=$(wc -l < "$FM_FAKE_CREW_STATE_LOG" | tr -d ' ')
   unset FM_FAKE_CREW_STATE_LOG
 
-  [ "$unarmed_probes" -eq 0 ] \
-    || fail "an unarmed home spent $unarmed_probes current-state read(s) on a parked gate over three thresholds"
+  # The fork's step-progress probe (crew_step_progress_evidence) spends exactly
+  # one current-state read at each escalating threshold; the parked-gate arm
+  # must add none on top of it.
+  [ "$unarmed_probes" -eq 3 ] \
+    || fail "an unarmed home spent $unarmed_probes current-state read(s) on a parked gate over three thresholds, not the step-progress probe's 3"
 
   # The same fixture with only the flag added, counted the same way, so the
-  # zero above is the flag's doing rather than a fixture that could never have
+  # count above is the flag's doing rather than a fixture that could never have
   # reached the reader: one armed threshold must spend a read. A guard placed
   # after the consult instead of before it would make both counts nonzero.
   dir=$(wedge_threshold_fixture parked-gate-armed-probe-count "$escalated" 2000)
