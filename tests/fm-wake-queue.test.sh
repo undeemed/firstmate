@@ -2438,6 +2438,34 @@ test_historical_annotation_skips_announced_status() {
   pass "historical annotations replay nothing already announced and keep everything new"
 }
 
+test_wake_queue_prune_task() {
+  local dir state queue
+  dir=$(make_case prune)
+  state="$dir/state"
+  queue="$state/.wake-queue"
+
+  append_wake "$state" stale "test:window-a" "stale: test:window-a"
+  append_wake "$state" signal "task-a.status" "signal: $state/task-a.status"
+  append_wake "$state" signal "task-a.turn-ended" "signal: $state/task-a.turn-ended"
+  append_wake "$state" check "$state/task-a.check.sh" "check: $state/task-a.check.sh: merged: https://example.test/pr/1"
+  append_wake "$state" stale "test:window-b" "stale: test:window-b"
+  append_wake "$state" signal "task-b.status" "signal: $state/task-b.status"
+  append_wake "$state" check "$state/task-b.check.sh" "check: $state/task-b.check.sh: merged: https://example.test/pr/2"
+
+  FM_STATE_OVERRIDE="$state" bash -c '. "$0/bin/fm-wake-lib.sh"; fm_wake_queue_prune_task "$1" "$2" "$3"' "$ROOT" "$state" "task-a" "test:window-a" \
+    || fail "fm_wake_queue_prune_task returned non-zero"
+
+  grep -F 'test:window-a' "$queue" >/dev/null && fail "prune left stale wake for task-a"
+  grep -F 'task-a.status' "$queue" >/dev/null && fail "prune left status wake for task-a"
+  grep -F 'task-a.turn-ended' "$queue" >/dev/null && fail "prune left turn-ended wake for task-a"
+  grep -F 'task-a.check.sh' "$queue" >/dev/null && fail "prune left check wake for task-a"
+  grep -F 'test:window-b' "$queue" >/dev/null || fail "prune removed stale wake for task-b"
+  grep -F 'task-b.status' "$queue" >/dev/null || fail "prune removed status wake for task-b"
+  grep -F 'task-b.check.sh' "$queue" >/dev/null || fail "prune removed check wake for task-b"
+
+  pass "fm_wake_queue_prune_task: prunes wakes for target task without touching other tasks"
+}
+
 test_self_held_lock_reclaims_instead_of_deadlocking
 test_subshell_lock_ownership_without_bashpid
 test_bounded_lock_handoff_after_contention
@@ -2487,3 +2515,4 @@ test_stale_ack_that_consumes_nothing_names_the_current_wake
 test_branch_stale_ack_that_consumes_nothing_names_its_granted_wake
 test_recovery_ack_failure_is_reported
 test_interruption_before_and_after_raw_commit
+test_wake_queue_prune_task
