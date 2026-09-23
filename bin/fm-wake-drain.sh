@@ -236,20 +236,6 @@ assert_watcher_liveness() {
 # stdout a caller reads wake records from.
 ORPHAN_SWEEP_MARKER="$STATE/.orphan-sweep-last"
 
-# Mark presentation-stage inactive terminal outcomes only after the handling
-# turn has completed and before this acknowledgement consumes its queue rows.
-# The helper ignores non-presentation and legacy keys, so this is a narrow
-# receipt path rather than a second interpretation of general check wakes.
-# Litter that outlives its task's records has nobody left to remove it, so the
-# sweep runs on a schedule instead of on any one teardown. bin/fm-orphan-sweep.sh
-# owns what is safe to remove and prints nothing when there is nothing to
-# reclaim; this owns only the cadence, the bound, and the marker that keeps it
-# to once an hour, dated by its own mtime. The bound is deliberately short: every category is
-# idempotent, so a run cut off part way simply continues when it is next due.
-# Reports on stderr with the drain's other operational notes, never on the
-# stdout a caller reads wake records from.
-ORPHAN_SWEEP_MARKER="$STATE/.orphan-sweep-last"
-
 run_orphan_sweep_if_due() {
   [ "${FM_ORPHAN_SWEEP:-on}" = off ] && return 0
   find "$ORPHAN_SWEEP_MARKER" -newermt '-1 hour' -print -quit 2>/dev/null | grep -q . && return 0
@@ -260,6 +246,10 @@ run_orphan_sweep_if_due() {
     "$SCRIPT_DIR/fm-orphan-sweep.sh" >&2 || true
 }
 
+# Mark presentation-stage inactive terminal outcomes only after the handling
+# turn has completed and before this acknowledgement consumes its queue rows.
+# The helper ignores non-presentation and legacy keys, so this is a narrow
+# receipt path rather than a second interpretation of general check wakes.
 inactive_outcome_fingerprints() { # <sequence> <key-prefix> [<rows-file>]
   local cutoff=$1 prefix=$2 rows=${3:-} epoch seq kind key payload
   while IFS=$(printf '\t') read -r epoch seq kind key payload; do
