@@ -268,7 +268,7 @@ The task is complete only when committed on your branch.
 Before you open the PR, $FM_DOD_LEAN_GATE
 Report that verdict in the PR body, and name any finding you deliberately did not cut with the reason it earns its place.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\` that is ready for review, not a draft.
-Before you report done, read the PR back from the forge and confirm it is not a draft (\`gh pr view <url> --json isDraft\` must print false)
+Before you report done, read the PR back from the forge and confirm it is not a draft (\`gh pr view <url> --json isDraft\` must print false); if it is a draft, mark it ready with \`gh-axi pr ready\`.
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.

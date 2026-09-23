@@ -382,7 +382,10 @@ kimi_typed_launch_file() {
 test_kimi_spawn_refuses_shared_task_temp_root() {
   local id rec out rc task_tmp launch_dir launch_file stale_file
   id="kimi-sharedtmp-z1-$$"
-  task_tmp="/tmp/fm-$id"
+  # The scratch root resolves through bin/fm-tasktmp-lib.sh, which tests/lib.sh
+  # pins at FM_TASKTMP_ROOT for this suite, so the unsafe directory is planted
+  # where the spawn will actually look for it.
+  task_tmp="$FM_TASKTMP_ROOT/fm-$id"
   KIMI_RUNTIME_TASK_TMP=$task_tmp
   rm -rf "$task_tmp"
   mkdir "$task_tmp"

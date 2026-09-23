@@ -414,14 +414,16 @@ test_inline_progress_bar_preserves_verb_key_note_and_relevance() {
   pass "an inline progress bar leaves verb, key, note, and captain relevance intact"
 }
 
-# Rationale guard for the scaffold's status-file prohibition. Every last-line
-# consumer (signal_reason_is_actionable, stale_is_terminal,
-# scan_captain_relevant_statuses) reads last_status_line, so a stacked bar block
-# appended AFTER a terminal verb hides that verb - which is exactly why
-# bin/fm-brief.sh sends stacked blocks to the worker's own output and allows only
-# a single-line inline bar here. If this ever stops holding, revisit that rule
-# rather than deleting this test.
-test_trailing_bar_block_would_mask_a_terminal_verb() {
+# Rationale guard for the scaffold's status-file prohibition. This case used to
+# assert the masking hazard itself: every last-line consumer
+# (signal_reason_is_actionable, stale_is_terminal, scan_captain_relevant_statuses)
+# reads last_status_line, and a stacked bar block appended AFTER a terminal verb
+# hid that verb. last_status_line now reads past trailing non-verb lines to the
+# last verb line, so the hazard is closed at the reader. The scaffold rule stands
+# on its own ground - a status append is one sparse supervisor-actionable line,
+# and a bar is never a reason to append - so this case now pins the reader's
+# behaviour instead: a trailing block must not cost the supervisor the verb.
+test_trailing_bar_block_does_not_mask_a_terminal_verb() {
   local dir f
   dir=$(case_dir progress-bar-masking)
   f="$dir/masked.status"
@@ -431,8 +433,8 @@ test_trailing_bar_block_would_mask_a_terminal_verb() {
     || fail "a plain terminal done line was not captain-relevant"
 
   bar_block >> "$f"
-  ! status_is_captain_relevant "$(last_status_line "$f")" \
-    || fail "a trailing bar block no longer masks the terminal verb - revisit bin/fm-brief.sh's status-file rule"
+  status_is_captain_relevant "$(last_status_line "$f")" \
+    || fail "a trailing bar block masked the terminal verb from last_status_line"
 
   printf 'done: PR https://example.test/pr/1 checks green, steps 6/6 [██████████████] 100%%\n' > "$f"
   status_is_captain_relevant "$(last_status_line "$f")" \
@@ -671,7 +673,7 @@ test_bare_prose_cannot_open_or_close_a_decision() {
 test_bare_prose_cannot_open_or_close_a_decision
 test_progress_bar_lines_cannot_move_a_keyed_decision
 test_inline_progress_bar_preserves_verb_key_note_and_relevance
-test_trailing_bar_block_would_mask_a_terminal_verb
+test_trailing_bar_block_does_not_mask_a_terminal_verb
 test_two_decisions_on_one_task_keep_separate_keys
 test_key_syntax_guard_names_the_reason
 test_invalid_slug_line_is_skipped_by_the_fold_and_caught_by_the_guard

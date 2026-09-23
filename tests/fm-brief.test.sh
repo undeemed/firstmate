@@ -612,7 +612,7 @@ test_secondmate_no_projects_charter() {
     "secondmate charter no longer names the parent channel as the captain"
   assert_grep 'working [key=<work-slug>]' "$brief" \
     "secondmate charter did not key material routed-work phases"
-  assert_grep 'resolved [key=<work-slug>]' "$brief" \
+  assert_grep 'resolved [at=<epoch>] [key=<work-slug>]' "$brief" \
     "secondmate charter did not close a quietly ended routed-work phase"
   assert_grep 'use the same key on its later' "$brief" \
     "secondmate charter did not supersede working phases with later states"
@@ -659,7 +659,7 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter lost keyed working syntax for a reportable material phase"
   assert_grep "use the same key on its later \`paused\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event" "$brief" \
     "secondmate charter lost same-key closure for a reportable material phase"
-  assert_grep 'resolved [key=<work-slug>]' "$brief" \
+  assert_grep 'resolved [at=<epoch>] [key=<work-slug>]' "$brief" \
     "secondmate charter lost resolved closure for a keyed material phase"
 
   assert_grep 'include that exact token in your parent status reply' "$brief" \
@@ -1253,9 +1253,9 @@ test_every_scaffold_states_the_key_before_the_colon() {
     FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_mode##*:}" >/dev/null 2>&1 \
       || fail "$id: ship scaffold failed"
     brief="$home/data/$id/brief.md"
-    assert_grep "append \`needs-decision [key=<slug>]: {summary of options}\`" "$brief" \
+    assert_grep "append \`needs-decision [at=<epoch>] [key=<slug>]: {summary of options}\`" "$brief" \
       "$id: ship brief does not show the key before the colon"
-    assert_grep "append \`resolved [key=<slug>]: {how it cleared}\`" "$brief" \
+    assert_grep "append \`resolved [at=<epoch>] [key=<slug>]: {how it cleared}\`" "$brief" \
       "$id: ship brief does not show the keyed resolved form"
     assert_no_grep "append \`needs-decision: {summary of options}\`" "$brief" \
       "$id: ship brief still teaches the unkeyed opening form"
@@ -1264,9 +1264,9 @@ test_every_scaffold_states_the_key_before_the_colon() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-key-a4 some-proj --scout >/dev/null 2>&1 \
     || fail "scout scaffold failed"
   brief="$home/data/brief-key-a4/brief.md"
-  assert_grep "append \`needs-decision [key=<slug>]: {summary of options}\`" "$brief" \
+  assert_grep "append \`needs-decision [at=<epoch>] [key=<slug>]: {summary of options}\`" "$brief" \
     "scout brief does not show the key before the colon"
-  assert_grep "append \`resolved [key=<slug>]: {how it cleared}\`" "$brief" \
+  assert_grep "append \`resolved [at=<epoch>] [key=<slug>]: {how it cleared}\`" "$brief" \
     "scout brief does not show the keyed resolved form"
   assert_no_grep "append \`needs-decision: {summary of options}\`" "$brief" \
     "scout brief still teaches the unkeyed opening form"
@@ -1277,7 +1277,7 @@ test_every_scaffold_states_the_key_before_the_colon() {
   brief="$home/data/brief-key-a5/brief.md"
   assert_grep "\`needs-decision [key=<slug>]: {summary}\`" "$brief" \
     "secondmate charter does not show the key before the colon"
-  assert_grep "append \`resolved [key=<slug>]: {how it cleared}\`" "$brief" \
+  assert_grep "append \`resolved [at=<epoch>] [key=<slug>]: {how it cleared}\`" "$brief" \
     "secondmate charter does not show the keyed resolved form"
 
   for id in brief-key-a1 brief-key-a4 brief-key-a5; do
