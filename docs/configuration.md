@@ -464,6 +464,24 @@ An absent or blank file changes nothing, while a present path that is not a read
 The text is static and never executed or expanded; secondmate charters never take it, and the file is local to each home rather than part of secondmate inherited configuration.
 `bin/fm-brief.sh`'s header owns the placement rule and its safety argument.
 
+## omp crew overlay (config/omp-crew-overlay.yml)
+
+The optional local, gitignored `config/omp-crew-overlay.yml` is an omp settings overlay that every omp crewmate and scout launch carries, including control-plane relaunches.
+Secondmate launches never carry it.
+`bin/fm-spawn.sh` passes it through `--config` ahead of the tracked `.omp/fm-worker-overlay.yml`, and omp lets a later overlay win, so the tracked posture pins always hold.
+omp deep-merges the overlay over the captain's own `~/.omp/agent/config.yml` for that one session, so every key the file omits keeps the captain's value.
+omp refuses to start on a file that is not a YAML mapping.
+`bin/fm-spawn.sh` checks for the file on every spawn and relaunch, so a change takes effect at the next launch without a restart.
+The file is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract, so a secondmate's own omp crewmates carry it too.
+For example, this gives every omp crewmate an advisor running a model with thinking off:
+
+```yaml
+modelRoles:
+  advisor: anthropic/claude-sonnet-5:off
+advisor:
+  enabled: true
+```
+
 ## Worker launch environment (config/launch-env-allowlist)
 
 The optional local, gitignored `config/launch-env-allowlist` limits the ambient environment passed to newly launched workers, scouts, and secondmates, including relaunches.
