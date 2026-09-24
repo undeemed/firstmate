@@ -189,7 +189,10 @@
 #   shape, plan mode off, prewalk off, and the non-interactive usage-reserve
 #   policy for the one session only (--auto-approve alone owns approval); the
 #   captain's own ~/.omp/agent/config.yml (model roles, providers, theme) is
-#   never written.
+#   never written. A crewmate or scout launch (never a secondmate) also passes
+#   the optional captain-local config/omp-crew-overlay.yml, placed BEFORE the
+#   tracked overlay because omp lets a later --config win, so a captain crew
+#   setting such as an advisor model cannot undo a posture pin.
 #   A model written as <provider>/<id> is validated against `omp models --json`
 #   only when that provider appears in the listing; a provider absent from the
 #   listing (an extension-registered provider such as claude-bridge, which omp
@@ -370,6 +373,8 @@
 #                  turn-end extension, written by this script; outside the worktree so
 #                  omp's cwd-only auto-discovery cannot load it a second time)
 #     __OMPWORKERCFG__ absolute path to the tracked .omp/fm-worker-overlay.yml posture overlay
+#     __OMPCREWCFG__ `--config <config/omp-crew-overlay.yml> ` for a crewmate or scout when
+#                  that captain-local file exists, else empty
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
 #     __WORKTREE__  absolute path to the task worktree
 #     __CURSORBIN__ resolved, cursor-verified executable for a cursor launch
@@ -2060,7 +2065,7 @@ launch_template() {
   # naming them with -e as well loads each twice (verified), doubling every
   # session_stop continuation.
   omp)
-    printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u GEMINI_CLI -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 __OMPBIN__ --config __OMPWORKERCFG__ --auto-approve --cwd __WORKTREE__'
+    printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u GEMINI_CLI -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 __OMPBIN__ __OMPCREWCFG__--config __OMPWORKERCFG__ --auto-approve --cwd __WORKTREE__'
     if [ "$kind" = secondmate ]; then
       printf '%s' ' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
     else
@@ -2334,6 +2339,10 @@ omp)
     echo "error: omp worker posture overlay missing at $OMP_WORKER_CFG; a worker launched without it can park on the captain's own approval or plan-mode settings" >&2
     exit 1
   }
+  OMP_CREW_CFG_FLAG=
+  if [ "$KIND" != secondmate ] && [ -f "$CONFIG/omp-crew-overlay.yml" ]; then
+    OMP_CREW_CFG_FLAG="--config $(shell_quote "$CONFIG/omp-crew-overlay.yml") "
+  fi
   ;;
 agy)
   AGY_BIN=$(resolve_pi_executable agy) || {
@@ -5177,7 +5186,10 @@ case "$HARNESS" in
 pi | pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;
 cursor) LAUNCH=${LAUNCH//__CURSORBIN__/"$(shell_quote "$CURSOR_BIN")"} ;;
 gemini) LAUNCH=${LAUNCH//__GEMINISETTINGS__/"$(shell_quote "$STATE_REAL/$ID.gemini-settings.json")"} ;;
-omp) LAUNCH=${LAUNCH//__OMPBIN__/"$(shell_quote "$OMP_BIN")"} ;;
+omp)
+  LAUNCH=${LAUNCH//__OMPBIN__/"$(shell_quote "$OMP_BIN")"}
+  LAUNCH=${LAUNCH//__OMPCREWCFG__/"$OMP_CREW_CFG_FLAG"}
+  ;;
 devin)
   LAUNCH=${LAUNCH//__DEVINBIN__/"$(shell_quote "$DEVIN_BIN")"}
   LAUNCH=${LAUNCH//__DEVINCONFIG__/"$(shell_quote "$STATE_REAL/$ID.devin-config.json")"}

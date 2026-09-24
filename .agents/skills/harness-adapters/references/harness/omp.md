@@ -9,7 +9,7 @@ Cross-harness provider and credential identity is owned by `references/common/mo
 | Fact | Value |
 |---|---|
 | Binary | `omp`, a single Bun-compiled executable resolved from `PATH` by `../../../bin/fm-spawn.sh`; a missing binary refuses the spawn. |
-| Launch | Foreign markers cleared (`CLAUDECODE`, `PI_CODING_AGENT`, `GROK_AGENT`, `FM_PI_HARNESS`, `GEMINI_CLI`, Cursor's), `FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1`, then `omp --config <.omp/fm-worker-overlay.yml> --auto-approve --cwd <worktree> [--model] [--thinking] -e state/<id>.omp-ext.ts <one positional brief>`; a secondmate passes no `-e` and relies on auto-discovery. |
+| Launch | Foreign markers cleared (`CLAUDECODE`, `PI_CODING_AGENT`, `GROK_AGENT`, `FM_PI_HARNESS`, `GEMINI_CLI`, Cursor's), `FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1`, then `omp [--config <config/omp-crew-overlay.yml>] --config <.omp/fm-worker-overlay.yml> --auto-approve --cwd <worktree> [--model] [--thinking] -e state/<id>.omp-ext.ts <one positional brief>`; a secondmate passes no `-e` and relies on auto-discovery. |
 | Busy state | `../../../bin/fm-busy-lib.sh` source `omp-ext`: the per-task extension marks busy at `agent_start` and idle at `agent_end` only when `willContinue` is not true; `ctx.isIdle()` is deliberately not consulted because it reads false at a natural TUI `agent_end` (`session_stop` is awaited before settle). |
 | Exit command | `/quit` (`/exit` and `/q` are aliases). |
 | Interrupt | Single Escape; the composer is left empty, no clear key. |
@@ -39,6 +39,9 @@ The optional claude-bridge extension runs a nested executable literally named `c
 
 The captain's own `~/.omp/agent/config.yml` is never written; the tracked `.omp/fm-worker-overlay.yml` is passed with `--config` for the one session and pins only the settings whose captain-level values would park an unattended worker on a prompt, change its pinned model, or make its composer unreadable.
 `../../../bin/fm-spawn.sh`'s header owns the exact list and the reason for each pin.
+A crewmate or scout launch also carries the captain-local `config/omp-crew-overlay.yml` when it exists, ahead of the tracked overlay so the pins still win; `../../../docs/configuration.md` "omp crew overlay" owns that file.
+Verified 2026-09-24 on omp 18.2.10: a print-mode run stacking a crew overlay that set `advisor.enabled: true` and `modelRoles.advisor: anthropic/claude-sonnet-5:off` ahead of the tracked overlay wrote `__advisor.jsonl` with every advisor turn on `claude-sonnet-5`, while the primary ran the `--model` pin.
+That run and a direct `--model anthropic/claude-sonnet-5:off` probe showed `:off` does not suppress thinking on `anthropic/claude-sonnet-5`, whose catalog lists no `off` level: omp records level `off`, yet responses still carry signature-only thinking blocks.
 
 ## Extension loading
 

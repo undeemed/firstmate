@@ -167,6 +167,7 @@ test_spawn_launch_line_and_worker_wiring() {
     "omp launch did not clear foreign markers and establish its own at the launch boundary"
   assert_contains "$launch" "--config '$ROOT/.omp/fm-worker-overlay.yml' --auto-approve --cwd '$WT_DIR'" \
     "omp launch did not carry the tracked posture overlay, --auto-approve, and the pinned working directory"
+  assert_not_contains "$launch" "omp-crew-overlay.yml" "an absent captain crew overlay must not reach the launch, where omp hard-fails a missing --config file"
   assert_contains "$launch" "--model 'openai-codex/gpt-6-astra' --thinking 'medium' -e '$state/$id.omp-ext.ts'" \
     "omp launch did not pass the model, thinking level, and the state-resident worker extension"
   assert_contains "$launch" "encode launch-brief < '$HOME_DIR/data/$id/launch-brief.md'" "omp launch lost the canonical typed launch-brief envelope"
@@ -177,6 +178,22 @@ test_spawn_launch_line_and_worker_wiring() {
   [ "$(fm_busy_classify tmux fake:w omp "$id" "$state")" = "busy fm-spawn" ] \
     || fail "omp spawn must seed the busy-state contract"
   pass "fm-spawn: the omp launch line clears markers, pins posture, and wires the state-resident extension"
+}
+
+test_crew_overlay_layers_under_posture_for_crew_only() {
+  # A captain-local config/omp-crew-overlay.yml rides a crewmate or scout launch
+  # AHEAD of the tracked posture overlay: omp lets a later --config win, so that
+  # order is what keeps a captain crew setting from undoing a posture pin.
+  local rec id=omp-crew-overlay-q6 out status
+  rec=$(make_spawn_case crew-overlay omp "$id")
+  read_case_record "$rec"
+  printf 'advisor:\n  enabled: true\n' > "$HOME_DIR/config/omp-crew-overlay.yml"
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness omp)
+  status=$?
+  expect_code 0 "$status" "omp scout spawn with a captain crew overlay should succeed: $out"
+  assert_contains "$(cat "$LAUNCH_LOG")" "'$FAKEBIN_DIR/omp' --config '$HOME_DIR/config/omp-crew-overlay.yml' --config '$ROOT/.omp/fm-worker-overlay.yml' --auto-approve" \
+    "omp crew launch did not layer the captain crew overlay ahead of the tracked posture overlay"
+  pass "fm-spawn: a captain omp crew overlay rides crew launches beneath the tracked posture pins"
 }
 
 test_spawn_model_validation_scoped_to_listed_providers() {
@@ -224,6 +241,8 @@ test_secondmate_launch_relies_on_discovery() {
   make_fake_omp "$fakebin"
   launchlog="$world/launch.log"
   : > "$launchlog"
+  # A crew-only overlay in the primary's config must never reach a secondmate.
+  printf 'advisor:\n  enabled: true\n' > "$world/home/config/omp-crew-overlay.yml"
   # FM_BACKEND=tmux pins the fake tmux even where the developer shell carries a
   # live Herdr environment; without it auto-detection would spawn a real pane.
   out=$(PATH="$fakebin:$PATH" TMUX='fake,1,0' FM_BACKEND=tmux CLAUDECODE=1 \
@@ -242,6 +261,7 @@ test_secondmate_launch_relies_on_discovery() {
   assert_contains "$launch" "--config '$ROOT/.omp/fm-worker-overlay.yml' --auto-approve --cwd '$home'" "secondmate launch lost the posture overlay or the pinned home directory: $launch"
   assert_contains "$launch" "FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 '$fakebin/omp'" "secondmate launch lost the omp marker or executable"
   assert_contains "$launch" "FM_SUPERVISION_MODEL=extension" "an omp secondmate must run the extension supervision model"
+  assert_not_contains "$launch" "omp-crew-overlay.yml" "a secondmate launch must not carry the crew-only omp overlay"
   assert_absent "$world/home/state/sm.omp-ext.ts" "a secondmate must not receive a per-task worker extension"
   pass "fm-spawn: a real omp secondmate launch relies on auto-discovery while crewmates load one -e"
 }
@@ -792,6 +812,7 @@ EOF
 test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_spawn_launch_line_and_worker_wiring
+test_crew_overlay_layers_under_posture_for_crew_only
 test_spawn_model_validation_scoped_to_listed_providers
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated
