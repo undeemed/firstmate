@@ -752,11 +752,13 @@ test_valid_recording_and_merge_derivation() {
     || fail "canonical pr metadata was not exact"
   grep -qxF "pr_head=$expected" "$dir/home/state/task-a.meta" || fail "PR head metadata was not exact"
   # The head is read from REST, addressed by the owner, repository, and number
-  # already parsed from the URL. `gh pr view` is GraphQL, whose budget the whole
-  # fleet shares, and bin/fm-pr-merge.sh runs this path on every task merge.
+  # already parsed from the URL. `gh pr view --json headRefOid` is GraphQL, whose
+  # budget the whole fleet shares, and bin/fm-pr-merge.sh runs this path on every
+  # task merge. The direct-arm draft read is a separate `pr view --json isDraft`
+  # call that merge-path arming skips, so only the head read is asserted here.
   grep -qxF 'api repos/my-org/repo_name.with-dots/pulls/37 --jq .head.sha' "$dir/gh.log" \
     || fail "PR head was not read from the REST pull request resource"
-  assert_no_grep 'pr view' "$dir/gh.log" "PR head was read with GraphQL gh pr view"
+  assert_no_grep 'headRefOid' "$dir/gh.log" "PR head was read with GraphQL gh pr view"
   assert_no_grep 'graphql' "$dir/gh.log" "arming a PR watch made a GraphQL call"
   cmp -s "$POLL" "$dir/home/state/task-a.check.sh" || fail "published check was not byte-for-byte static"
   [ "$(file_mode "$dir/home/state/task-a.check.sh")" = 600 ] || fail "published check mode was not 0600"
