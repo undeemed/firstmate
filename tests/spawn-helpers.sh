@@ -8,8 +8,8 @@
 # generic primitives, so they live here rather than in tests/lib.sh. The git
 # fixtures the two suites build differ and stay with each suite.
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 # A fake tmux whose pane reports FM_FAKE_PANE_PATH (the pooled worktree, as if
 # `treehouse get` had already entered it) plus a no-op fake treehouse. Echoes the
@@ -39,7 +39,7 @@ fm_spawn_home() {
 	local home=$1 id=$2
 	mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
 	printf 'codex\n' >"$home/config/crew-harness"
-	printf 'brief for %s\n' "$id" >"$home/data/$id/brief.md"
+	fm_test_spawn_brief "$home" "$id"
 	touch "$home/state/.last-watcher-beat"
 }
 

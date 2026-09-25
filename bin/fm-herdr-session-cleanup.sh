@@ -12,9 +12,17 @@
 # A visible title is discovery only. Cleanup requires the exact current
 # "└ <concise-task> · p:<22-char-token>" grammar, one token occurrence across
 # the named-session snapshot, exactly one matching home-local journal, one tab,
-# one pane, absent task metadata, no registered agent, and a process proof that
-# the pane contains only one idle recognized shell with no child process. A
-# version 2 journal must also bind the exact workspace, tab, and pane.
+# one pane, task metadata that does not name this projection's own pane as the
+# task's endpoint, no registered agent, and a process proof that the pane
+# contains only one idle recognized shell with no child process. A version 2
+# journal must also bind the exact workspace, tab, and pane.
+#
+# "does not name this pane" covers both shapes a quarantined projection takes:
+# no metadata at all (a spawn that aborted before publishing an endpoint), and
+# metadata naming a DIFFERENT pane, which is what the occupied-checkout refusal
+# leaves behind - it keeps its projection on purpose, the retry then publishes a
+# flat endpoint, and the husk would otherwise be immortal. Metadata that still
+# names this pane, or that cannot be read exactly, is always disqualifying.
 # Topology is first checked from one locked API snapshot, then every mutation
 # prerequisite is immediately rechecked before the existing exact-pane
 # focus-preserving close helper is called.
@@ -60,6 +68,43 @@ fm_herdr_cleanup_title_token() { # <workspace-title>
 fm_herdr_cleanup_home_identity() {
   [ -d "$FM_HOME" ] && [ ! -L "$FM_HOME" ] || return 1
   (cd "$FM_HOME" 2>/dev/null && pwd -P)
+}
+
+# Whether this task's metadata leaves the projection retirable.
+#
+# Absent metadata is the original case: an aborted spawn that never published
+# an endpoint. But a quarantined projection also survives the OPPOSITE way. The
+# occupied-checkout refusal deliberately keeps its projection (the pane's shell
+# is sitting in the contested checkout at that moment, so closing it would
+# return the worktree and kill the claimant's worker), the operator retries, and
+# the retry publishes a FLAT endpoint. From then on the task has metadata, so a
+# gate that only accepted absent metadata could never retire that husk: it
+# stayed forever as a top-level `└ <task> · p:<token>` workspace carrying a
+# second tab labelled `fm-<task>`, which is what authoritative label-based
+# recovery matches on.
+#
+# So metadata is disqualifying only while it still names THIS projection. When
+# its endpoint pane is a different pane, the projection is provably not the
+# task's endpoint and retiring it cannot strand a live binding. Every other
+# proof this script already demands still applies: exactly one tab and pane,
+# the exact version 2 binding, no registered agent, and a lone idle childless
+# shell - a shell still inside a Treehouse subshell has that subshell as a
+# child, so the childless proof is what keeps the worktree hazard out of reach.
+fm_herdr_cleanup_meta_allows_retire() { # <task-id> <bound-pane>
+  local id=$1 bound_pane=$2 window meta
+  meta="$STATE/$id.meta"
+  if [ ! -e "$meta" ] && [ ! -L "$meta" ]; then
+    return 0
+  fi
+  # Metadata that cannot be read exactly is disqualifying, never assumed stale.
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  [ -n "$bound_pane" ] || return 1
+  window=$(sed -n 's/^window=//p' "$meta" | tail -1)
+  [ -n "$window" ] || return 1
+  # "<session>:<pane-id>", and the pane id itself contains colons.
+  fm_backend_herdr_parse_target "$window" || return 1
+  [ -n "$FM_BACKEND_HERDR_PANE" ] || return 1
+  [ "$FM_BACKEND_HERDR_PANE" != "$bound_pane" ]
 }
 
 fm_herdr_cleanup_journal_matches() { # <title> <session> <home-real>
@@ -155,7 +200,7 @@ fm_herdr_cleanup_revalidate() { # <session> <workspace> <tab> <pane> <title> <to
   local session=$1 workspace=$2 tab=$3 pane=$4 title=$5 token=$6 home_real=$7
   local journal=$8 id=$9 version=${10} bound_workspace=${11} bound_tab=${12} bound_pane=${13}
   local workspaces workspace_info tabs panes focus
-  [ ! -e "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ] || return 1
+  fm_herdr_cleanup_meta_allows_retire "$id" "$bound_pane" || return 1
   fm_herdr_cleanup_unique_match "$title" "$session" "$home_real" || return 1
   [ "$FM_HERDR_CLEANUP_JOURNAL" = "$journal" ] \
     && [ "$FM_HERDR_CLEANUP_ID" = "$id" ] \
@@ -230,7 +275,7 @@ fm_herdr_cleanup_one() { # <session> <workspace> <title> <home-real>
     return 0
   fi
 
-  if [ -e "$STATE/$id.meta" ] || [ -L "$STATE/$id.meta" ]; then
+  if ! fm_herdr_cleanup_meta_allows_retire "$id" "$bound_pane"; then
     fm_lock_release "$presentation_lock" || true
     fm_lock_release "$task_lock" || true
     return 0
@@ -277,7 +322,7 @@ fm_herdr_cleanup_one() { # <session> <workspace> <title> <home-real>
       && [ "$FM_HERDR_CLEANUP_BOUND_WORKSPACE" = "$bound_workspace" ] \
       && [ "$FM_HERDR_CLEANUP_BOUND_TAB" = "$bound_tab" ] \
       && [ "$FM_HERDR_CLEANUP_BOUND_PANE" = "$bound_pane" ] \
-      && [ ! -e "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ]; then
+      && fm_herdr_cleanup_meta_allows_retire "$id" "$bound_pane"; then
       rm -f -- "$journal" || fm_herdr_cleanup_warn "$id pane closed but its journal could not be retired"
     else
       fm_herdr_cleanup_warn "$id pane closed but its journal changed and was preserved"

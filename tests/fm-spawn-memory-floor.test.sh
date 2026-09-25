@@ -17,6 +17,7 @@ write_meminfo() {  # <available-kb>
 }
 
 run_check() {  # [env assignments...]
+  # shellcheck disable=SC2016 # $0 is expanded by the child bash, not here.
   env -i PATH="$PATH" HOME="$TMP_ROOT" FM_HOME="$HOME_DIR" FM_SPAWN_MEMORY_MEMINFO="$TMP_ROOT/meminfo" "$@" \
     bash -c '. "$0"; fm_spawn_memory_floor_check' "$ROOT/bin/fm-spawn-memory-floor-lib.sh" 2> "$TMP_ROOT/err"
 }

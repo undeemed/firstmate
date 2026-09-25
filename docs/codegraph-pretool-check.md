@@ -168,13 +168,9 @@ The check runs everywhere a Firstmate-launched agent can run a search.
 | Harness | Entry | Behavior on checker exit 2 |
 | --- | --- | --- |
 | pi and omp, every session | `extensions/fm-codegraph-guard.ts`, installed as a user-level extension. | Returns `{ block: true, reason }` so the tool call does not run. |
-| Pi primary | `.pi/extensions/fm-primary-turnend-guard.ts` `tool_call` handler chains this check after the cd-guard and watcher-arm checks. | Returns `{ block: true, reason }`. |
-| omp primary | `.omp/extensions/fm-primary-turnend-guard.ts` runs the identical chain. | Returns `{ block: true, reason }`. |
 | Claude Code | `~/.claude/settings.json` `PreToolUse` entry matching `Bash|Grep|Glob` pipes the tool payload to the checker on stdin. | Claude blocks the tool call and feeds the stderr reason back to the model. |
 
-The user-level guard is the enforcement owner for pi and omp: it is loaded by every session of both runtimes, including crewmate sessions in a task worktree and the primary session itself.
-The two primary turn-end guards resolve the checker from their own checkout and chain it for the primary's `bash` tool only.
-They are a zero-install convenience that duplicates coverage the user-level guard already provides in the same session, and they fail open on a missing or failing checker; the cannot-run policy below lives in the user-level guard alone.
+The user-level guard is the only enforcement owner for pi and omp: it is loaded by every session of both runtimes, including crewmate sessions in a task worktree and the primary session itself, so the primary turn-end guards do not chain this check.
 Each entry is independent: this check runs alongside the cd-guard and watcher-arm seatbelts, and any one deny blocks the command.
 
 ## When the guard cannot run
