@@ -22,13 +22,6 @@ ARM_FAIL_EXIT_POLLS=400
 
 TMP_ROOT=$(fm_test_tmproot fm-watcher-lock-tests)
 
-mark_pr_check_migration_complete() {
-  local state=$1
-  printf '%s\n' fm-pr-check-migration-scan-v1 > "$state/.pr-check-migration-scan-v1"
-  printf '%s\n' fm-pr-check-migration-v1 > "$state/.pr-check-migration-v1"
-  chmod 0600 "$state/.pr-check-migration-scan-v1" "$state/.pr-check-migration-v1"
-}
-
 drain_and_ack() {  # <state>
   local state=$1 err sequence generation
   err="$state/.test-drain.err"
@@ -41,6 +34,62 @@ drain_and_ack() {  # <state>
     --recovery-generation "$generation"
 }
 
+test_wait_deadline_reaps_a_stopped_child() {
+  # A stopped TERM-resistant child cannot finish graceful cleanup. The helper waited
+  # forever after its nominal deadline. An outer process-group deadline keeps
+  # this regression finite even if that bug returns.
+  python3 - "$ROOT/tests/wake-helpers.sh" <<'PY' || fail "bounded child cleanup regression"
+import os
+import signal
+import subprocess
+import sys
+
+script = r'''
+. "$1"
+bash -c 'trap "" TERM; kill -STOP "$$"; exec sleep 300' &
+pid=$!
+for i in $(seq 1 100); do
+  state=$(ps -p "$pid" -o stat=)
+  case "$state" in *T*) break ;; esac
+  sleep 0.01
+done
+case "$state" in *T*) ;; *) kill -KILL "$pid"; exit 23 ;; esac
+wait_for_exit "$pid" 2
+rc=$?
+[ "$rc" = 124 ] || exit 21
+! kill -0 "$pid" 2>/dev/null || exit 22
+'''
+p = subprocess.Popen([os.environ.get("BASH", "bash"), "-c", script, "_", sys.argv[1]],
+                     start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+try:
+    out, err = p.communicate(timeout=15)
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL)
+    p.communicate()
+    raise SystemExit("wait_for_exit hung after its deadline on a stopped child")
+if p.returncode or "survived TERM; sending KILL" not in err:
+    raise SystemExit(f"cleanup rc={p.returncode}, stdout={out}, stderr={err}")
+PY
+  pass "wait deadline diagnoses and reaps a stopped test child without hanging"
+}
+
+# Preserve the real watcher's trap diagnostics when testing its termination.
+# A termination defect should fail this case promptly, not occupy a CI runner
+# until the whole job times out and hides every following test.
+stop_seed_watcher() {  # <owned-pid> <output-path>
+  local pid=$1 out=$2 status=0
+  kill -TERM "$pid" 2>/dev/null || true
+  wait_for_exit "$pid" 100 || status=$?
+  if [ "$status" -eq 124 ]; then
+    cat "$out" >&2
+    fail "seed watcher survived TERM; see bounded wait/process/trap evidence above"
+  fi
+  if grep -E 'unexpected EOF|syntax error' "$out" >/dev/null; then
+    cat "$out" >&2
+    fail "seed watcher emitted a shell parser error during termination"
+  fi
+}
+
 test_singleton_start() {
   local dir state fakebin out1 out2 pid1 pid2 live i
   dir=$(make_case singleton)
@@ -48,7 +97,6 @@ test_singleton_start() {
   fakebin="$dir/fakebin"
   out1="$dir/watch-one.out"
   out2="$dir/watch-two.out"
-  mark_pr_check_migration_complete "$state"
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out1" &
   pid1=$!
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out2" &
@@ -114,7 +162,6 @@ test_live_stale_watch_lock_is_actionable() {
   fakebin="$dir/fakebin"
   out="$dir/watch.out"
   err="$dir/watch.err"
-  mark_pr_check_migration_complete "$state"
   mkdir "$state/.watch.lock"
   printf '%s\n' "$$" > "$state/.watch.lock/pid"
   touch -t 200001010000 "$state/.last-watcher-beat"
@@ -125,18 +172,6 @@ test_live_stale_watch_lock_is_actionable() {
   pass "live watcher lock with stale heartbeat is actionable"
 }
 
-# Run one guard fixture with the primary harness pinned to claude.
-# Setting CLAUDECODE=1 is NOT by itself a pin: bin/fm-harness.sh tests cursor's
-# and omp's markers BEFORE claude's, and omp exports OMPCODE=1 and CLAUDECODE=1
-# together into every child it spawns, so a host runner carrying OMPCODE,
-# CURSOR_AGENT, or CURSOR_INVOKED_AS re-resolves the harness and changes the
-# repair guidance the guard prints. Clear every foreign identity marker first,
-# then set only the one this fixture wants.
-guard_as_claude() {
-  env -u OMPCODE -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u FM_PI_HARNESS \
-    CLAUDECODE=1 PI_CODING_AGENT='' GROK_AGENT='' "$@"
-}
-
 test_guard_warnings() {
   # The guard's two operator-visible states, with resilient substrings instead of
   # four copy-coupled tests:
@@ -145,19 +180,25 @@ test_guard_warnings() {
   #       warning follows it, and the guidance is repair-after-drain (never the
   #       old conflicting "restart NOW first").
   #   (2) a fresh watcher and an empty queue: total silence.
-  local dir state err first banner_line queue_line pid identity
+  local dir state err first banner_line queue_line pid identity blind
   dir=$(make_case guard)
+  # The repair line the cases below assert is the CLAUDE one, so detect_own has to
+  # answer claude. A marker alone no longer pins that: a structural ancestor of a
+  # different harness outranks it, so the harness this suite was launched from
+  # would otherwise choose the wording. Blind the ancestry walk as well; every
+  # other ps query (watcher liveness below) still reaches the real ps.
+  blind=$(fm_fakebin "$dir/blind")
+  fm_fake_blind_ancestry "$blind"
   state="$dir/state"
   err="$dir/guard.err"
 
   # (1) watcher down (no beacon) + two in-flight tasks + a queued wake.
   # FM_ROOT_OVERRIDE points the worktree-tangle check at a non-git dir so it stays
   # inert here; this case is about the watcher-down banner, not the tangle guard.
-  # Pin Claude so the host test runner's harness ancestry cannot change this fixture.
   printf 'project=x\n' > "$state/task.meta"
   printf 'project=y\n' > "$state/task2.meta"
   append_wake "$state" heartbeat heartbeat heartbeat || fail "guard heartbeat append failed"
-  guard_as_claude FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
+  PATH="$blind:$PATH" CLAUDECODE=1 PI_CODING_AGENT='' GROK_AGENT='' FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
   first=$(grep -v '^[[:space:]]*$' "$err" | head -1)
   case "$first" in
     '●'*) ;;
@@ -183,7 +224,7 @@ test_guard_warnings() {
   mkdir -p "$dir/config"
   printf 'project=x\n' > "$state/task.meta"
   : > "$dir/config/x-mode.env"
-  guard_as_claude FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
+  PATH="$blind:$PATH" CLAUDECODE=1 PI_CODING_AGENT='' GROK_AGENT='' FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
   grep -F "source '$dir/config/x-mode.env' first" "$err" >/dev/null || fail "guard repair line did not source the X-mode cadence config"
 
   # (2) live watcher plus fresh beacon, empty queue -> silence.
@@ -445,7 +486,6 @@ test_watch_restart_rejects_reused_pid() {
   state="$dir/state"
   fakebin="$dir/fakebin"
   out="$dir/restart.out"
-  mark_pr_check_migration_complete "$state"
   sleep 300 &
   live=$!
   mkdir "$state/.watch.lock"
@@ -478,7 +518,6 @@ test_watch_restart_attaches_to_healthy_peer() {
   fakebin="$dir/fakebin"
   out="$dir/restart.out"
   peer_ready="$dir/peer.ready"
-  mark_pr_check_migration_complete "$state"
   node -e 'const fs = require("node:fs"); process.on("SIGTERM", () => {}); fs.writeFileSync(process.argv[1], "ready\n"); setTimeout(() => {}, 300000)' "$peer_ready" &
   peer=$!
   i=0
@@ -554,7 +593,6 @@ test_arm_self_eviction_is_loud_without_successor() {
   state="$dir/state"
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
-  mark_pr_check_migration_complete "$state"
   # The arm's confirmation budget bounds a REAL child startup (fork, exec, lock
   # acquisition, beacon publication), so this case holds the arm to production's
   # own budget rather than a shrunken fixture one: a one-second budget turned
@@ -593,7 +631,7 @@ test_arm_attaches_and_waits_for_live_fresh_watcher() {
   out="$dir/watch.out"
   armout="$dir/arm.out"
   # A genuinely live watcher with a fresh beacon already holds the singleton.
-  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2>&1 &
   wpid=$!
   i=0
   while [ "$i" -lt 60 ]; do
@@ -618,8 +656,7 @@ test_arm_attaches_and_waits_for_live_fresh_watcher() {
   [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] || fail "arm disturbed the healthy watcher's lock"
   is_live_non_zombie "$armpid" || fail "arm exited while the seed watcher was still healthy"
   # After the seed dies without a successor, the attached arm must fail loudly.
-  kill "$wpid" 2>/dev/null || true
-  wait "$wpid" 2>/dev/null || true
+  stop_seed_watcher "$wpid" "$out"
   wait_for_exit "$armpid" 80
   status=$?
   [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail "attached arm did not fail after seed died (status $status)"
@@ -634,7 +671,7 @@ test_attached_arm_signal_is_recorded_in_cycle_ledger() {
   fakebin="$dir/fakebin"
   out="$dir/watch.out"
   armout="$dir/arm.out"
-  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2>&1 &
   wpid=$!
   i=0
   while [ "$i" -lt 60 ]; do
@@ -659,8 +696,7 @@ test_attached_arm_signal_is_recorded_in_cycle_ledger() {
   grep -q "arm_pid=$armpid.*watcher_pid=$wpid.*origin=attached.*exit_code=143.*signal=TERM.*reason=arm-interrupted" "$state/.watch-cycle-exits.log" \
     || fail "attached arm signal was not recorded in the lifecycle ledger"
   is_live_non_zombie "$wpid" || fail "signaling an attached arm terminated the peer watcher"
-  kill "$wpid" 2>/dev/null || true
-  wait "$wpid" 2>/dev/null || true
+  stop_seed_watcher "$wpid" "$out"
   pass "attached arm signals record a classified lifecycle entry"
 }
 
@@ -757,9 +793,6 @@ test_arm_propagates_immediate_wake_before_confirmation() {
   armout="$dir/arm.out"
   drain_out="$dir/drain.out"
   check_file="$state/task.check.sh"
-  printf '%s\n' fm-pr-check-migration-scan-v1 > "$state/.pr-check-migration-scan-v1"
-  printf '%s\n' fm-pr-check-migration-v1 > "$state/.pr-check-migration-v1"
-  chmod 0600 "$state/.pr-check-migration-scan-v1" "$state/.pr-check-migration-v1"
   cat > "$check_file" <<'SH'
 #!/usr/bin/env bash
 printf 'merged: https://example.test/pr/7\n'
@@ -789,7 +822,6 @@ test_arm_waits_for_peer_beacon_after_child_stands_down() {
   state="$dir/state"
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
-  mark_pr_check_migration_complete "$state"
   sleep 300 &
   peer=$!
   identity=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$peer") || fail "could not identify peer pid"
@@ -841,7 +873,6 @@ test_arm_fails_loud_when_no_fresh_watcher_confirmable() {
   state="$dir/state"
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
-  mark_pr_check_migration_complete "$state"
   sleep 300 &
   live=$!
   # A live process holds the lock but is NOT a confirmable watcher (no identity),
@@ -872,7 +903,6 @@ test_cycle_exit_ledger_links_successor_and_stays_bounded() {
   fakebin="$dir/fakebin"
   armout="$dir/first-arm.out"
   check_file="$state/task.check.sh"
-  mark_pr_check_migration_complete "$state"
   cat > "$check_file" <<'SH'
 #!/usr/bin/env bash
 printf 'done: synthetic cycle\n'
@@ -943,7 +973,6 @@ test_stopped_watcher_is_live_but_stale_then_exit_is_classified() {
   state="$dir/state"
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
-  mark_pr_check_migration_complete "$state"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" &
   armpid=$!
   i=0
@@ -1030,6 +1059,35 @@ SH
     pass "real ps fallback locale check skipped where ps -o lstart= is unsupported"
   fi
   pass "fm_pid_identity is locale-invariant across LC_ALL/LC_TIME"
+}
+
+test_pid_identity_is_terminal_width_invariant() {
+  # The portable fallback records its identity from a wide shell (the arm or
+  # watcher process) but re-reads it inside a narrow-COLUMNS hook, where ps cuts
+  # the command column to the ambient width unless the fallback pins COLUMNS wide.
+  # A truncated command then never equals the recorded one and every fleet command
+  # is denied (issue #799). A long sleep argument makes the cut visible on GNU and
+  # BSD ps alike, so both readings must be byte-identical and carry the whole command.
+  local live no_proc narrow wide
+  local long_arg=300.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+  no_proc="$TMP_ROOT/no-width-proc"
+  if ! LC_ALL=C ps -p "$$" -o lstart= -o command= >/dev/null 2>&1; then
+    pass "terminal-width check skipped where ps -o lstart= is unsupported"
+    return
+  fi
+  sleep "$long_arg" &
+  live=$!
+  narrow=$(COLUMNS=20 FM_PROC_ROOT_OVERRIDE="$no_proc" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
+  wide=$(COLUMNS=1000 FM_PROC_ROOT_OVERRIDE="$no_proc" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
+  kill "$live" 2>/dev/null || true
+  wait "$live" 2>/dev/null || true
+  [ -n "$wide" ] || fail "fm_pid_identity produced no identity under a wide COLUMNS"
+  case "$wide" in
+    *"sleep $long_arg"*) ;;
+    *) fail "fm_pid_identity dropped the full command under a wide COLUMNS (got '$wide')" ;;
+  esac
+  [ "$narrow" = "$wide" ] || fail "fm_pid_identity varied with COLUMNS (narrow '$narrow', wide '$wide')"
+  pass "fm_pid_identity ps fallback is terminal-width-invariant"
 }
 
 write_fake_proc_identity() {
@@ -1133,8 +1191,10 @@ test_msys_pid_identity_uses_proc() {
   pass "MSYS process identity uses compatible /proc fields"
 }
 
+test_wait_deadline_reaps_a_stopped_child
 test_singleton_start
 test_pid_identity_is_locale_invariant
+test_pid_identity_is_terminal_width_invariant
 test_proc_pid_identity_ignores_wall_clock_and_detects_pid_reuse
 test_msys_pid_identity_uses_proc
 test_stale_watch_lock_reclaimed

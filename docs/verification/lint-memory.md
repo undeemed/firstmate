@@ -7,7 +7,7 @@ Owner of the regression pin: `tests/fm-lint.test.sh`.
 ## What this record supports
 
 `bin/fm-lint.sh` runs every ShellCheck process under an address-space ceiling
-(`FM_LINT_MEMORY_LIMIT_KIB`, default 6291456 KiB = 6 GiB) and every canonical root fits inside it.
+(`FM_LINT_MEMORY_LIMIT_KIB`, default 16777216 KiB = 16 GiB) and every canonical root fits inside it.
 
 ShellCheck's memory cost is roughly linear in the total number of lines it analyses, at about 130 KiB of resident memory per line on this build.
 `--external-sources` inlines a module once per `# shellcheck source=` directive, so a root that imports the same module more than once pays for that module's entire graph every time.
@@ -49,6 +49,18 @@ The "before" column is the same measurement on the pre-fix tree under a 6 GiB ce
 
 Reported uncapped by the worker this fix unblocked: 14.4 GB RSS over 2 h 45 min, all 51 GB of swap consumed, load average 34.
 
+## Ceiling raised to 16 GiB (2026-09-23)
+
+Upstream's supervision modules have since grown `bin/fm-teardown.sh`'s and `tests/fm-pending-reply.test.sh`'s source graphs, and both roots then failed under the 10 GiB ceiling.
+Each root linted alone through `bin/fm-lint.sh <root>` under a 20 GiB ceiling, sampling the ShellCheck process once per second:
+
+```
+bin/fm-teardown.sh               rc=0 peak_vsz_kib=14075648 peak_rss_kib=7446116
+tests/fm-pending-reply.test.sh   rc=0 peak_vsz_kib=14075648 peak_rss_kib=8866480
+```
+
+The address-space reservation, not the resident set, is what RLIMIT_AS bounds, so the default is 16 GiB.
+
 ## Full canonical lint
 
 ```
@@ -89,4 +101,4 @@ bash tests/fm-lint.test.sh
 CI=true bin/fm-lint.sh --telemetry /tmp/fm-lint-telemetry.tsv
 ```
 
-The first command is the enforced pin: it fails if a canonical root stops fitting the 6 GiB ceiling, and it fails if an oversized root is skipped instead of named.
+The first command is the enforced pin: it fails if a canonical root stops fitting the 16 GiB ceiling, and it fails if an oversized root is skipped instead of named.

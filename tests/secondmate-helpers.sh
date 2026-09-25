@@ -26,14 +26,68 @@ make_fake_tmux() {
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
-  has-session|new-session|new-window|send-keys|kill-window)
+  kill-window)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    # A closed window stops being listed, exactly as tmux behaves, so a
+    # teardown that verifies its endpoint closed can observe the close.
+    prev=
+    for arg in "$@"; do
+      if [ "$prev" = -t ]; then
+        # tmux exact-match targets arrive as "=session:=window".
+        killed=${arg//=/}
+        printf '%s\n' "$killed" >> "$FM_FAKE_TMUX_LOG.killed"
+        break
+      fi
+      prev=$arg
+    done
+    exit 0
+    ;;
+  has-session|new-session|new-window)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
     exit 0
     ;;
+  send-keys)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    prev=
+    for arg in "$@"; do
+      if [ "$prev" = -l ]; then
+        case "$arg" in
+          ". '"*"'")
+            staged=${arg#". '"}
+            staged=${staged%"'"}
+            [ ! -f "$staged" ] || printf 'staged-launch %s\n' "$(cat "$staged")" >> "$FM_FAKE_TMUX_LOG"
+            ;;
+        esac
+      fi
+      prev=$arg
+    done
+    exit 0
+    ;;
   list-windows)
-    if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
-      printf '%s\n' "$FM_FAKE_TMUX_WINDOW"
-    fi
+    session=
+    prev=
+    for arg in "$@"; do
+      if [ "$prev" = -t ]; then session=$arg; break; fi
+      prev=$arg
+    done
+    while IFS= read -r recorded; do
+      [ -n "$recorded" ] || continue
+      if [ -f "$FM_FAKE_TMUX_LOG.killed" ] &&
+        grep -qxF "$recorded" "$FM_FAKE_TMUX_LOG.killed"; then
+        continue
+      fi
+      if [ -z "$session" ]; then
+        printf '%s\n' "$recorded"
+        continue
+      fi
+      case "$recorded" in
+        "$session":*) printf '%s\n' "${recorded#*:}" ;;
+        *:*) ;;
+        *) printf '%s\n' "$recorded" ;;
+      esac
+    done <<EOF
+${FM_FAKE_TMUX_WINDOW:-}
+EOF
     exit 0
     ;;
   display-message)

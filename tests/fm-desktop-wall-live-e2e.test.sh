@@ -11,12 +11,14 @@
 #   - RFB connections to that desktop's port, which must be exactly 1
 set -u
 
-if [ "${FM_DESKTOP_WALL_LIVE_E2E:-0}" != 1 ]; then
-	echo "skip: set FM_DESKTOP_WALL_LIVE_E2E=1 to run the live desktop-wall reconnect guard"
-	exit 0
-fi
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# One shared opt-in gate for every live guard, so FM_LIVE=0 and a missing tool
+# both report the same way (tests/fm-live-gate.test.sh asserts it).
+fm_live_gate opt-in FM_DESKTOP_WALL_LIVE_E2E python3
 
 fail() {
 	printf 'not ok - %s\n' "$1" >&2

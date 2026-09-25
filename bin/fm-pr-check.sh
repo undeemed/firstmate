@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
 # Record a PR-ready task: store one validated canonical pr=<url> and the forge's
 # exact pr_head=<sha> when available, then atomically arm a static merge poll.
+# Refuses when bin/fm-dod-lib.sh will not accept the named head as reachable
+# outside the worker's disposable copy; in no-mistakes mode a forge-reported
+# head is that named head and is already stored on the forge.
 # The watcher check source is byte-for-byte bin/fm-pr-poll.sh; task and PR data
 # live only in a private sidecar and are never interpolated into shell source.
-# A GitHub pull request URL and a GitLab merge request URL are both accepted,
-# including a merge request on a self-hosted GitLab instance.
+# A GitHub pull request URL, a GitLab merge request URL, and a Gerrit change URL
+# are all accepted, including a merge request or change on a self-hosted
+# instance.
+# A GitHub pull request the forge reports as a draft is refused, naming the draft
+# state and recording and arming nothing: a draft cannot be merged, so a poll armed on it
+# would wait for an event that cannot occur while nobody is asked to act.
+# Mark the pull request ready for review, then arm again; a lane that keeps a
+# draft on purpose declares a wait instead of reporting done. An unreadable
+# draft state does not refuse, matching how the head read below is optional.
+# bin/fm-pr-merge.sh records through this script with FM_PR_CHECK_MERGE=1 and
+# skips this refusal, because its own merge-time draft refusal is authoritative.
 #
 # This is also the one point that enforces a task's declared PR body contract.
 # The pipeline that opens a PR composes the published body itself, so body
@@ -38,6 +50,10 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-forge-audit-lib.sh
 . "$SCRIPT_DIR/fm-forge-audit-lib.sh"
+# shellcheck source=bin/fm-parent-channel-lib.sh
+. "$SCRIPT_DIR/fm-parent-channel-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -73,26 +89,48 @@ fm_pr_poll_retirement_recover_one "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" || 
   exit 1
 }
 
-# Refuse to arm a GitLab watch with no glab on PATH. The poll is silent on
+# Refuse to arm a watch with no CLI on PATH to read it. The poll is silent on
 # every error by design, so a missing CLI would be indistinguishable from a
-# merge request that is never merged. Arming is the one point where that can be
+# change that is never merged. Arming is the one point where that can be
 # reported, so the absent tool stops the watch here instead of watching nothing.
+# The Gerrit poll also needs jq, because Gerrit's status has to be read out of a
+# structured record rather than off a rendered line: the tool's own table prints
+# a change's subject before its status, and a subject is free text.
 if [ "$PROVIDER" = gitlab ] && ! command -v glab >/dev/null 2>&1; then
   echo "error: watching a GitLab merge request requires glab on PATH" >&2
   exit 1
 fi
+if [ "$PROVIDER" = gerrit ]; then
+  if ! command -v gerrit-axi >/dev/null 2>&1; then
+    echo "error: watching a Gerrit change requires gerrit-axi on PATH" >&2
+    exit 1
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "error: watching a Gerrit change requires jq on PATH" >&2
+    exit 1
+  fi
+fi
 
-# Neutralize any pre-fix poll before recording or arming this task. The
-# migration never executes legacy artifacts and holds watcher exclusion while
-# it quarantines or rebuilds them.
-"$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || exit 1
+# The draft state is read before anything is recorded or armed. Only a positive
+# draft reading refuses, because an unreadable one must not block arming.
+if [ "$PROVIDER" = github ] && [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  DRAFT_JSON=$(gh pr view "$URL" --json isDraft 2>/dev/null || true)
+  if [ "$(fm_pr_json_draft_state "$DRAFT_JSON")" = true ]; then
+    echo "error: $URL is a draft pull request; a draft cannot be merged, so merge monitoring would wait for an event that cannot occur - mark it ready for review and arm again, or declare a wait instead of done if the draft is deliberate" >&2
+    exit 1
+  fi
+fi
+
 "$FM_ROOT/bin/fm-guard.sh" || true
 
 # pr_head is recorded only when the forge's CLI can supply it. gh reads the head
 # commit straight from the REST pull request resource, addressed by the owner,
 # repository, and number already parsed from the URL; plain glab exposes it only
 # inside its JSON output, which would need a JSON processor firstmate does not
-# require, so a GitLab task records no pr_head.
+# require, so a GitLab task records no pr_head, and neither does a Gerrit task:
+# a Gerrit revision names one patch set, every amend or rebase is a new patch
+# set, and bin/fm-review-diff.sh has no Gerrit path to resolve a current head
+# with, so a recorded revision would silently become the reviewed content.
 # That read is REST rather than `gh pr view --json headRefOid`, which is
 # GraphQL: bin/fm-pr-merge.sh runs this script on every task-class merge, the
 # fleet's busiest GitHub path, so it must not spend the scarcer shared GraphQL
@@ -100,13 +138,18 @@ fi
 # Both consumers already treat pr_head as optional:
 # bin/fm-teardown.sh reads the head from the forge at teardown rather than from
 # metadata and falls back to its provider-agnostic content check, and
-# bin/fm-review-diff.sh resolves the head from the remote when none is recorded.
+# bin/fm-review-diff.sh fetches a pull request head from the remote when none is
+# recorded and otherwise diffs the local branch, which is the current content.
 # bin/fm-pr-merge.sh reads a GitLab head live at merge time for the same reason,
 # and treats a recorded value that disagrees as stale rather than authoritative.
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
   if REMOTE_HEAD=$(cd "$WT" && gh api "repos/$OWNER/$REPO/pulls/$NUMBER" --jq .head.sha 2>/dev/null) \
+    && fm_pr_head_valid "$REMOTE_HEAD"; then
+    PR_HEAD=$REMOTE_HEAD
+  # Only a REST read that yields no head spends the GraphQL read upstream uses.
+  elif REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
@@ -217,6 +260,14 @@ audience_refuse() {  # <reason>
 # need a JSON processor firstmate does not require.
 if [ "$PROVIDER" = github ] && ! audience_repo_is_firstmate; then
   # Reuse the declared contract's final read-back when it made one.
+  if [ -z "${PUBLISHED+x}" ] && ! command -v gh >/dev/null 2>&1; then
+    # No reader on this host at all, so the wording check cannot run. Say so and
+    # continue: refusing here would block every gh-less path for a lint on
+    # prose, while a host that HAS gh and still cannot read the body is a real
+    # forge problem and still refuses below.
+    echo "warning: task $ID recorded $URL without the published-body vocabulary check, because gh is not available to read the body back" >&2
+    PUBLISHED=
+  fi
   [ -n "${PUBLISHED+x}" ] || PUBLISHED=$(body_read_published) \
     || audience_refuse "its published body could not be read back over REST to check it for fleet-internal vocabulary"
   AUDIENCE_HITS=$(printf '%s\n' "$PUBLISHED" \
@@ -226,12 +277,34 @@ if [ "$PROVIDER" = github ] && ! audience_repo_is_firstmate; then
     || audience_refuse "its published body carries fleet-internal vocabulary that must be rewritten in the project's own words first: $AUDIENCE_HITS"
 fi
 
+KIND=$(grep '^kind=' "$META" | tail -1 | cut -d= -f2- || true)
+MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
+PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+# The gate is asked about the ready report this task's worker was told to give;
+# on a Gerrit change both publishing modes report the same published line.
+case "$PROVIDER:$MODE" in
+  gerrit:*) DONE_LINE="done: PR $URL published for review" ;;
+  *:no-mistakes|*:) DONE_LINE="done: PR $URL checks green" ;;
+  *) DONE_LINE="done: PR $URL" ;;
+esac
+if { [ -z "$PR_HEAD" ] || ! fm_dod_forge_head_is_named_head "$MODE"; } \
+  && ! GATE_REASON=$(fm_dod_accept_ship_done "${KIND:-ship}" "$MODE" "$WT" "$PROJECT" "$DONE_LINE" "$STATE" "$ID" "$META"); then
+  echo "error: $GATE_REASON" >&2
+  exit 1
+fi
+
 META_TMP=
 META_LOCK=
 META_LOCK_HELD=0
+PR_POLL_PUBLISH_LOCK=
+PR_POLL_PUBLISH_LOCK_HELD=0
 pr_check_cleanup() {
   fm_pr_poll_cleanup
   [ -z "$META_TMP" ] || rm -f -- "$META_TMP"
+  if [ "$PR_POLL_PUBLISH_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$PR_POLL_PUBLISH_LOCK" || true
+    PR_POLL_PUBLISH_LOCK_HELD=0
+  fi
   if [ "$META_LOCK_HELD" = 1 ]; then
     fm_lock_release "$META_LOCK" || true
     META_LOCK_HELD=0
@@ -276,8 +349,47 @@ fm_pr_metadata_identity_parse "$META" || exit 1
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
 
-fm_pr_poll_publish_prepared || {
+PR_POLL_PUBLISH_LOCK="$STATE/.pr-poll-publish-$ID.lock"
+fm_lock_acquire_wait "$PR_POLL_PUBLISH_LOCK"
+PR_POLL_PUBLISH_LOCK_HELD=1
+if fm_pr_poll_publish_prepared; then
+  fm_lock_release "$PR_POLL_PUBLISH_LOCK" || exit 1
+  PR_POLL_PUBLISH_LOCK_HELD=0
+else
+  fm_lock_release "$PR_POLL_PUBLISH_LOCK" || exit 1
+  PR_POLL_PUBLISH_LOCK_HELD=0
   echo "error: could not publish PR poll" >&2
   exit 1
-}
+fi
+# Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
+# The merge-time re-record is not a new review-ready PR, so it writes nothing.
+[ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/fleet-ledger" ] || [ "${FM_PR_CHECK_MERGE:-}" = 1 ] \
+  || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-fleet-ledger.sh" pr_ready "$ID" "$URL" || true
+# The contribution observer uses the same authenticated check mechanism and
+# owns verdict freshness, required actors and external feedback separately from
+# the exact merged-state poll. Registration is local and performs no forge read.
+if command -v jq >/dev/null 2>&1; then
+  "$SCRIPT_DIR/fm-contributions.sh" arm >/dev/null \
+    || printf 'contributions: observation not armed; coverage is unconfirmed\n' >&2
+else
+  printf 'contributions: jq unavailable; coverage is unconfirmed\n' >&2
+fi
+# In a secondmate home the registration itself is a captain-facing fact:
+# publish the child's PR-ready line with the canonical URL just recorded, so it
+# reaches the parent whether or not the mate model appends anything
+# (bin/fm-parent-channel-lib.sh). A main home has no channel and this is a
+# silent no-op there. The poll is armed either way; a channel that cannot be
+# written is reported as actionable, and bin/fm-inactive-reconcile.sh still
+# delivers the child's own ready line on the next supervision poll.
+READY_LINE="done [key=child-pr-$ID]: child $ID PR ready: $URL"
+PR_MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
+PR_YOLO=$(grep '^yolo=' "$META" | tail -1 | cut -d= -f2- || true)
+[ -z "$PR_MODE" ] || READY_LINE="$READY_LINE mode=$(fm_parent_channel_clean_note "$PR_MODE")"
+[ -z "$PR_YOLO" ] || READY_LINE="$READY_LINE yolo=$(fm_parent_channel_clean_note "$PR_YOLO")"
+READY_RC=0
+fm_parent_channel_report "$FM_HOME" "$STATE" "$READY_LINE" || READY_RC=$?
+case "$READY_RC" in
+  0|1) ;;
+  *) printf 'actionable: PR %s is registered but its ready line did not reach the parent channel (rc=%s)\n' "$URL" "$READY_RC" >&2 ;;
+esac
 printf 'armed: state/%s.check.sh\n' "$ID"

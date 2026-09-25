@@ -26,6 +26,13 @@
 #      reply, and stops being folded as an open blocker
 #  14. Settled records are archived on the retention policy while open ones and
 #      unconverged closes are always kept in place
+#  15. A same-basename self-home corr= line is restatement-copied onto the parent
+#      channel and resolves, including after recovery delivery fails, instead of
+#      escalating as a false miss
+#  16. The mechanical helper writes the parent channel from (verb, corr, note)
+#  17. Remote parent-replies.status is not classified as wrong-home
+#  18. An escalated correlation stays retryable while undelivered, is never reset
+#      once delivered, and its delivery-unknown decision still closes on resolve
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -88,6 +95,20 @@ setup_parent() {  # <name> -> home
   printf '%s\n' "$home"
 }
 
+# Seed a local secondmate home bound to <parent> with identity <id>.
+bind_local_mate() {  # <parent-home> <id> -> mate-home
+  local parent=$1 id=$2 mate
+  mate="$TMP_ROOT/${id}-home-$RANDOM"
+  mkdir -p "$mate/state"
+  printf '%s\n' "$id" > "$mate/.fm-secondmate-home"
+  cat > "$mate/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$parent
+EOF
+  printf '%s\n' "$mate"
+}
+
 run_send() {
   local fb=$1 home=$2 log=$3; shift 3
   : > "$log"
@@ -105,6 +126,16 @@ phase_of() {  # <state> <corr>
 # the wake drain and the fleet snapshot consume.
 open_decisions() {  # <status-file>
   bash -c '. "$1"; status_open_decisions "$2"' _ "$ROOT/bin/fm-classify-lib.sh" "$1"
+}
+
+# A local steer now rides the durable steering inbox rather than the typed
+# channel, so marker/corr assertions read the latest enqueued record through
+# the production owner (bin/fm-task-inbox-lib.sh).
+latest_record_body() {  # <home> <task>
+  local rec
+  rec=$(find "$1/state/$2.inbox" -maxdepth 1 -name '*.msg' 2>/dev/null | sort | tail -1)
+  [ -n "$rec" ] || return 1
+  bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$rec"
 }
 
 # --- tests ------------------------------------------------------------------
@@ -293,7 +324,7 @@ test_second_missed_turn_escalates_once_and_stays_durable() {
   [ "$(phase_of "$state" "$corr")" = escalated ] || fail "phase should be escalated"
   status_line=$(tail -1 "$state/hibit.status")
   case "$status_line" in
-    "blocked [key=pending-reply-$corr]:"*pending-reply-missed:*pending-reply-id=$corr*) : ;;
+    "blocked [key=pending-reply-$corr]"*pending-reply-missed:*pending-reply-id=$corr*) : ;;
     *) fail "parent status should carry one blocked missed-report line"$'\n'"$status_line" ;;
   esac
   [ ! -s "$state/.wake-queue" ] || fail "direct escalation must not enqueue a duplicate check wake"
@@ -303,7 +334,7 @@ test_second_missed_turn_escalates_once_and_stays_durable() {
     :
   fi
   [ "$(phase_of "$state" "$corr")" = escalated ] || fail "phase must stay escalated"
-  escalations=$(grep -Fc "blocked [key=pending-reply-$corr]:" "$state/hibit.status")
+  escalations=$(grep -Fc "blocked [key=pending-reply-$corr]" "$state/hibit.status")
   [ "$escalations" = 1 ] || fail "missed recovery should publish one escalation, got $escalations"
   # Durable record retained (never silently expired).
   rec=$(fm_pending_reply_path "$state" "$corr")
@@ -327,8 +358,7 @@ seen_gate() {  # <state> <file>: 0 when every byte is already announced
 }
 prime_seen() {  # <state> <file>
   FM_STATE_OVERRIDE="$1" bash -c '
-    . "$1"; sig=$(fm_wake_signal_sig "$3") || exit 1
-    printf "%s" "$sig" > "$(fm_wake_signal_seen_path "$2" "$3")"
+    . "$1"; fm_wake_status_mark_current "$2" "$3"
   ' _ "$ROOT/bin/fm-wake-lib.sh" "$1" "$2"
 }
 
@@ -389,7 +419,7 @@ test_escalation_publication_failure_retries() {
   rmdir "$target"
   fm_pending_reply_maybe_escalate "$state" "$corr" || fail "escalation retry should succeed"
   [ "$(phase_of "$state" "$corr")" = escalated ] || fail "successful retry should commit escalation"
-  escalations=$(grep -Fc "blocked [key=pending-reply-$corr]:" "$target")
+  escalations=$(grep -Fc "blocked [key=pending-reply-$corr]" "$target")
   [ "$escalations" = 1 ] || fail "successful retry should publish exactly once, got $escalations"
   pass "failed escalation publication remains retryable and publishes once"
 }
@@ -409,7 +439,7 @@ test_legacy_escalation_closes_default_decision() {
   printf 'done [corr=%s]: delayed legacy reply\n' "$corr" >> "$state/hibit.status"
 
   fm_pending_reply_try_resolve "$state" "$corr" || fail "legacy reply should resolve its record"
-  [ "$(grep -Fc "resolved [key=default]: pending-reply-resolved: task=hibit pending-reply-id=$corr" "$state/hibit.status")" -eq 1 ] \
+  [ "$(sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" | grep -Fc "resolved [key=default]: pending-reply-resolved: task=hibit pending-reply-id=$corr")" -eq 1 ] \
     || fail "legacy escalation did not append one guarded default-key resolution"
   open=$(status_open_decisions "$state/hibit.status")
   [ -z "$open" ] || fail "resolved legacy escalation remained open: $open"
@@ -434,7 +464,7 @@ test_legacy_escalation_does_not_close_taken_default_decision() {
   printf 'done [corr=%s]: delayed legacy reply\n' "$corr" >> "$state/hibit.status"
 
   fm_pending_reply_try_resolve "$state" "$corr" || fail "legacy reply should resolve its record"
-  if grep -Fq 'resolved [key=default]: pending-reply-resolved:' "$state/hibit.status"; then
+  if grep -Fq 'resolved [key=default]' "$state/hibit.status"; then
     fail "legacy escalation emitted an unsafe default-key resolution"
   fi
   fm_pending_reply_tick "$state" || fail "legacy close retry failed"
@@ -466,7 +496,7 @@ test_foreign_blocker_is_not_selected_as_escalation() {
     "pending-reply closure cleared the foreign release decision"
   assert_not_contains "$open" "pending-reply-$corr" \
     "genuine keyed escalation remained open"
-  assert_no_grep 'resolved [key=release]: pending-reply-resolved:' "$state/hibit.status" \
+  assert_no_grep 'resolved [key=release]' "$state/hibit.status" \
     "foreign release decision was selected as the pending-reply escalation"
   [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
     || fail "genuine keyed escalation closure was not recorded"
@@ -637,7 +667,7 @@ test_delivery_confirmation_fallback_reconciles() {
       || fail "delivery uncertainty should use its distinct escalation"
     fm_pending_reply_tick_one "$state" "$prepared_corr" unknown \
       || fail "repeated delivery-unknown tick should be inert"
-    escalations=$(grep -Fc "blocked [key=pending-reply-$prepared_corr]:" "$state/hibit.status")
+    escalations=$(grep -Fc "blocked [key=pending-reply-$prepared_corr]" "$state/hibit.status")
     [ "$escalations" = 1 ] \
       || fail "delivery-unknown escalation should publish once, got $escalations"
     printf 'done [corr=%s]: late report proves delivery\n' "$prepared_corr" >> "$state/hibit.status"
@@ -646,7 +676,7 @@ test_delivery_confirmation_fallback_reconciles() {
       || fail "late report should resolve escalated delivery-unknown"
     [ "$(fm_pending_reply_get "$prepared_rec" delivered_epoch)" = 5760 ] \
       || fail "late report should provide delivery evidence"
-    escalations=$(grep -Fc "blocked [key=pending-reply-$prepared_corr]:" "$state/hibit.status")
+    escalations=$(grep -Fc "blocked [key=pending-reply-$prepared_corr]" "$state/hibit.status")
     [ "$escalations" = 1 ] || fail "late report must not re-escalate delivery-unknown"
     fm_pending_reply_tick "$state" || fail "resolved late report should remain idempotent"
     [ "$(phase_of "$state" "$prepared_corr")" = resolved ] \
@@ -688,12 +718,12 @@ test_delivery_confirmation_serializes_with_reconciliation() {
     entered="$home/mark-delivered.entered"
     release="$home/mark-delivered.release"
     fm_pending_reply_mark_delivered() {
-      local pending_state=$1 pending_corr=$2 epoch=$3 pending_rec phase
-      printf '%s\n' "$BASHPID" >> "$calls"
+      local pending_state=$1 pending_corr=$2 pending_epoch=$3 pending_rec phase
+      printf '%s\n' "${BASHPID:-$$}" >> "$calls"
       : > "$entered"
       while [ ! -e "$release" ]; do /bin/sleep 0.01; done
       pending_rec=$(fm_pending_reply_path "$pending_state" "$pending_corr")
-      fm_pending_reply_set "$pending_rec" delivered_epoch "$epoch" || return 1
+      fm_pending_reply_set "$pending_rec" delivered_epoch "$pending_epoch" || return 1
       phase=$(fm_pending_reply_get "$pending_rec" phase)
       [ "$phase" != delivery_unknown ] \
         || fm_pending_reply_set "$pending_rec" phase awaiting_report
@@ -829,8 +859,8 @@ test_unmarked_captain_input_creates_no_expectation() {
     "harness=echo" "kind=ship" "mode=no-mistakes" "yolo=off"
   run_send "$fb" "$home" "$log" "build" "captain says hello"; rc=$?
   expect_code 0 "$rc" "unmarked crewmate send should succeed"
-  [ "$(cat "$log")" = "captain says hello" ] \
-    || fail "crewmate send should stay unmarked"$'\n'"$(cat "$log" | od -An -c)"
+  [ "$(latest_record_body "$home" build)" = "captain says hello" ] \
+    || fail "crewmate steer should be recorded unmarked"$'\n'"$(latest_record_body "$home" build | od -An -c)"
   pending_count=$(find "$home/state/pending-replies" -type f 2>/dev/null | wc -l | tr -d ' ')
   [ "$pending_count" = 0 ] || fail "unmarked input must create no pending-reply records (got $pending_count)"
   pass "direct unmarked captain input creates no expectation"
@@ -844,10 +874,10 @@ test_fm_send_marked_secondmate_creates_pending_and_embeds_corr() {
   fm_write_secondmate_meta "$home/state/hibit.meta" "$home/sm" "sess:fm-hibit"
   run_send "$fb" "$home" "$log" "hibit" "audit the build"; rc=$?
   expect_code 0 "$rc" "secondmate send should succeed"
-  got=$(cat "$log")
+  got=$(latest_record_body "$home" hibit)
   case "$got" in
     "$FM_FROMFIRST_MARK"corr=*) : ;;
-    *) fail "secondmate send must embed marker+corr"$'\n'"$(printf '%s' "$got" | od -An -c)" ;;
+    *) fail "secondmate steer record must embed marker+corr"$'\n'"$(printf '%s' "$got" | od -An -c)" ;;
   esac
   corr=$(fm_pending_reply_extract_corr "$got")
   [ "${#corr}" -eq 16 ] || fail "corr id should be 16 hex chars, got '$corr'"
@@ -877,14 +907,19 @@ test_document_pointer_resolves() {
 }
 
 test_helper_report_resolves() {
-  local home state corr
+  local home state corr sm_home
   home=$(setup_parent helper)
   state="$home/state"
+  sm_home=$(bind_local_mate "$home" hibit)
   export FM_PENDING_REPLY_NOW=9100
   corr=$(fm_pending_reply_create "$home" "$state" "hibit" "quick answer")
   fm_pending_reply_mark_delivered "$state" "$corr"
-  "$REPORT" "$state/hibit.status" "done" "$corr" "all good" \
+  FM_HOME="$sm_home" "$REPORT" "done" "$corr" "all good" \
     || fail "helper report failed"
+  [ -f "$state/hibit.status" ] || fail "helper must write the parent channel"
+  if grep -Fq "corr=$corr" "$sm_home/state/hibit.status" 2>/dev/null; then
+    fail "helper must not write the mate home's own status file"
+  fi
   fm_pending_reply_try_resolve "$state" "$corr" || fail "helper report should resolve"
   [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" resolved_via)" = helper ] \
     || fail "resolved_via should be helper"
@@ -1015,7 +1050,7 @@ test_tick_skips_terminal_and_reuses_target_observation() {
     rec=$(fm_pending_reply_path "$state" "$escalated")
     fm_pending_reply_set "$rec" phase escalated || fail "escalated fixture should transition"
     mkdir -p "$home/escalated/state"
-    printf 'done [corr=%s]: wrong home\n' "$escalated" > "$home/escalated/state/escalated.status"
+    printf 'done [corr=%s]: wrong home\n' "$escalated" > "$home/escalated/state/child.status"
     fm_write_secondmate_meta "$state/hibit.meta" "$home/hibit" "sess:fm-hibit"
     fm_write_secondmate_meta "$state/resolved.meta" "$home/resolved" "sess:fm-resolved"
     fm_write_secondmate_meta "$state/escalated.meta" "$home/escalated" "sess:fm-escalated"
@@ -1070,12 +1105,19 @@ test_correlations_reuse_only_for_matching_open_task() {
   fm_write_secondmate_meta "$state/domain.meta" "$home/domain" "sess:fm-domain"
   fm_write_secondmate_meta "$state/other.meta" "$home/other" "sess:fm-other"
   run_send "$fb" "$home" "$log" domain "first request" || fail "first marked send failed"
-  got=$(cat "$log")
+  got=$(latest_record_body "$home" domain)
   corr1=$(fm_pending_reply_extract_corr "$got")
   export FM_PENDING_REPLY_EXISTING_CORR=$corr1
-  run_send "$fb" "$home" "$log" other "forwarded request" || fail "cross-task send failed"
+  if run_send "$fb" "$home" "$log" other "forwarded request"; then
+    fail "an explicit cross-task correlation must be refused"
+  fi
   unset FM_PENDING_REPLY_EXISTING_CORR
-  corr2=$(fm_pending_reply_extract_corr "$(cat "$log")")
+  if latest_record_body "$home" other >/dev/null 2>&1; then
+    fail "a refused cross-task correlation must not enqueue a steer"
+  fi
+  run_send "$fb" "$home" "$log" other "forwarded request" \
+    || fail "fresh cross-task send failed"
+  corr2=$(fm_pending_reply_extract_corr "$(latest_record_body "$home" other)")
   [ -n "$corr2" ] && [ "$corr2" != "$corr1" ] \
     || fail "cross-task send must receive a new correlation"
   rec=$(fm_pending_reply_path "$state" "$corr2")
@@ -1085,7 +1127,7 @@ test_correlations_reuse_only_for_matching_open_task() {
   fm_pending_reply_try_resolve "$state" "$corr1" || fail "first expectation should resolve"
   run_send "$fb" "$home" "$log" domain "${FM_FROMFIRST_MARK}corr=${corr1} follow-up" \
     || fail "resolved-correlation follow-up failed"
-  corr3=$(fm_pending_reply_extract_corr "$(cat "$log")")
+  corr3=$(fm_pending_reply_extract_corr "$(latest_record_body "$home" domain)")
   [ -n "$corr3" ] && [ "$corr3" != "$corr1" ] \
     || fail "resolved correlation must not guard a new send"
   rec=$(fm_pending_reply_path "$state" "$corr3")
@@ -1102,6 +1144,8 @@ test_tick_end_to_end_missed_then_escalate() {
   mkdir -p "$sm_home/state"
   hook_log="$TMP_ROOT/tick-hook.log"
   : > "$hook_log"
+  # Invoked indirectly through FM_PENDING_REPLY_SEND_HOOK.
+  # shellcheck disable=SC2329
   recovery_hook() { printf 'recovered\n' >> "$hook_log"; }
   export -f recovery_hook
   # Reset hook and clock fixtures after isolated subshell tests.
@@ -1193,22 +1237,23 @@ test_superseded_report_settles_without_claiming_a_reply() {
   if open_decisions "$state/hibit.status" | grep -Fq "pending-reply-$corr"; then
     fail "a settled request must stop being folded as an open blocker"
   fi
-  grep -Fq "resolved [key=pending-reply-$corr]: pending-reply-unacknowledged:" \
-    "$state/hibit.status" || fail "the close should state the honest outcome"
+  sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" \
+    | grep -Fq "resolved [key=pending-reply-$corr]: pending-reply-unacknowledged:" \
+    || fail "the close should state the honest outcome"
   if grep -Fq "pending-reply-resolved: task=hibit pending-reply-id=$corr" "$state/hibit.status"; then
     fail "an unanswered request must never publish a resolved-report close"
   fi
   # Idempotent: repeated ticks publish exactly one close.
   fm_pending_reply_tick "$state" || fail "tick should stay idempotent after settling"
   fm_pending_reply_tick "$state" || fail "tick should stay idempotent after settling"
-  closes=$(grep -Fc "resolved [key=pending-reply-$corr]:" "$state/hibit.status")
+  closes=$(sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" | grep -Fc "resolved [key=pending-reply-$corr]:")
   [ "$closes" = 1 ] || fail "settling should publish one close, got $closes"
   # A late correlated line cannot reopen or re-close a settled request.
   printf 'done [corr=%s]: very late\n' "$corr" >> "$state/hibit.status"
   fm_pending_reply_tick "$state" || fail "tick should ignore a late line on a settled record"
   [ "$(phase_of "$state" "$corr")" = closed_unacknowledged ] \
     || fail "a settled request must stay settled"
-  closes=$(grep -Fc "resolved [key=pending-reply-$corr]:" "$state/hibit.status")
+  closes=$(sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" | grep -Fc "resolved [key=pending-reply-$corr]:")
   [ "$closes" = 1 ] || fail "a late line must not publish a second close, got $closes"
   pass "an unanswerable escalation settles once without claiming a reply"
 }
@@ -1425,6 +1470,264 @@ test_mirrored_remote_reply_never_triggers_a_repost() {
   pass "a mirrored correlated remote reply resolves without any repost"
 }
 
+test_same_basename_self_home_corr_resolves_on_tick() {
+  local home state sm_home corr rec parent_status hook_log fb out
+  home=$(setup_parent same-basename-repair)
+  state="$home/state"
+  sm_home=$(bind_local_mate "$home" mate)
+  hook_log="$TMP_ROOT/same-basename-repair.log"
+  : > "$hook_log"
+  # Invoked indirectly through FM_PENDING_REPLY_SEND_HOOK.
+  # shellcheck disable=SC2329
+  recovery_hook() { printf 'recovered\n' >> "$hook_log"; }
+  export -f recovery_hook
+  export FM_PENDING_REPLY_SEND_HOOK=recovery_hook
+  export FM_PENDING_REPLY_NOW=11000
+
+  corr=$(fm_pending_reply_create "$home" "$state" mate "status of the audit")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  parent_status=$(fm_pending_reply_get "$rec" parent_status)
+  [ "$parent_status" = "$state/mate.status" ] \
+    || fail "parent_status should be the parent file, got $parent_status"
+  case "$parent_status" in
+    "$sm_home"/*) fail "parent_status must not live under the mate home" ;;
+  esac
+  printf 'done [corr=%s]: stranded in self-home\n' "$corr" > "$sm_home/state/mate.status"
+  [ ! -e "$parent_status" ] || fail "parent channel must start empty"
+  if fm_pending_reply_try_resolve "$state" "$corr"; then
+    fail "a mate-home sighting must not resolve through the parent path"
+  fi
+
+  fm_pending_reply_tick_one "$state" "$corr" busy "$sm_home"
+  fm_pending_reply_tick_one "$state" "$corr" idle "$sm_home"
+  fm_pending_reply_tick_one "$state" "$corr" busy "$sm_home"
+  fm_pending_reply_tick_one "$state" "$corr" idle "$sm_home"
+  [ "$(phase_of "$state" "$corr")" = resolved ] \
+    || fail "same-basename self-home corr must resolve, got $(phase_of "$state" "$corr")"
+  [ -n "$(fm_pending_reply_get "$rec" resolved_epoch)" ] \
+    || fail "resolved_epoch must be set after the restatement copy"
+  grep -Fq "corr=$corr" "$parent_status" \
+    || fail "parent channel must receive the restated corr= line"
+  if status_line_at_epoch "$(tail -1 "$parent_status")" >/dev/null; then
+    fail "a relayed copy must not acquire an emission time: $(cat "$parent_status")"
+  fi
+  if grep -Fq pending-reply-missed "$parent_status"; then
+    fail "same-basename self-home corr must not escalate as pending-reply-missed"
+  fi
+  [ ! -s "$hook_log" ] || fail "a restated same-basename reply must not trigger recovery"
+  [ "$(fm_pending_reply_get "$rec" wrong_home_hits)" = 1 ] \
+    || fail "the stranded file should still count as one wrong-home sighting"
+  [ "$(fm_pending_reply_sighting_display \
+    "$(fm_pending_reply_get "$rec" wrong_home_first_sighting)")" = \
+    "$sm_home/state/mate.status:1" ] \
+    || fail "first wrong-home sighting must display the readable mate-home path and line"
+  fm_pending_reply_restatement_copy_same_basename "$state" "$corr" "$sm_home" \
+    || fail "repeated restatement copy should succeed"
+  fm_parent_channel_report "$sm_home" "$sm_home/state" "$(cat "$sm_home/state/mate.status")" \
+    || fail "publication retry of a recovered reply should succeed"
+  cmp -s "$sm_home/state/mate.status" "$parent_status" \
+    || fail "recovery and retries must preserve the legacy reply bytes without duplicates"
+  fm_write_secondmate_meta "$state/mate.meta" "$sm_home"
+  fb=$(make_stubs "$home")
+  out=$(PATH="$fb:$PATH" FM_HOME="$home" "$ROOT/bin/fm-fleet-snapshot.sh" --json) \
+    || fail "snapshot of the recovered reply should succeed"
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "mate") | .paths.status_log.last_event
+    | has("age_seconds") and .age_seconds == null
+  ' >/dev/null || fail "recovered legacy reply must retain an unknown age"
+  printf '%s' "$out" | jq -e '
+    .secondmate_current.records[] | select(.id == "mate") | .parent_event
+    | has("age_seconds") and .age_seconds == null
+  ' >/dev/null || fail "secondmate summary must retain the recovered reply's unknown age"
+  fm_parent_channel_report "$sm_home" "$sm_home/state" 'done: new report' \
+    || fail "new publication should succeed"
+  status_line_at_epoch "$(tail -1 "$parent_status")" >/dev/null \
+    || fail "new publication must still receive an emission time"
+  fm_parent_channel_report "$sm_home" "$sm_home/state" 'done: new report' \
+    || fail "new publication retry should succeed"
+  [ "$(wc -l < "$parent_status")" -eq 2 ] || fail "new publication retry must not duplicate the event"
+  unset FM_PENDING_REPLY_SEND_HOOK
+  pass "same-basename self-home corr= is restated onto the parent channel and resolves"
+}
+
+test_same_basename_reply_resolves_after_recovery_failure() {
+  local home state sm_home corr rec parent_status
+  home=$(setup_parent same-basename-after-recovery-failure)
+  state="$home/state"
+  sm_home=$(bind_local_mate "$home" mate)
+  export FM_PENDING_REPLY_NOW=11050
+  export FM_PENDING_REPLY_SEND_HOOK=false
+
+  corr=$(fm_pending_reply_create "$home" "$state" mate "status after failed recovery")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  fm_pending_reply_mark_turn_completed "$state" "$corr" request
+  if fm_pending_reply_send_recovery "$state" "$corr" 2>/dev/null; then
+    fail "recovery fixture must fail delivery"
+  fi
+  [ "$(phase_of "$state" "$corr")" = recovery_failed ] \
+    || fail "fixture should reach recovery_failed"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  parent_status=$(fm_pending_reply_get "$rec" parent_status)
+  fm_write_secondmate_meta "$state/mate.meta" "$sm_home"
+  printf 'done [corr=%s] [at=11000]: answer landed after recovery failure\n' "$corr" \
+    > "$sm_home/state/mate.status"
+
+  fm_pending_reply_tick "$state"
+  [ "$(phase_of "$state" "$corr")" = resolved ] \
+    || fail "late same-basename reply must resolve before recovery failure escalation"
+  grep -Fq "corr=$corr" "$parent_status" \
+    || fail "late reply must be restated onto the parent channel"
+  cmp -s "$sm_home/state/mate.status" "$parent_status" \
+    || fail "recovery must preserve the reply's original emission time"
+  if grep -Fq pending-reply-recovery-delivery "$parent_status"; then
+    fail "authorized late reply must prevent recovery delivery escalation"
+  fi
+  unset FM_PENDING_REPLY_SEND_HOOK
+  pass "same-basename reply resolves at the recovery failure boundary"
+}
+
+test_child_status_wrong_home_is_not_copied() {
+  local home state sm_home corr rec hook_log status_file expected_display stored_first
+  home=$(setup_parent child-wrong-home)
+  state="$home/state"
+  sm_home="$TMP_ROOT/team,west-home-$RANDOM"
+  mkdir -p "$sm_home/state"
+  hook_log="$TMP_ROOT/child-wrong-home.log"
+  : > "$hook_log"
+  # Invoked indirectly through FM_PENDING_REPLY_SEND_HOOK.
+  # shellcheck disable=SC2329
+  recovery_hook() { printf 'recovered\n' >> "$hook_log"; }
+  export -f recovery_hook
+  export FM_PENDING_REPLY_SEND_HOOK=recovery_hook
+  export FM_PENDING_REPLY_NOW=11100
+
+  corr=$(fm_pending_reply_create "$home" "$state" mate "status of the audit")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  status_file="$sm_home/state/"$'child\nphase=resolved\nteam,west.status'
+  printf 'done [corr=%s]: leaked into a child file\n' "$corr" > "$status_file"
+
+  fm_pending_reply_tick_one "$state" "$corr" busy "$sm_home"
+  fm_pending_reply_tick_one "$state" "$corr" idle "$sm_home"
+  fm_pending_reply_tick_one "$state" "$corr" busy "$sm_home"
+  fm_pending_reply_tick_one "$state" "$corr" idle "$sm_home"
+  [ "$(phase_of "$state" "$corr")" = escalated ] \
+    || fail "a child-file sighting must not acknowledge, got $(phase_of "$state" "$corr")"
+  [ -z "$(fm_pending_reply_get "$rec" resolved_epoch)" ] \
+    || fail "resolved_epoch must stay empty for a child-file sighting"
+  grep -Fq pending-reply-missed "$state/mate.status" \
+    || fail "a child-file miss should still escalate"
+  printf -v expected_display '%q' "$status_file"
+  expected_display="$expected_display:1"
+  grep -Fq "token seen in $expected_display;" "$state/mate.status" \
+    || fail "missed payload must preserve the complete readable child-file path"$'\n'"$(cat "$state/mate.status")"
+  stored_first=$(fm_pending_reply_get "$rec" wrong_home_first_sighting)
+  [ "$(fm_pending_reply_sighting_display "$stored_first")" = "$expected_display" ] \
+    || fail "encoded wrong-home sighting must reversibly preserve the crafted path"
+  [ "$(grep -c '^phase=' "$rec")" = 1 ] \
+    || fail "crafted filename must not inject a phase field into the pending record"
+  if grep -Fq "corr=$corr" "$state/mate.status"; then
+    fail "a child status file must not be restatement-copied onto the parent channel"
+  fi
+  [ "$(fm_pending_reply_get "$rec" wrong_home_hits)" = 1 ] \
+    || fail "the child file should count as one wrong-home sighting"
+  unset FM_PENDING_REPLY_SEND_HOOK
+  pass "a child-file mate-home sighting is not copied and still escalates"
+}
+
+test_mechanical_helper_writes_parent_channel() {
+  local home state sm_home corr empty_corr rc
+  home=$(setup_parent mechanical-helper)
+  state="$home/state"
+  sm_home=$(bind_local_mate "$home" mate)
+  export FM_PENDING_REPLY_NOW=11200
+  corr=$(fm_pending_reply_create "$home" "$state" mate "status of the audit")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  FM_HOME="$sm_home" "$REPORT" "done" "$corr" "audit clean" \
+    || fail "mechanical helper should succeed from a seeded mate home"
+  grep -Fq "corr=$corr" "$state/mate.status" \
+    || fail "mechanical helper must append to the parent channel"
+  if [ -e "$sm_home/state/mate.status" ]; then
+    fail "mechanical helper must not write the mate home's same-basename status file"
+  fi
+  fm_pending_reply_try_resolve "$state" "$corr" \
+    || fail "a mechanical helper line on the parent channel must resolve"
+  [ "$(phase_of "$state" "$corr")" = resolved ] || fail "phase should be resolved"
+  empty_corr=$(fm_pending_reply_create "$home" "$state" mate "answer must not be empty")
+  fm_pending_reply_mark_delivered "$state" "$empty_corr"
+  rc=0
+  FM_HOME="$sm_home" "$REPORT" "done" "$empty_corr" "" 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "helper must reject an empty status note"
+  if fm_pending_reply_try_resolve "$state" "$empty_corr"; then
+    fail "an empty helper report must not resolve an expectation"
+  fi
+  rc=0
+  env -u FM_HOME "$REPORT" "done" "$empty_corr" "must require FM_HOME" \
+    2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "helper must require FM_HOME"
+  rc=0
+  FM_HOME="$home" "$REPORT" "done" "$corr" "from a main home" 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "helper must refuse a main home that has no parent channel"
+  pass "mechanical helper writes the parent channel from verb, corr, and note"
+}
+
+test_remote_parent_replies_is_not_wrong_home() {
+  local home state sm_home corr rec hits
+  home=$(setup_parent remote-parent-replies)
+  state="$home/state"
+  sm_home="$TMP_ROOT/remote-replies-home-$RANDOM"
+  mkdir -p "$sm_home/state"
+  printf '%s\n' mate > "$sm_home/.fm-secondmate-home"
+  cat > "$sm_home/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=remote
+parent_host=remote.example
+EOF
+  export FM_PENDING_REPLY_NOW=11300
+  corr=$(fm_pending_reply_create "$home" "$state" mate "did the build go green")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  printf 'done [corr=%s]: mirrored answer\n' "$corr" > "$sm_home/state/parent-replies.status"
+  fm_pending_reply_detect_wrong_home "$state" "$corr" "$sm_home" \
+    || fail "wrong-home detect should succeed over a remote channel file"
+  hits=$(fm_pending_reply_get "$rec" wrong_home_hits)
+  [ "$hits" = 0 ] || fail "parent-replies.status must not increment wrong_home_hits, got $hits"
+  printf 'done [corr=%s]: leaked into a child file\n' "$corr" > "$sm_home/state/child.status"
+  fm_pending_reply_detect_wrong_home "$state" "$corr" "$sm_home" \
+    || fail "wrong-home detect should succeed after a child-file leak"
+  hits=$(fm_pending_reply_get "$rec" wrong_home_hits)
+  [ "$hits" = 1 ] || fail "a sibling child status file should still count once, got $hits"
+  [ "$(phase_of "$state" "$corr")" = awaiting_report ] \
+    || fail "detect must not acknowledge a remote-channel or child-file sighting"
+  pass "remote parent-replies.status is not classified as wrong-home"
+}
+
+test_local_parent_replies_is_wrong_home_evidence() {
+  local home state sm_home corr rec hits first
+  home=$(setup_parent local-parent-replies)
+  state="$home/state"
+  sm_home=$(bind_local_mate "$home" mate)
+  export FM_PENDING_REPLY_NOW=11350
+  corr=$(fm_pending_reply_create "$home" "$state" mate "did the build go green")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  printf 'done [corr=%s]: written to a local alias\n' "$corr" \
+    > "$sm_home/state/parent-replies.status"
+
+  fm_pending_reply_detect_wrong_home "$state" "$corr" "$sm_home" \
+    || fail "wrong-home detect should scan a local parent-replies alias"
+  hits=$(fm_pending_reply_get "$rec" wrong_home_hits)
+  [ "$hits" = 1 ] || fail "local parent-replies.status should count once, got $hits"
+  first=$(fm_pending_reply_get "$rec" wrong_home_first_sighting)
+  [ "$(fm_pending_reply_sighting_display "$first")" = \
+    "$sm_home/state/parent-replies.status:1" ] \
+    || fail "local parent-replies sighting must retain its readable path"
+  [ "$(phase_of "$state" "$corr")" = awaiting_report ] \
+    || fail "local wrong-home evidence must not acknowledge the reply"
+  pass "local parent-replies.status remains wrong-home evidence"
+}
+
 test_failed_send_discards_undelivered_expectation() {
   local home state corr
   home=$(setup_parent discard)
@@ -1443,6 +1746,70 @@ test_failed_send_discards_undelivered_expectation() {
   fi
   [ -f "$(fm_pending_reply_path "$state" "$corr")" ] || fail "delivered record must remain"
   pass "failed transport discards undelivered expectation only"
+}
+
+test_escalated_undelivered_correlation_stays_retryable() {
+  local home state corr rec marker delivered_corr delivered_rec open
+  home=$(setup_parent escalated-retry)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=9600
+  corr=$(fm_pending_reply_create "$home" "$state" "hibit" "wake after lost transport")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  marker=$(fm_pending_reply_delivery_confirmation_path "$state" "$corr")
+  # The owner prepared the delivery, the remote transport was lost, and the
+  # watcher escalated the unknown delivery before any resend ran.
+  fm_pending_reply_prepare_delivery "$state" "$corr" || fail "prepare delivery failed"
+  fm_pending_reply_mark_delivery_unknown "$state" "$corr" || fail "mark delivery unknown failed"
+  fm_pending_reply_maybe_escalate "$state" "$corr" || fail "delivery-unknown escalation should fire"
+  [ "$(phase_of "$state" "$corr")" = escalated ] || fail "phase should be escalated"
+  [ -z "$(fm_pending_reply_get "$rec" delivered_epoch)" ] || fail "escalation must not invent delivery"
+  [ "$(grep -cF "blocked [key=pending-reply-$corr]" "$state/hibit.status")" = 1 ] \
+    || fail "delivery-unknown escalation should publish once"
+  fm_pending_reply_corr_reusable "$state" "$corr" hibit \
+    || fail "an escalated undelivered correlation must stay reusable by its owner"
+  if fm_pending_reply_corr_reusable "$state" "$corr" other 2>/dev/null; then
+    fail "an escalated correlation must not be reusable for another task"
+  fi
+  fm_pending_reply_reset_known_undelivered "$state" "$corr" \
+    || fail "an escalated undelivered correlation must reset for its resend"
+  [ "$(phase_of "$state" "$corr")" = awaiting_report ] \
+    || fail "reset should return the undelivered escalation to awaiting_report"
+  [ ! -e "$marker" ] || fail "reset should drop the stale attempted marker"
+  [ -n "$(fm_pending_reply_get "$rec" escalated_epoch)" ] \
+    || fail "reset must keep the escalation history so its decision can still close"
+  open=$(status_open_decisions "$state/hibit.status" | cut -f1)
+  [ "$open" = "pending-reply-$corr" ] \
+    || fail "the published escalation must stay open until the record resolves, got '$open'"
+  # The resend lands and the mate reports: the ordinary resolve closes the
+  # delivery-unknown decision the retry left open.
+  export FM_PENDING_REPLY_NOW=9601
+  fm_pending_reply_prepare_delivery "$state" "$corr" || fail "resend prepare failed"
+  fm_pending_reply_confirm_delivery "$state" "$corr" || fail "resend confirm failed"
+  [ -n "$(fm_pending_reply_get "$rec" delivered_epoch)" ] || fail "resend should confirm delivery"
+  printf 'done [corr=%s]: routed work picked up\n' "$corr" >> "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$corr" || fail "correlated report should resolve"
+  [ "$(phase_of "$state" "$corr")" = resolved ] || fail "phase should be resolved"
+  open=$(status_open_decisions "$state/hibit.status")
+  [ -z "$open" ] || fail "resolution left the delivery-unknown decision open: $open"
+  # A delivered record escalated for a genuine missed report is never reset.
+  export FM_PENDING_REPLY_NOW=9700
+  delivered_corr=$(fm_pending_reply_create "$home" "$state" "hibit" "delivered then missed")
+  delivered_rec=$(fm_pending_reply_path "$state" "$delivered_corr")
+  fm_pending_reply_mark_delivered "$state" "$delivered_corr" || fail "mark delivered failed"
+  fm_pending_reply_set "$delivered_rec" phase escalated
+  fm_pending_reply_set "$delivered_rec" escalated_epoch 9700
+  if fm_pending_reply_corr_reusable "$state" "$delivered_corr" hibit 2>/dev/null; then
+    fail "a delivered escalated correlation must not be reusable"
+  fi
+  if fm_pending_reply_reset_known_undelivered "$state" "$delivered_corr" 2>/dev/null; then
+    fail "a delivered escalated correlation must never be reset"
+  fi
+  [ "$(phase_of "$state" "$delivered_corr")" = escalated ] \
+    || fail "refused reset must leave the delivered escalation untouched"
+  [ "$(fm_pending_reply_get "$delivered_rec" delivered_epoch)" = 9700 ] \
+    || fail "refused reset must keep the confirmed delivery"
+  unset FM_PENDING_REPLY_NOW
+  pass "an escalated correlation stays retryable only while undelivered"
 }
 
 # --- run --------------------------------------------------------------------
@@ -1483,5 +1850,12 @@ test_settled_records_are_archived_on_the_retention_policy
 test_failed_send_discards_undelivered_expectation
 test_remote_repost_waits_for_the_reply_channel
 test_mirrored_remote_reply_never_triggers_a_repost
+test_same_basename_self_home_corr_resolves_on_tick
+test_same_basename_reply_resolves_after_recovery_failure
+test_child_status_wrong_home_is_not_copied
+test_mechanical_helper_writes_parent_channel
+test_remote_parent_replies_is_not_wrong_home
+test_local_parent_replies_is_wrong_home_evidence
+test_escalated_undelivered_correlation_stays_retryable
 
 printf 'ok - all pending-reply tests passed\n'
