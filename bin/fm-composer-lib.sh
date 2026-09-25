@@ -498,7 +498,7 @@ FM_COMPOSER_MODE_HINT_RE_DEFAULT='^[[:space:]]*(⏵|⏸)'
 # frames then an elapsed cell, or when it carries the context-usage cell after
 # a middle dot. It is consulted only as the boundary BELOW a bare composer,
 # never on the composer row itself.
-FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K|^[[:space:]]*\[[a-zA-Z0-9_. :+-]*\]([[:space:]]*\[[a-zA-Z0-9_. :+-]*\])*[[:space:]]*$|[[:space:]]·[[:space:]]+\[[a-zA-Z0-9_. :+-]*\]|^[[:space:]]*[●○][[:space:]]'
+FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+(\.[0-9]+)?[KM]|^[[:space:]]*\[[a-zA-Z0-9_. :+-]*\]([[:space:]]*\[[a-zA-Z0-9_. :+-]*\])*[[:space:]]*$|[[:space:]]·[[:space:]]+\[[a-zA-Z0-9_. :+-]*\]|^[[:space:]]*[●○][[:space:]]'
 # The last three alternatives above cover the rows omp PLUGINS draw under the
 # composer, which the model/spinner/context rules never matched:
 #   - a row whose content is nothing but bracketed tokens is the hook and tool

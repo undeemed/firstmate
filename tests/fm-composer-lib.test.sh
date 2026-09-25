@@ -496,21 +496,30 @@ test_matrix_omp_plugin_rows_real_captures() {
   # widget row is not all brackets, so the wrap region swallowed it and every
   # idle omp pane with a quality score or linter read `pending`, which skipped
   # the doorbell.
-  local dir="$ROOT/tests/captures/omp-plugin-rows" f screen
+  local dir="$ROOT/tests/captures/omp-plugin-rows" f screen bare
   _fm_composer_row_is_omp_status '[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]' \
     || fail "the quality-first session-info widget row must be omp furniture"
   _fm_composer_row_is_omp_status 'eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [quality]' \
     || fail "the linter-first session-info widget row must be omp furniture"
   _fm_composer_row_is_omp_status '[WIP] fix the flaky test' \
     && fail "typed text opening with a bracket must not be mistaken for omp furniture"
+  # Each capture again with the widget row dropped, so omp's own status row
+  # (a 1M-window context cell, `33.8%/1M`) sits directly under the prompt and
+  # alone bounds the wrap region, as on a pane running no plugin widget.
   for f in herdr-idle tmux-idle; do
     screen=$(cat "$dir/$f.ansi")
     assert_screen "$f omp capture reads empty" empty "$CAPS_STYLED" "$screen"
     assert_screen "$f omp capture on a plain read" empty "$CAPS_PLAIN" "$(printf '%s\n' "$screen" | fm_composer_strip_ansi)"
+    bare=$(printf '%s\n' "$screen" | sed 4d)
+    case "$(printf '%s\n' "$bare" | fm_composer_strip_ansi)" in
+      *'[quality]'*) fail "fixture drift: $f still carries the widget row" ;;
+    esac
+    assert_screen "$f omp capture without the widget row reads empty" empty "$CAPS_STYLED" "$bare"
   done
   for f in tmux-typed tmux-wrapped; do
     screen=$(cat "$dir/$f.ansi")
     assert_screen "$f omp capture stays pending" pending "$CAPS_STYLED" "$screen"
+    assert_screen "$f omp capture without the widget row stays pending" pending "$CAPS_STYLED" "$(printf '%s\n' "$screen" | sed 4d)"
   done
   pass "matrix: omp plugin widget rows under a bare composer are furniture on real captures"
 }
