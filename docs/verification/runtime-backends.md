@@ -1485,6 +1485,8 @@ Real captures verified these active distinctions:
   After it, the four live second-mate panes classify `empty` and a real send exits 0.
 - A bare shell prompt has no safe agent-composer container and is unknown.
 - Codex 0.154's idle braille starfield rows are composer furniture, with the dated Herdr evidence and refresh command in [Composer classification matrix](#composer-classification-matrix).
+- omp's plugin widget row under its bare `❯` composer (`[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] ...`) is composer furniture; measured 2026-09-25 on omp 18.3.0 through Herdr, 8 of 13 live omp panes read `pending` while idle before the rule and all 13 read `empty` after it.
+  A scratch omp 18.3.0 pane holding a typed draft, and the same draft wrapped onto a second row, still read `pending`; `test_matrix_omp_plugin_rows_real_captures` pins those real captures from `tests/captures/omp-plugin-rows/`.
 
 `tests/fm-composer-ghost.test.sh`, `tests/fm-composer-lib.test.sh`, and the Herdr composer cases pin the exact captured ANSI bytes.
 The U+2063 operational and routed-request separators were exercised through a real Pi-on-Herdr path; the byte-exact active regression is:

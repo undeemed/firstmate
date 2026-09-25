@@ -486,6 +486,35 @@ test_matrix_omp_status_row_bounds_bare_composer() {
   pass "matrix: omp's status row bounds the bare composer's wrap region"
 }
 
+test_matrix_omp_plugin_rows_real_captures() {
+  # Real omp 18.3 panes (tests/captures/omp-plugin-rows): herdr-idle.ansi is a
+  # live idle worker read through Herdr `pane read --format ansi`; the tmux-*
+  # files are one scratch omp pane captured idle, then with a typed draft, then
+  # with that draft wrapped onto a second row. Under the bare `❯` sit the
+  # session-info widget (`[quality] 42% · eslint prettier · [axi: ...] ...`),
+  # the status line, and the `● ADHD ON` / `○ ponytail` extension rows. The
+  # widget row is not all brackets, so the wrap region swallowed it and every
+  # idle omp pane with a quality score or linter read `pending`, which skipped
+  # the doorbell.
+  local dir="$ROOT/tests/captures/omp-plugin-rows" f screen
+  _fm_composer_row_is_omp_status '[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]' \
+    || fail "the quality-first session-info widget row must be omp furniture"
+  _fm_composer_row_is_omp_status 'eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [quality]' \
+    || fail "the linter-first session-info widget row must be omp furniture"
+  _fm_composer_row_is_omp_status '[WIP] fix the flaky test' \
+    && fail "typed text opening with a bracket must not be mistaken for omp furniture"
+  for f in herdr-idle tmux-idle; do
+    screen=$(cat "$dir/$f.ansi")
+    assert_screen "$f omp capture reads empty" empty "$CAPS_STYLED" "$screen"
+    assert_screen "$f omp capture on a plain read" empty "$CAPS_PLAIN" "$(printf '%s\n' "$screen" | fm_composer_strip_ansi)"
+  done
+  for f in tmux-typed tmux-wrapped; do
+    screen=$(cat "$dir/$f.ansi")
+    assert_screen "$f omp capture stays pending" pending "$CAPS_STYLED" "$screen"
+  done
+  pass "matrix: omp plugin widget rows under a bare composer are furniture on real captures"
+}
+
 # codex_cell <grey> <glyph>: one codex 0.154 starfield cell exactly as the
 # harness draws it - a truecolor grey foreground, the composer's grey
 # background, the braille glyph, then a reset.
@@ -928,6 +957,7 @@ test_matrix_muse_truecolor_glyph_survives_signal_loss
 test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_omp_status_row_bounds_bare_composer
+test_matrix_omp_plugin_rows_real_captures
 test_matrix_codex_idle_starfield_furniture
 test_matrix_pi_separated_needs_identity
 test_matrix_opencode_leftbar_signals
