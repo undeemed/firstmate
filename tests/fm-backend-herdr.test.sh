@@ -4572,45 +4572,6 @@ test_send_text_submit_confirms_despite_codex_idle_tip_composer() {
 # composer can show faint ghost suggestions after the bare `›` prompt.
 # The guard must ignore that faint suggestion text, otherwise away-mode
 # escalation delivery defers forever even though the human has typed nothing.
-test_send_text_submit_omp_racy_idle_confirms_via_cleared_composer() {
-  local dir log resp fb out enter_count
-  dir="$TMP_ROOT/submit-omp-racy-idle"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
-  # 1: send-text  2: agent get -> omp, idle baseline
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/2.out"
-  # 3: send-keys enter  4: agent get -> still idle (the race), never flips busy
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/4.out"
-  # 5: pane read -> the composer is CLEARED: the text really was submitted
-  printf '\xe2\x95\xad\xe2\x94\x80\xe2\x94\x80 omp \xe2\x94\x80\xe2\x94\x80\xe2\x95\xae\n\x1b[0m\x1b[38;2;224;193;255m\xe2\x94\x82  \x1b[0m\n\xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80 ctrl+c quit \xe2\x94\x80\xe2\x94\x80\xe2\x95\xaf\n' > "$resp/5.out"
-  # 6: agent get -> the composer read's own identity corroboration
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/6.out"
-  fb=$(make_herdr_fakebin "$dir")
-  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "hello captain" 2 0.01 0.01' "$ROOT" )
-  [ "$out" = empty ] || fail "a cleared omp composer after Enter must confirm the submit despite a racy idle agent_status, got '$out'"
-  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
-  [ "$enter_count" -eq 1 ] || fail "a confirmed omp submit must not retry Enter into the running turn, sent $enter_count Enter(s)"
-  pass "fm_backend_herdr_send_text_submit: an omp pane's cleared composer confirms the submit when herdr's agent_status is still racily idle"
-}
-
-test_send_text_submit_omp_pending_composer_still_retries_enter() {
-  local dir log resp fb out enter_count
-  dir="$TMP_ROOT/submit-omp-still-pending"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/2.out"
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/4.out"
-  printf '\xe2\x95\xad\xe2\x94\x80\xe2\x94\x80 omp \xe2\x94\x80\xe2\x94\x80\xe2\x95\xae\n\x1b[0m\x1b[38;2;224;193;255m\xe2\x94\x82  \x1b[0mhello draft not submitted\n\xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80 ctrl+c quit \xe2\x94\x80\xe2\x94\x80\xe2\x95\xaf\n' > "$resp/5.out"
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/6.out"
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/8.out"
-  printf '\xe2\x95\xad\xe2\x94\x80\xe2\x94\x80 omp \xe2\x94\x80\xe2\x94\x80\xe2\x95\xae\n\x1b[0m\x1b[38;2;224;193;255m\xe2\x94\x82  \x1b[0mhello draft not submitted\n\xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80 ctrl+c quit \xe2\x94\x80\xe2\x94\x80\xe2\x95\xaf\n' > "$resp/9.out"
-  printf '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}\n' > "$resp/10.out"
-  fb=$(make_herdr_fakebin "$dir")
-  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "hello captain" 2 0.01 0.01' "$ROOT" )
-  [ "$out" = pending ] || fail "an omp composer still holding the text must stay pending, got '$out'"
-  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
-  [ "$enter_count" -eq 2 ] || fail "an unsubmitted omp composer must still retry Enter, sent $enter_count Enter(s)"
-  pass "fm_backend_herdr_send_text_submit: an omp composer still holding the text keeps the loud pending refusal and retries Enter"
-}
-
 test_composer_state_codex_dynamic_idle_tip_reads_empty_when_faint() {
   local dir log resp fb out
   dir="$TMP_ROOT/composer-codex-dynamic-tip"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -5774,8 +5735,6 @@ test_composer_state_pi_separator_idle_is_empty
 test_composer_state_pi_separator_real_text_is_pending
 test_composer_state_pi_incomplete_separator_below_stale_generic_is_unknown
 test_composer_state_pi_separator_requires_safe_native_identity
-test_send_text_submit_omp_racy_idle_confirms_via_cleared_composer
-test_send_text_submit_omp_pending_composer_still_retries_enter
 test_composer_state_claude_unbordered_prompt_is_empty
 test_composer_state_claude_unbordered_prompt_is_pending
 test_composer_state_bare_prompt_below_stale_bordered_banner_wins

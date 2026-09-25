@@ -171,9 +171,11 @@ test_spawn_launch_line_and_worker_wiring() {
   assert_contains "$launch" "--model 'openai-codex/gpt-6-astra' --thinking 'medium' -e '$state/$id.omp-ext.ts'" \
     "omp launch did not pass the model, thinking level, and the state-resident worker extension"
   assert_contains "$launch" "encode launch-brief < '$HOME_DIR/data/$id/launch-brief.md'" "omp launch lost the canonical typed launch-brief envelope"
+  # The fork's swarms-platform seatbelt extension loads beside the worker
+  # extension on every omp crewmate and scout, so it sits between the two.
   case "$launch" in
-    *"-e '$state/$id.omp-ext.ts' \"\$("*) ;;
-    *) fail "omp launch must keep exactly one positional brief after the extension flag: $launch" ;;
+    *"-e '$state/$id.omp-ext.ts' -e '$ROOT/extensions/fm-swarms-platform-guard.ts' \"\$("*) ;;
+    *) fail "omp launch must keep exactly one positional brief after the extension flags: $launch" ;;
   esac
   [ "$(fm_busy_classify tmux fake:w omp "$id" "$state")" = "busy fm-spawn" ] \
     || fail "omp spawn must seed the busy-state contract"

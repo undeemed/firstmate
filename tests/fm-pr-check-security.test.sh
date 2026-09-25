@@ -3237,7 +3237,7 @@ SH
 }
 
 test_device_rerecord_refuses_tampered_artifacts() {
-  local mutation dir state out rc registration_sha shifted_device replacement exercised= refusal
+  local mutation dir state out rc registration_sha shifted_device replacement exercised='' refusal
   for mutation in swapped-check altered-check swapped-sidecar altered-sidecar altered-template-hash \
     wrong-mode hardlinked-check split-device foreign-device; do
     # A regular file cannot sit on another device than its own directory without
