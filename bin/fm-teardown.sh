@@ -968,7 +968,9 @@ remote_pending_replies_cleanup() {
 }
 
 # Refuse non-forced secondmate retirement while any parent pending-reply for
-# this id is still unresolved (local and remote share the gate).
+# this id is still unresolved (local and remote share the gate). A record
+# settled without an answer (closed_unacknowledged) owes no reply, so only a
+# non-terminal phase refuses.
 secondmate_unresolved_pending_replies_refuse() {
   local rec task_id phase
   [ -d "$STATE/pending-replies" ] || return 0
@@ -977,7 +979,7 @@ secondmate_unresolved_pending_replies_refuse() {
     task_id=$(fm_meta_get "$rec" task_id)
     [ "$task_id" = "$ID" ] || continue
     phase=$(fm_meta_get "$rec" phase)
-    [ "$phase" = resolved ] || {
+    fm_pending_reply_phase_is_terminal "$phase" || {
       echo "REFUSED: secondmate $ID still has an unresolved routed reply" >&2
       return 1
     }
