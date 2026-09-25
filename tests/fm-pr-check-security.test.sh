@@ -3228,7 +3228,7 @@ SH
     || fail "re-recorded registration differs from the one published on the live device"
   [ "$(file_mode "$state/task-a.pr-poll-registration")" = 600 ] || fail "re-recorded registration is not private"
   fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "re-recorded poll is not strictly authenticated"
-  grep -F 'pr view https://github.com/o/r/pull/1 --json state' "$dir/gh.log" >/dev/null \
+  grep -F 'api --hostname github.com repos/o/r/pulls/1 --jq .merged' "$dir/gh.log" >/dev/null \
     || fail "re-recorded poll did not run its validated check in the same cycle"
   grep -F 're-recorded PR poll identity for task-a' "$state/.watch-triage.log" >/dev/null \
     || fail "re-record left no triage evidence"
@@ -3237,7 +3237,7 @@ SH
 }
 
 test_device_rerecord_refuses_tampered_artifacts() {
-  local mutation dir state out rc registration_sha shifted_device replacement exercised=
+  local mutation dir state out rc registration_sha shifted_device replacement exercised= refusal
   for mutation in swapped-check altered-check swapped-sidecar altered-sidecar altered-template-hash \
     wrong-mode hardlinked-check split-device foreign-device; do
     # A regular file cannot sit on another device than its own directory without
@@ -3309,13 +3309,21 @@ SH
     set -e
     [ "$rc" -eq 0 ] || fail "$mutation watcher failed: $(cat "$dir/watch.err")"
     out=$(cat "$dir/watch.out")
+    # A check file that still holds the canonical poll bytes is refused as an
+    # unverifiable merge poll rather than as a foreign check, so the operator
+    # repairs its binding; any other bytes are an unauthenticated check.
+    if cmp -s "$POLL" "$state/task-a.check.sh"; then
+      refusal="check: unverifiable PR merge polls:"
+    else
+      refusal="check: rejected unauthenticated state checks:"
+    fi
     case "$out" in
-      "check: rejected unauthenticated state checks:"*"task-a.check.sh"*) ;;
-      *) fail "$mutation on a renumbered registration was not refused: $out" ;;
+      "$refusal"*"task-a.check.sh"*) ;;
+      *) fail "$mutation on a renumbered registration was not refused as '$refusal': $out" ;;
     esac
     [ "$(fm_pr_sha256 "$state/task-a.pr-poll-registration")" = "$registration_sha" ] \
       || fail "$mutation let the watcher re-record the registration"
-    ! grep -F -- '--json state' "$dir/gh.log" >/dev/null 2>&1 \
+    ! grep -F -- '--jq .merged' "$dir/gh.log" >/dev/null 2>&1 \
       || fail "$mutation ran the refused poll"
     ! ls "$state"/.fm-pr-poll-registration.* >/dev/null 2>&1 \
       || fail "$mutation left a staged registration behind"
