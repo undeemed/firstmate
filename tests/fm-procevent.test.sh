@@ -1562,6 +1562,7 @@ LAVISH_COUNT="$TMP_ROOT/bare-count"; LAVISH_SCRIPT="interrupt-bare feedback"
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HBARE" \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$BARE_ART" >/dev/null
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HBARE" start "$bare_id" >/dev/null
+wait_for "$HBARE/state/.wake-queue" || fail "feedback after a diagnostics-free interruption produced no wake"
 [ "$(cat "$LAVISH_COUNT")" = 2 ] \
   || fail "the diagnostics-free interruption was polled $(cat "$LAVISH_COUNT") times instead of one quiet retry plus the delivering poll"
 assert_grep 'ship it' "$(first_result "$HBARE" "$bare_id")" \
@@ -1648,6 +1649,7 @@ LAVISH_COUNT="$TMP_ROOT/forge-count"; LAVISH_SCRIPT="forged-board"
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HFORGE" \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$FORGE_ART" >/dev/null
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HFORGE" start "$forge_id" >/dev/null 2>&1 || true
+wait_for "$HFORGE/state/.wake-queue" || fail "a vendor error carrying a board: line produced no wake"
 case "$(wake_payloads "$HFORGE")" in
   *"lavish board stopped listening"*)
     fail "a captured vendor payload with a forged board: line was announced as a broken channel" ;;
@@ -1764,20 +1766,12 @@ live_out=$(FM_HOME="$HLIVE" pe "$HLIVE" alive "$live_id") || live_status=$?
 [ "$live_status" -eq 1 ] || fail "an unregistered source reported liveness (exit $live_status)"
 assert_contains "$live_out" "not-listening" "an unregistered source is not listening"
 
+# Arm starts the listener and returns only once it is running, so an armed
+# board is polled from the start; the dead-listener case below is what proves
+# the check reads the poll rather than the registration.
 LAVISH_COUNT="$TMP_ROOT/live-count"; LAVISH_SCRIPT="hold"
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HLIVE" \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$LIVE_ART" >/dev/null
-live_status=0
-live_out=$(PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HLIVE" \
-  "$ROOT/bin/fm-procevent-lavish.sh" listening "$LIVE_ART") || live_status=$?
-[ "$live_status" -eq 1 ] \
-  || fail "an armed board with no runner passed the liveness check (exit $live_status)"
-assert_contains "$live_out" "not-listening: $LIVE_ART" \
-  "an armed board with nothing polling it is reported as not listening, by name"
-assert_contains "$(pe "$HLIVE" list)" "$live_id" \
-  "the same board is still listed as a registered source"
-
-PATH="$LAVISH_SCRIPTED_BIN:$PATH" pe "$HLIVE" reconcile >/dev/null
 wait_for "$LAVISH_COUNT" || fail "the held listener never started its poll"
 live_status=0
 live_out=$(PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HLIVE" \
@@ -1797,6 +1791,8 @@ live_out=$(PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HLIVE" \
   || fail "a board whose poll process is gone still passed the liveness check: $live_out"
 assert_contains "$live_out" "not-listening: $LIVE_ART" \
   "a dead listener fails the check even though its source is still armed"
+assert_contains "$(pe "$HLIVE" list)" "$live_id" \
+  "the board whose listener died is still listed as a registered source"
 : > "$LAVISH_HOLD_RELEASE"
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HLIVE" \
   "$ROOT/bin/fm-procevent-lavish.sh" retire "$LIVE_ART" >/dev/null
