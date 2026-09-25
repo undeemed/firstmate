@@ -48,7 +48,8 @@ watch_bg() {  # <state> <fakebin> <out> [extra env assignments...]
   local state=$1 fakebin=$2 out=$3
   shift 3
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
-    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$@" "$WATCH" > "$out" &
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_SECONDMATE_LIVENESS_SECS=99999999 "$@" "$WATCH" > "$out" &
 }
 
 # Wait up to <limit> 0.1s ticks while <pid> stays alive; 0 if still alive, 1 if it died.
@@ -287,6 +288,25 @@ test_status_span_respects_decision_closure() {
   [ -z "$open" ] \
     || fail "span classification treated a rejected reserved-key request as an open decision: $open"
   pass "span classification retires closed decisions and surfaces rejected transitions for reconciliation"
+}
+
+# The same closure rule, classified from a nonzero offset: only the appended span
+# is folded, so an opening's liveness is decided by the lines after it.
+test_status_span_closure_from_an_offset() {
+  local dir state f offset event
+  dir=$(make_case classify-closure-offset); state="$dir/state"; f="$state/offset.status"
+  printf 'needs-decision [key=api]: pick A or B\nworking: prototyping both\n' > "$f"
+  offset=$(size_of "$f")
+  printf 'resolved [key=api]: took A\nworking: shipping A\n' >> "$f"
+  status_span_has_actionable "$f" "$offset" \
+    && fail "a close appended for a decision opened before the span was classified actionable"
+  offset=$(size_of "$f")
+  printf 'needs-decision [key=db]: pick a store\nresolved [key=db]: took sqlite\nneeds-decision [key=api]: revisit A or B\nworking: waiting\n' >> "$f"
+  event=$(status_span_first_actionable "$f" "$offset") \
+    || fail "a decision reopened inside a span from an offset was classified routine"
+  [ "$event" = "needs-decision [key=api]: revisit A or B" ] \
+    || fail "classifying from an offset reported '$event' instead of the one decision still open"
+  pass "span classification from an offset keeps closed decisions closed and live ones live"
 }
 
 test_malformed_seen_signature_reads_the_whole_log() {
@@ -1076,7 +1096,8 @@ test_secondmate_turn_ended_churning_pane_surfaced() {
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_CONFIG_OVERRIDE="$(churn_config "$dir")" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_POLL=3 FM_SIGNAL_GRACE=1 \
-    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_SECONDMATE_LIVENESS_SECS=99999999 \
+    "$WATCH" > "$out" &
   pid=$!
   wait_for_exit "$pid" 100 || fail "watcher did not surface a churning secondmate turn-end"
   grep -F "signal: $state/mate.turn-ended" "$out" >/dev/null \
@@ -1928,6 +1949,49 @@ test_actionable_signal_survives_a_later_routine_append() {
     || fail "the masked actionable signal was not queued"
   unset FM_FAKE_CREW_STATE
   pass "a captain event hidden behind a later routine append is still surfaced (queue + exit)"
+}
+
+# A status log only grows: a remote second mate's mirrored parent channel passes a
+# megabyte and thousands of keyed decisions. Deciding whether a newly appended
+# keyed decision is still open must cost the new span, not the log's lifetime.
+# Re-folding the whole log on every such signal made one poll take minutes on a
+# main home, so its liveness beacon aged past the guard's grace. Every read this
+# classification makes goes through the span-reader seam, so recording those
+# reads pins the bound independently of machine speed.
+test_keyed_decision_signal_reads_only_the_new_span() {
+  local dir state fakebin out status_file reader reads sig prior appended i pid start length
+  dir=$(make_case keyed-span-bound); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; reads="$dir/span-reads"; reader="$dir/recording-span-reader"
+  status_file="$state/task.status"
+  i=0
+  while [ "$i" -lt 60 ]; do
+    i=$((i + 1))
+    printf 'needs-decision [key=q%s]: choose option %s\nresolved [key=q%s]: took the first option\n' "$i" "$i" "$i"
+  done > "$status_file"
+  sig=$(seen_sig "$status_file"); printf '%s' "$sig" > "$state/.seen-task_status"
+  prior=$(size_of "$status_file")
+  printf 'needs-decision [key=fresh]: pick the rollout window\nworking: preparing both windows\n' >> "$status_file"
+  appended=$(( $(size_of "$status_file") - prior ))
+  cat > "$reader" <<'SH'
+#!/usr/bin/env bash
+printf '%s\t%s\n' "$2" "$3" >> "$FM_TEST_SPAN_READS"
+exec perl -e 'open my $f, "<", $ARGV[0] or exit 1; seek $f, $ARGV[1], 0 or exit 1; defined(read $f, my $b, $ARGV[2]) or exit 1; print $b or exit 1' "$1" "$2" "$3"
+SH
+  chmod +x "$reader"
+  export FM_STATUS_SPAN_READER="$reader" FM_TEST_SPAN_READS="$reads"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "watcher did not surface a keyed decision appended to a long decision history"; }
+  unset FM_STATUS_SPAN_READER FM_TEST_SPAN_READS
+  grep -F "$(printf 'signal\ttask.status\tneeds-decision:')" "$state/.wake-queue" >/dev/null \
+    || fail "the still-open keyed decision was not queued as a needs-decision: $(cat "$state/.wake-queue")"
+  [ -s "$reads" ] || fail "the classification made no read through the span reader, so the bound was not exercised"
+  while IFS=$(printf '\t') read -r start length; do
+    [ "$start" -ge "$prior" ] && [ "$length" -le "$appended" ] \
+      || fail "classifying a ${appended}-byte span read ${length} bytes from offset ${start} of a ${prior}-byte history"
+  done < "$reads"
+  pass "a keyed decision signal reads only the newly appended span, not the whole log"
 }
 
 # The captain-reported completion shape of the same masking, end to end.
@@ -3099,6 +3163,40 @@ test_wedge_threshold_defers_to_a_declared_wait_under_a_working_verdict() {
   grep -F 'demand-deep-inspection: same pane has wedge-escalated 3 times in a row' "$out" >/dev/null \
     || fail "an undeclared working lane lost the demand-deep-inspection wording: $(cat "$out")"
   pass "a declared wait is not wedge-escalated by a working verdict, while an elapsed declaration and an undeclared lane both keep the unchanged ladder"
+}
+
+# `fm-send --resolve-key default` answers a keyless decision by appending a
+# stated default-key resolved line after whatever the worker wrote last. When
+# that is a keyless pause the worker is still waiting, so the answer must not
+# put the lane back on the wedge ladder. The worker's own keyless resolved line
+# is the retraction that does.
+test_wedge_threshold_keeps_a_wait_past_a_default_key_answer() {
+  local dir state fakebin out capture window key n
+  local working='state: working · source: run-step · ci running'
+
+  dir=$(wedge_threshold_fixture default-answer-after-wait \
+    "$(printf 'needs-decision: which color\npaused: waiting on the vendor release\nresolved [key=default]: answered: blue')" 0)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  window="test:fm-wedge"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  n=1
+  while [ "$n" -le 3 ]; do
+    wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$working" absorb \
+      || fail "a default-key answer put a waiting lane on the wedge ladder at threshold $n: $(cat "$out")"
+    n=$((n + 1))
+  done
+  [ "$(wedge_stale_wakes "$state" "$window")" -eq 0 ] \
+    || fail "a default-key answer let a waiting lane queue a wedge wake: $(cat "$state/.wake-queue")"
+  [ ! -e "$state/.wedge-escalations-$key" ] \
+    || fail "a default-key answer let a waiting lane count $(cat "$state/.wedge-escalations-$key") wedge escalation(s)"
+
+  dir=$(wedge_threshold_fixture keyless-retraction \
+    "$(printf 'paused: waiting on the vendor release\nresolved: the vendor shipped')" 0)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$working" exit \
+    || fail "a worker's own keyless resolved line did not retract its wait: $(cat "$out")"
+  grep -F "possible wedge, escalation 1" "$out" >/dev/null \
+    || fail "a retracted wait did not return to the wedge ladder: $(cat "$out")"
+  pass "a default-key answer leaves a keyless wait standing, while the worker's own keyless resolved line retracts it"
 }
 
 # The other status-line record. A verified `captain-held:` transfer also reaches
@@ -6845,6 +6943,7 @@ fi
 test_status_span_actionable_classifier
 test_status_span_survives_a_later_routine_append
 test_status_span_respects_decision_closure
+test_status_span_closure_from_an_offset
 test_malformed_seen_signature_reads_the_whole_log
 test_stale_is_terminal_classifier
 test_classifier_primitives
@@ -6897,6 +6996,7 @@ test_pending_reply_escalation_signal_payload_marked_for_branch_exclusion
 test_ordinary_blocked_signal_payload_remains_branch_eligible
 test_routine_signal_payload_not_marked_needs_decision
 test_actionable_signal_survives_a_later_routine_append
+test_keyed_decision_signal_reads_only_the_new_span
 test_release_completion_survives_a_later_routine_append
 test_routine_appends_after_a_classified_event_stay_absorbed
 test_unreadable_status_reports_once_per_file_state
@@ -6938,6 +7038,7 @@ test_absorbed_replacement_wait_does_not_inherit_the_old_throttle
 test_live_declared_wait_churn_honors_the_resurface_throttle
 test_live_paused_until_controls_recheck_time
 test_wedge_threshold_defers_to_a_declared_wait_under_a_working_verdict
+test_wedge_threshold_keeps_a_wait_past_a_default_key_answer
 test_wedge_threshold_recheck_names_the_captain_for_a_held_lane
 test_wedge_threshold_defers_to_a_parked_gate_awaiting_a_human
 test_wedge_threshold_parked_gate_needs_an_unanswered_decision

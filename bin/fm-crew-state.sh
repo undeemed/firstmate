@@ -101,10 +101,14 @@
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working
 #      (the id-addressed detail read carries step words the overview does not),
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
-#      passed/checks-passed/passed-with-override -> done, failed/cancelled ->
-#      failed. passed-with-override is a passing outcome carrying an
-#      explicitly approved Test or CI exception (no-mistakes' own vocabulary),
-#      read identically to a clean passed. EXCEPT: while
+#      passed/checks-passed/passed-with-override/passed-with-skips -> done,
+#      failed/cancelled -> failed. passed-with-override is a passing outcome
+#      carrying an explicitly approved Test or CI exception (no-mistakes' own
+#      vocabulary), read identically to a clean passed. passed-with-skips is
+#      also a passing outcome (publication or CI verification was
+#      automatically skipped, no-mistakes' own vocabulary), read as done but
+#      with that skip kept visible in the detail, unlike a clean passed.
+#      EXCEPT: while
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a check of the full ci-step log overrides working -> done once checks read
@@ -426,6 +430,24 @@ mr_read_record_bounded() {  # <host> <path> <number>
   FM_PR_RECORD_MERGED=$merged
 }
 
+change_read_record_bounded() {  # <host> <number>
+  local record state merged
+  # shellcheck disable=SC2016  # The inner script expands after bash -c receives positional args.
+  if ! record=$(fm_run_timed 5 bash -c '
+    . "$1"
+    fm_pr_gerrit_read_record "$2" "$3" || exit 1
+    printf "state=%s\nmerged=%s\n" "$FM_PR_RECORD_STATE" "$FM_PR_RECORD_MERGED"
+  ' _ "$SCRIPT_DIR/fm-pr-lib.sh" "$1" "$2" 2>/dev/null); then
+    return 1
+  fi
+  state=$(printf '%s\n' "$record" | sed -n 's/^state=//p' | head -1)
+  merged=$(printf '%s\n' "$record" | sed -n 's/^merged=//p' | head -1)
+  [ -n "$state" ] || return 1
+  [ "$merged" = true ] || [ "$merged" = false ] || return 1
+  FM_PR_RECORD_STATE=$state
+  FM_PR_RECORD_MERGED=$merged
+}
+
 passed_pr_detail() {
   local provider url host path number owner repo raw_pr state_lc
   raw_pr=$(strip_quotes "$(nm_field pr)")
@@ -492,6 +514,23 @@ passed_pr_detail() {
         open|opened) printf 'run passed: PR open' ;;
         closed)      printf 'run passed: PR closed' ;;
         *)           printf 'run passed: PR state %s' "$state_lc" ;;
+      esac
+      ;;
+    gerrit)
+      if ! change_read_record_bounded "$host" "$number"; then
+        printf 'run passed: PR state unknown (unreadable)'
+        return
+      fi
+      if [ "$FM_PR_RECORD_MERGED" = true ]; then
+        printf 'run passed: PR merged'
+        return
+      fi
+      # Gerrit spells an open change NEW and a closed one ABANDONED.
+      state_lc=$(printf '%s' "$FM_PR_RECORD_STATE" | tr '[:upper:]' '[:lower:]')
+      case "$state_lc" in
+        new)       printf 'run passed: PR open' ;;
+        abandoned) printf 'run passed: PR closed' ;;
+        *)         printf 'run passed: PR state %s' "$state_lc" ;;
       esac
       ;;
     *)
@@ -1078,6 +1117,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     if [ -n "$outcome" ]; then
       case "$outcome" in
         passed|passed-with-override) RUN_STATE="done"; RUN_DETAIL=$(passed_pr_detail) ;;
+        passed-with-skips) RUN_STATE="done"; RUN_DETAIL="$(passed_pr_detail) (publication/CI verification skipped)" ;;
         checks-passed) RUN_STATE="done"; RUN_DETAIL="checks green: PR ready for review" ;;
         failed)
           if nm_reclassify_failed_run_as_held_green; then :; else
