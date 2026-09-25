@@ -498,13 +498,19 @@ FM_COMPOSER_MODE_HINT_RE_DEFAULT='^[[:space:]]*(⏵|⏸)'
 # frames then an elapsed cell, or when it carries the context-usage cell after
 # a middle dot. It is consulted only as the boundary BELOW a bare composer,
 # never on the composer row itself.
-FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K|^[[:space:]]*\[[a-zA-Z0-9_. :+-]*\]([[:space:]]*\[[a-zA-Z0-9_. :+-]*\])*[[:space:]]*$|^[[:space:]]*[●○][[:space:]]'
-# The last two alternatives above cover the rows omp PLUGINS draw under the
+FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K|^[[:space:]]*\[[a-zA-Z0-9_. :+-]*\]([[:space:]]*\[[a-zA-Z0-9_. :+-]*\])*[[:space:]]*$|[[:space:]]·[[:space:]]+\[[a-zA-Z0-9_. :+-]*\]|^[[:space:]]*[●○][[:space:]]'
+# The last three alternatives above cover the rows omp PLUGINS draw under the
 # composer, which the model/spinner/context rules never matched:
 #   - a row whose content is nothing but bracketed tokens is the hook and tool
 #     badge strip, e.g. `[axi: cdp - gh - lavish] [lint: lint] [quality]
 #     [fm-turnend-guard]`. Requiring the WHOLE row to be bracketed tokens keeps
 #     a typed line that merely contains brackets as composer input.
+#   - a row where omp's spaced middle dot separator leads straight into a
+#     bracketed badge is that same strip with ` · `-joined segments in front,
+#     e.g. `[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] ...` or
+#     `eslint prettier · [axi: ...]`. The quality score and linter names are
+#     not bracketed, so the whole-row rule missed them and an idle pane read
+#     `pending`; the separator is omp's `sep.dot`, not a keyboard character.
 #   - a row opening with a filled or hollow status bullet (U+25CF / U+25CB) is
 #     an extension state line, e.g. `● ADHD ON` or `○ ponytail: FULL`.
 # Measured 2026-09-21: with those rows unmatched, EVERY omp worker pane in this
