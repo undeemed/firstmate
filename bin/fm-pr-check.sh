@@ -6,8 +6,9 @@
 # head is that named head and is already stored on the forge.
 # The watcher check source is byte-for-byte bin/fm-pr-poll.sh; task and PR data
 # live only in a private sidecar and are never interpolated into shell source.
-# A GitHub pull request URL and a GitLab merge request URL are both accepted,
-# including a merge request on a self-hosted GitLab instance.
+# A GitHub pull request URL, a GitLab merge request URL, and a Gerrit change URL
+# are all accepted, including a merge request or change on a self-hosted
+# instance.
 # A GitHub pull request the forge reports as a draft is refused, naming the draft
 # state and recording and arming nothing: a draft cannot be merged, so a poll armed on it
 # would wait for an event that cannot occur while nobody is asked to act.
@@ -88,13 +89,26 @@ fm_pr_poll_retirement_recover_one "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" || 
   exit 1
 }
 
-# Refuse to arm a GitLab watch with no glab on PATH. The poll is silent on
+# Refuse to arm a watch with no CLI on PATH to read it. The poll is silent on
 # every error by design, so a missing CLI would be indistinguishable from a
-# merge request that is never merged. Arming is the one point where that can be
+# change that is never merged. Arming is the one point where that can be
 # reported, so the absent tool stops the watch here instead of watching nothing.
+# The Gerrit poll also needs jq, because Gerrit's status has to be read out of a
+# structured record rather than off a rendered line: the tool's own table prints
+# a change's subject before its status, and a subject is free text.
 if [ "$PROVIDER" = gitlab ] && ! command -v glab >/dev/null 2>&1; then
   echo "error: watching a GitLab merge request requires glab on PATH" >&2
   exit 1
+fi
+if [ "$PROVIDER" = gerrit ]; then
+  if ! command -v gerrit-axi >/dev/null 2>&1; then
+    echo "error: watching a Gerrit change requires gerrit-axi on PATH" >&2
+    exit 1
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "error: watching a Gerrit change requires jq on PATH" >&2
+    exit 1
+  fi
 fi
 
 # The draft state is read before anything is recorded or armed. Only a positive
@@ -113,7 +127,10 @@ fi
 # commit straight from the REST pull request resource, addressed by the owner,
 # repository, and number already parsed from the URL; plain glab exposes it only
 # inside its JSON output, which would need a JSON processor firstmate does not
-# require, so a GitLab task records no pr_head.
+# require, so a GitLab task records no pr_head, and neither does a Gerrit task:
+# a Gerrit revision names one patch set, every amend or rebase is a new patch
+# set, and bin/fm-review-diff.sh has no Gerrit path to resolve a current head
+# with, so a recorded revision would silently become the reviewed content.
 # That read is REST rather than `gh pr view --json headRefOid`, which is
 # GraphQL: bin/fm-pr-merge.sh runs this script on every task-class merge, the
 # fleet's busiest GitHub path, so it must not spend the scarcer shared GraphQL
@@ -121,7 +138,8 @@ fi
 # Both consumers already treat pr_head as optional:
 # bin/fm-teardown.sh reads the head from the forge at teardown rather than from
 # metadata and falls back to its provider-agnostic content check, and
-# bin/fm-review-diff.sh resolves the head from the remote when none is recorded.
+# bin/fm-review-diff.sh fetches a pull request head from the remote when none is
+# recorded and otherwise diffs the local branch, which is the current content.
 # bin/fm-pr-merge.sh reads a GitLab head live at merge time for the same reason,
 # and treats a recorded value that disagrees as stale rather than authoritative.
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
@@ -262,8 +280,11 @@ fi
 KIND=$(grep '^kind=' "$META" | tail -1 | cut -d= -f2- || true)
 MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
 PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-case "$MODE" in
-  no-mistakes|'') DONE_LINE="done: PR $URL checks green" ;;
+# The gate is asked about the ready report this task's worker was told to give;
+# on a Gerrit change both publishing modes report the same published line.
+case "$PROVIDER:$MODE" in
+  gerrit:*) DONE_LINE="done: PR $URL published for review" ;;
+  *:no-mistakes|*:) DONE_LINE="done: PR $URL checks green" ;;
   *) DONE_LINE="done: PR $URL" ;;
 esac
 if { [ -z "$PR_HEAD" ] || ! fm_dod_forge_head_is_named_head "$MODE"; } \
@@ -340,6 +361,10 @@ else
   echo "error: could not publish PR poll" >&2
   exit 1
 fi
+# Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
+# The merge-time re-record is not a new review-ready PR, so it writes nothing.
+[ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/fleet-ledger" ] || [ "${FM_PR_CHECK_MERGE:-}" = 1 ] \
+  || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-fleet-ledger.sh" pr_ready "$ID" "$URL" || true
 # The contribution observer uses the same authenticated check mechanism and
 # owns verdict freshness, required actors and external feedback separately from
 # the exact merged-state poll. Registration is local and performs no forge read.
