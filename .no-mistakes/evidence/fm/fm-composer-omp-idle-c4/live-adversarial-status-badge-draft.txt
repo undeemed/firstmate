@@ -1,0 +1,39 @@
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: `/shake` rips heavy tool results out of context to reclaim tokens without a full /compact —
+      `/shake images` drops just images
+
+
+Ponytail loaded: full
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Update Available
+New version 18.3.2 is available. Run: omp update
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Connected to MCP server: swarms-marketplace.
+
+
+ FMLIVE-RECAP: reply with a bold heading line, then exactly three short markdown bullet points (each starting with a
+ bold label) recapping that this is an idle lab pane waiting for its next message, then one closing sentence. Do not
+ use any tools.
+
+
+Idle lab pane: waiting for input
+
+- Status: This pane is idle. No task is running.
+- State: Nothing has changed. No files, tools, or commands were touched.
+- Waiting on: Your next message, which will set the next task.
+
+Next: send the task you want run in this pane.
+
+2026-09-26 00:24:13  Δ 3.0s   9.7K   100   12K   1.3s   37.6/s
+
+Warning: priority: Priority/fast mode rejected for this model; retried without it. Fast mode is now off.
+
+❯
+  status · [PR 12] merged, please rerun
+[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+[herdr-agent-state] [quality]
+  scratch ·  master ?3 · 󰪟 Opus 5.5                                      2.2%/1M 󰁨 ·  37.6 tok/s · 󰙺 0.08 ·  3.3s
+● ADHD ON
+○ 🐴 ponytail: ⚡ FULL

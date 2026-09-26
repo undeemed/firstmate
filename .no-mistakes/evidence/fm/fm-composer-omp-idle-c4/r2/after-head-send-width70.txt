@@ -1,0 +1,20 @@
+
+- Status: Idle. No task is in progress.
+- Work done: Nothing yet. No files were changed and no tools were
+  run.
+- Waiting on: Your next message.
+
+Next: send a task or a file path, and I'll start on it.
+
+2026-09-26 00:44:33  Δ 7.4s   7.6K   669   14K   1.5s   93.9/s
+
+❯ : Firstmate instruction waiting: list
+  '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/*.msg and, in
+  numeric order, read and act on each, then mv each handled file to
+  '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/handled/.
+[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+lint] [format] [graph] [fm-codegraph-pretool-check]
+[herdr-agent-state] [quality]
+  nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+● ADHD ON
+○ 🐴 ponytail: ⚡ FULL

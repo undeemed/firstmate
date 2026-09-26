@@ -1,0 +1,36 @@
+omp 18.3.0 in a private tmux server (-L fm-nm-c4-3661078, 150x40), scratch cwd with the plugin widget; verdicts from the real fm_tmux_composer_state (cursored) and the cursorless re-read
+tmux idle bare prompt (150 cols) | HEAD cursored=empty cursorless=empty | BASE cursored=empty cursorless=pending
+    | Connected to MCP server: swarms-marketplace.
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5                                                                               2.1%/1M 󰁨 · 󰙺
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+tmux typed draft on prompt row | HEAD cursored=pending cursorless=pending | BASE cursored=pending cursorless=pending
+    | Connected to MCP server: swarms-marketplace.
+    | ❯ fix the flaky test
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5                                                                               2.1%/1M 󰁨 · 󰙺
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+tmux cleared back to idle | HEAD cursored=empty cursorless=empty | BASE cursored=empty cursorless=pending
+    | Connected to MCP server: swarms-marketplace.
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5                                                                               2.1%/1M 󰁨 · 󰙺
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+tmux idle at 70 cols (widget word-wrapped inside [lint: lint]) | HEAD cursored=empty cursorless=empty | BASE cursored=empty cursorless=pending
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5 
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+tmux typed draft at 70 cols | HEAD cursored=pending cursorless=pending | BASE cursored=pending cursorless=pending
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5 
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL

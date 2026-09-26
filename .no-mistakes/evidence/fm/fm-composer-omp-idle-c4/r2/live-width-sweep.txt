@@ -1,0 +1,295 @@
+rect_width=54 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh -
+    | lavish] [lint: lint] [format] [graph]
+    | [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   …live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=55 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh -
+    | lavish] [lint: lint] [format] [graph]
+    | [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   …-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=56 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh -
+    | lavish] [lint: lint] [format] [graph]
+    | [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   …4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=57 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh -
+    | lavish] [lint: lint] [format] [graph]
+    | [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   …c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=58 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh -
+    | lavish] [lint: lint] [format] [graph]
+    | [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   …-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=59 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh -
+    | lavish] [lint: lint] [format] [graph]
+    | [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=60 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh -
+    | lavish] [lint: lint] [format] [graph]
+    | [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=61 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=62 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=63 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=64 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=65 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=66 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=67 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=68 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=69 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=70 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=71 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=72 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=73 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5    2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=74 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5     2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=75 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5      2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=76 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5       2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=77 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5        2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=78 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | without it. Fast mode is now off.
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5         2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=79 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | without it. Fast mode is now off.
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5          2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=80 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | without it. Fast mode is now off.
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5           2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=81 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | it. Fast mode is now off.
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5            2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=82 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | it. Fast mode is now off.
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5             2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=83 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | it. Fast mode is now off.
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format]
+    | [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5              2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=84 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | it. Fast mode is now off.
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format]
+    | [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5               2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+rect_width=85 HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+    | Fast mode is now off.
+    | 
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format]
+    | [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5                2.2%/1M 󰁨
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+width 86 unreachable (at 85)
+width 87 unreachable (at 85)
+width 88 unreachable (at 85)
+width 89 unreachable (at 85)
+width 90 unreachable (at 85)
+width 91 unreachable (at 85)
+width 92 unreachable (at 85)

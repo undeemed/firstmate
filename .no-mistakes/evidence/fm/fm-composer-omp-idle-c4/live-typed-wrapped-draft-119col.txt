@@ -1,0 +1,40 @@
+╭─── omp v18.3.0 ──────────────────────────────────────────────────────────────────────────────────╮
+│                          │ Tips                                                                  │
+│      Welcome back!       │ # for prompt actions                                                  │
+│                          │ / for commands                                                        │
+│       ████████████       │ ! to run bash                                                         │
+│          ██  ██          │ $ to run python                                                       │
+│          ██  ██          │ ───────────────────────────────────────────────────────────────────── │
+│          ▒▒  ██          │ LSP Servers                                                           │
+│              ██          │  eslint .ts .tsx .js                                                 │
+│                          │  vscode-html-language-server .html .htm                              │
+│     Claude Opus 5.5      │  vscode-css-language-server .css .scss .sass                         │
+│        anthropic         │  vscode-json-language-server .json .jsonc                            │
+│                          │ ───────────────────────────────────────────────────────────────────── │
+│                          │ Recent sessions                                                       │
+│                          │ No recent sessions                                                    │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: `/shake` rips heavy tool results out of context to reclaim tokens without a full /compact —
+      `/shake images` drops just images
+
+Ponytail loaded: full
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Update Available
+New version 18.3.2 is available. Run: omp update
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Connected to MCP server: swarms-marketplace.
+
+❯ FMLIVE-RECAP: reply with a bold heading line, then exactly three short markdown bullet points (each starting with a
+  bold label) recapping that this is an idle lab pane waiting for its next message, then one closing sentence. Do not
+  use any tools.
+[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+[herdr-agent-state] [quality]
+  scratch ·  master ?3 · 󰪟 Opus 5.5                                                                  2.1%/1M 󰁨 · 󰙺
+● ADHD ON
+○ 🐴 ponytail: ⚡ FULL

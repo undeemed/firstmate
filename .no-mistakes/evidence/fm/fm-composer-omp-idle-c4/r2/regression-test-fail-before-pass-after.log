@@ -1,0 +1,69 @@
+=== tests/fm-composer-lib.test.sh from d55edd2 against bin/fm-composer-lib.sh from 682a9694b994e429d8fcc99d0276ab79cef3b9dd ===
+ok - fm_composer_classify_content: a bare shell prompt glyph (>/$/%/#) reads unknown, never empty
+ok - fm_composer_classify_content: stripped unbordered content is unknown except verified agent glyphs
+ok - fm_composer_classify_content: a bare shell prompt carrying a command is not empty
+ok - fm_composer_classify_content: a bare prompt glyph inside a bordered composer box reads empty (claude's own idle composer)
+ok - fm_composer_classify_content: agent prompt glyphs (❯ claude, › codex, ⟩ muse) read empty bordered or bare
+ok - fm_composer_classify_content: an empty composer reads empty
+ok - fm_composer_classify_content: idle matching is limited to proven placeholder positions
+ok - fm_composer_classify_content: idle matching preserves the caller's case mode
+ok - fm_composer_classify_content: real unsubmitted text reads pending (including a popup argument-hint fill)
+ok - matrix: claude's arrow statusline is footer furniture, not a composer holding text
+ok - fm_composer_classify_screen: footer demotion needs a contiguous, glyph-proven pair
+ok - fm_composer_classify_screen: the footer zone holds for boxes, not only separator pairs
+ok - fm_composer_classify_screen: the footer zone only ever refuses, never allows
+ok - matrix: herdr half-block rules bound a bare composer's wrap region
+ok - matrix: omp's status row bounds the bare composer's wrap region
+not ok - the quality-first session-info widget row must be omp furniture
+exit=1
+=== tests/fm-composer-lib.test.sh from d55edd2 against bin/fm-composer-lib.sh from cf92a20 ===
+ok - fm_composer_classify_content: a bare shell prompt glyph (>/$/%/#) reads unknown, never empty
+ok - fm_composer_classify_content: stripped unbordered content is unknown except verified agent glyphs
+ok - fm_composer_classify_content: a bare shell prompt carrying a command is not empty
+ok - fm_composer_classify_content: a bare prompt glyph inside a bordered composer box reads empty (claude's own idle composer)
+ok - fm_composer_classify_content: agent prompt glyphs (❯ claude, › codex, ⟩ muse) read empty bordered or bare
+ok - fm_composer_classify_content: an empty composer reads empty
+ok - fm_composer_classify_content: idle matching is limited to proven placeholder positions
+ok - fm_composer_classify_content: idle matching preserves the caller's case mode
+ok - fm_composer_classify_content: real unsubmitted text reads pending (including a popup argument-hint fill)
+ok - matrix: claude's arrow statusline is footer furniture, not a composer holding text
+ok - fm_composer_classify_screen: footer demotion needs a contiguous, glyph-proven pair
+ok - fm_composer_classify_screen: the footer zone holds for boxes, not only separator pairs
+ok - fm_composer_classify_screen: the footer zone only ever refuses, never allows
+ok - matrix: herdr half-block rules bound a bare composer's wrap region
+ok - matrix: omp's status row bounds the bare composer's wrap region
+not ok - widget row word-wrapped inside a badge reads empty: expected empty, got 'pending'
+exit=1
+=== tests/fm-composer-lib.test.sh from d55edd2 against bin/fm-composer-lib.sh from d55edd205d96d13067d0fe0d45cca664d3f1a434 ===
+ok - fm_composer_classify_content: a bare shell prompt glyph (>/$/%/#) reads unknown, never empty
+ok - fm_composer_classify_content: stripped unbordered content is unknown except verified agent glyphs
+ok - fm_composer_classify_content: a bare shell prompt carrying a command is not empty
+ok - fm_composer_classify_content: a bare prompt glyph inside a bordered composer box reads empty (claude's own idle composer)
+ok - fm_composer_classify_content: agent prompt glyphs (❯ claude, › codex, ⟩ muse) read empty bordered or bare
+ok - fm_composer_classify_content: an empty composer reads empty
+ok - fm_composer_classify_content: idle matching is limited to proven placeholder positions
+ok - fm_composer_classify_content: idle matching preserves the caller's case mode
+ok - fm_composer_classify_content: real unsubmitted text reads pending (including a popup argument-hint fill)
+ok - matrix: claude's arrow statusline is footer furniture, not a composer holding text
+ok - fm_composer_classify_screen: footer demotion needs a contiguous, glyph-proven pair
+ok - fm_composer_classify_screen: the footer zone holds for boxes, not only separator pairs
+ok - fm_composer_classify_screen: the footer zone only ever refuses, never allows
+ok - matrix: herdr half-block rules bound a bare composer's wrap region
+ok - matrix: omp's status row bounds the bare composer's wrap region
+ok - matrix: omp plugin widget rows under a bare composer are furniture on real captures
+ok - matrix: pi's separated composer needs identity + structure; the blank row alone never proves it
+ok - matrix: opencode's left-bar composer reads empty everywhere and scans the full active run
+ok - fm_composer_classify_screen: the bare composer's wrap region stays identified; structure breaks it
+ok - fm_composer_classify_screen: a row-leading agent glyph reanchors the live composer
+ok - fm_composer_classify_screen: a lower dead shell invalidates only cursorless stale composers
+ok - fm_composer_classify_screen: cursorless bare wrap regions participate in verdicts
+ok - fm_composer_classify_screen: cursorless containers reject only contiguous unclaimed activity
+ok - fm_composer_classify_screen: the bottom-most candidate wins; stale banners cannot
+ok - fm_composer_classify_screen: incomplete lower structure invalidates stale boxes
+ok - fm_composer_classify_screen: titled bottoms retain full box geometry
+ok - fm_composer_classify_screen: a proven box tolerates a bottom-border cursor
+ok - fm_composer_extract_selected_content: scopes user content and excludes furniture
+ok - fm_composer_queued_enter_verdict: pending + busy returns empty (queued Enter)
+ok - fm_composer_queued_enter_verdict: pending + idle/unknown stays pending
+ok - fm_composer_queued_enter_verdict: only proven pending is converted
+exit=0

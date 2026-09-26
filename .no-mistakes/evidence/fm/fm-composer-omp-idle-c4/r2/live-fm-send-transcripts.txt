@@ -1,0 +1,26 @@
+$ fm-send.sh omplive "FMLIVE-STEER-BASE: please check the inbox"   # BASE classifier (682a969), pane rect width 70
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at /tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox/001.msg and the watcher will re-ring
+exit=0
+--- prompts omp received during this send: 0
+
+$ fm-send.sh omplive "FMLIVE-STEER-HEAD: please check the inbox"   # HEAD classifier (d55edd2), pane rect width 70
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+exit=0
+--- prompts omp received during this send: 2
+{"at":"2026-09-26T00:49:27.365Z","prompt":": Firstmate instruction waiting: list '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/handled/."}
+{"at":"2026-09-26T00:49:28.476Z","prompt":": Firstmate instruction waiting: list '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/handled/."}
+
+$ fm-send.sh omplive "FMLIVE-STEER-HEAD-54: please check the inbox"   # HEAD classifier (d55edd2), pane rect width 54
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+exit=0
+--- prompts omp received during this send: 2
+{"at":"2026-09-26T00:50:10.580Z","prompt":": Firstmate instruction waiting: list '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/handled/."}
+{"at":"2026-09-26T00:50:11.832Z","prompt":": Firstmate instruction waiting: list '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '/tmp/nm-c4-live.pWawmY/fmhome/state/omplive.inbox'/handled/."}
+

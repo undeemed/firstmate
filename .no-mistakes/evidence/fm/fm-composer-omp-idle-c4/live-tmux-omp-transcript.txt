@@ -1,0 +1,15 @@
+tmux (private socket, 150x40) idle omp:
+  HEAD=empty  BASE=empty
+tmux typed 'fix the flaky test':
+  HEAD=pending  BASE=pending
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Connected to MCP server: swarms-marketplace.
+❯ fix the flaky test
+[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+  fmtest-01M3/scratch ·  master ?3 · 󰪟 Opus 5.5                                                                                     2.1%/1M 󰁨 · 󰙺
+● ADHD ON
+○ 🐴 ponytail: ⚡ FULL
+
+tmux cleared, idle again (cursored): HEAD=empty
+tmux idle CURSORLESS read (the read every non-tmux backend performs): HEAD=empty  BASE=pending
+tmux typed CURSORLESS: HEAD=pending  BASE=pending

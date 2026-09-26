@@ -1,0 +1,22 @@
+$ fm-control.sh omplive exit   # BASE classifier (682a969), idle omp pane, rect width 54
+error: task omplive's composer visibly holds pending text; refusing to type the /quit exit command because it would concatenate onto that text. Clear or submit the pending text, then retry 'exit'
+exit=1
+--- herdr agent get w2:p1 afterwards:
+{"agent":"omp","status":"idle"}
+--- pane tail afterwards:
+[quality]
+  …live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5
+● ADHD ON
+○ 🐴 ponytail: ⚡ FULL
+
+$ fm-control.sh omplive exit   # HEAD classifier (d55edd2), idle omp pane, rect width 54
+stopped omplive harness=omp backend=herdr endpoint=fm-lab-ompc4-3311741-18962:w2:p1 worktree=/tmp/nm-c4-live.pWawmY/scratch
+exit=0
+--- herdr agent get w2:p1 afterwards:
+{"agent":null,"status":null}
+--- pane tail afterwards:
+-7402-97c3-8fc65282a3c2
+ubuntu@vps-7560d371:/tmp/nm-c4-live.pWawmY/scratch$
+
+ubuntu@vps-7560d371:/tmp/nm-c4-live.pWawmY/scratch$
+
