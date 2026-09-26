@@ -1,0 +1,20 @@
+[0m[48;2;33;32;46m                                                                   [0m
+
+[0m[1mIdle lab pane: waiting for input[0m                                   
+                                                                   
+[0m[38;2;196;167;231m- [0m[1mStatus:[0m This pane is idle. No task is running.                   
+[0m[38;2;196;167;231m- [0m[1mState:[0m Nothing has changed. No files, tools, or commands were    
+  touched.                                                         
+[0m[38;2;196;167;231m- [0m[1mWaiting on:[0m Your next message, which will set the next task.     
+                                                                   
+Next: send the task you want run in this pane.                     
+
+[0m[38;2;144;140;170m2026-09-26 00:24:13  Δ 3.0s   9.7K   100   12K   1.3s   37.6/s[0m
+
+❯                                                                  
+[0m[38;2;144;140;170m[quality][0m [0m[38;2;235;111;146m42%[0m[38;2;144;140;170m · [0m[38;2;196;167;231meslint prettier[0m[38;2;144;140;170m · [0m[38;2;246;193;119m[axi:[0m [0m[38;2;156;207;216mcdp[0m[38;2;144;140;170m - [0m[38;2;196;167;231mgh[0m[38;2;144;140;170m - [0m[38;2;246;193;119mlavish][0m [0m[38;2;246;193;119m[lint:[0m  
+[0m[38;2;156;207;216mlint[0m[38;2;246;193;119m][0m [0m[38;2;196;167;231m[format][0m [0m[38;2;110;106;134m[graph][0m [0m[38;2;110;106;134m[fm-codegraph-pretool-check][0m                
+[0m[38;2;110;106;134m[herdr-agent-state][0m [0m[38;2;235;111;146m[quality][0m                                      
+ [0m[38;2;156;207;216m scratch[0m [0m[38;2;64;61;82m·[0m [0m[38;2;246;193;119m master [0m[38;2;235;111;146m?3[0m [0m[38;2;64;61;82m·[0m [0m[38;2;196;167;231m󰪟 Opus 5.5[0m    [0m[38;2;144;140;170m2.2%/1M[0m [0m[38;2;144;140;170m󰁨[0m [0m[38;2;64;61;82m·[0m [0m[38;2;49;116;143m 37.6 tok/s[0m 
+● ADHD ON
+○ 🐴 ponytail: ⚡ FULL
