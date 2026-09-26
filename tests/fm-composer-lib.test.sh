@@ -486,6 +486,65 @@ test_matrix_omp_status_row_bounds_bare_composer() {
   pass "matrix: omp's status row bounds the bare composer's wrap region"
 }
 
+test_matrix_omp_plugin_rows_real_captures() {
+  # Real omp 18.3 panes (tests/captures/omp-plugin-rows): herdr-idle.ansi is
+  # the 20-row tail of a live idle worker read through Herdr `pane read
+  # --format ansi`, with the agent's multi-line recap and turn-stats rows above
+  # the bare `❯`; the tmux-* files are one scratch omp pane captured idle, then
+  # with a typed draft, then with that draft wrapped onto a second row. Under
+  # the bare `❯` sit the session-info widget (`[quality] 42% · eslint prettier
+  # · [axi: ...] ...`), the status line, and the `● ADHD ON` / `○ ponytail`
+  # extension rows. The widget row is not all brackets, so the wrap region
+  # swallowed it and every idle omp pane with a quality score or linter read
+  # `pending` on the styled read and `unknown` on the plain one, which skipped
+  # the doorbell.
+  local dir="$ROOT/tests/captures/omp-plugin-rows" f screen bare typed_row draft
+  _fm_composer_row_is_omp_status '[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]' \
+    || fail "the quality-first session-info widget row must be omp furniture"
+  _fm_composer_row_is_omp_status 'eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [quality]' \
+    || fail "the linter-first session-info widget row must be omp furniture"
+  _fm_composer_row_is_omp_status '[WIP] fix the flaky test' \
+    && fail "typed text opening with a bracket must not be mistaken for omp furniture"
+  # Each capture again with the widget row dropped, so omp's own status row
+  # (a 1M-window context cell, `33.8%/1M`) sits directly under the prompt and
+  # alone bounds the wrap region, as on a pane running no plugin widget.
+  for f in herdr-idle tmux-idle; do
+    screen=$(cat "$dir/$f.ansi")
+    assert_screen "$f omp capture reads empty" empty "$CAPS_STYLED" "$screen"
+    assert_screen "$f omp capture on a plain read" empty "$CAPS_PLAIN" "$(printf '%s\n' "$screen" | fm_composer_strip_ansi)"
+    bare=$(printf '%s\n' "$screen" | sed '/\[quality\]/d')
+    case "$(printf '%s\n' "$bare" | fm_composer_strip_ansi)" in
+      *'[quality]'*) fail "fixture drift: $f still carries the widget row" ;;
+    esac
+    assert_screen "$f omp capture without the widget row reads empty" empty "$CAPS_STYLED" "$bare"
+  done
+  # herdr-idle-width70.ansi is a live idle omp pane at a 70-column Herdr rect,
+  # where omp word-wraps the widget row inside its `[lint: lint]` badge
+  # (`... [lint:` over `lint] [format] ...`), so neither row matches alone and
+  # the pane read `pending` styled and `unknown` plain, skipping the doorbell.
+  screen=$(cat "$dir/herdr-idle-width70.ansi")
+  assert_screen "widget row word-wrapped inside a badge reads empty" empty "$CAPS_STYLED" "$screen"
+  assert_screen "widget row word-wrapped inside a badge on a plain read" empty "$CAPS_PLAIN" "$(printf '%s\n' "$screen" | fm_composer_strip_ansi)"
+  # A draft whose first line is blank leaves the `❯` row bare, so its typed
+  # second row is the only content; a spaced middle dot followed by a bracketed
+  # token or a context-shaped `5%/1M` there is still typed text, and directly
+  # above the width-70 split widget it never joins the widget's rows.
+  for typed_row in 'status · [PR 12] merged, please rerun' 'bump model · window to 5%/1M'; do
+    _fm_composer_row_is_omp_status "$typed_row" \
+      && fail "typed row '$typed_row' must not be mistaken for omp furniture"
+    for f in herdr-idle tmux-idle herdr-idle-width70; do
+      draft=$(awk -v typed="$typed_row" '{ print } /^❯/ { print "  " typed }' "$dir/$f.ansi")
+      assert_screen "$f with '$typed_row' typed under a bare prompt stays pending" pending "$CAPS_STYLED" "$draft"
+    done
+  done
+  for f in tmux-typed tmux-wrapped; do
+    screen=$(cat "$dir/$f.ansi")
+    assert_screen "$f omp capture stays pending" pending "$CAPS_STYLED" "$screen"
+    assert_screen "$f omp capture without the widget row stays pending" pending "$CAPS_STYLED" "$(printf '%s\n' "$screen" | sed '/\[quality\]/d')"
+  done
+  pass "matrix: omp plugin widget rows under a bare composer are furniture on real captures"
+}
+
 # codex_cell <grey> <glyph>: one codex 0.154 starfield cell exactly as the
 # harness draws it - a truecolor grey foreground, the composer's grey
 # background, the braille glyph, then a reset.
@@ -928,6 +987,7 @@ test_matrix_muse_truecolor_glyph_survives_signal_loss
 test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_omp_status_row_bounds_bare_composer
+test_matrix_omp_plugin_rows_real_captures
 test_matrix_codex_idle_starfield_furniture
 test_matrix_pi_separated_needs_identity
 test_matrix_opencode_leftbar_signals
