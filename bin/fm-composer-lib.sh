@@ -495,22 +495,28 @@ FM_COMPOSER_MODE_HINT_RE_DEFAULT='^[[:space:]]*(⏵|⏸)'
 # preset's `pi` is deliberately absent because that preset's `sep.dot` is
 # ` - `, so its status row never carries a middle dot and a `pi ·` alternative
 # could only ever match typed text), when it opens with one of omp's spinner
-# frames then an elapsed cell, or when it carries the context-usage cell after
-# a middle dot. It is consulted only as the boundary BELOW a bare composer,
-# never on the composer row itself.
-FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+(\.[0-9]+)?[KM]|^[[:space:]]*\[[a-zA-Z0-9_. :+-]*\]([[:space:]]*\[[a-zA-Z0-9_. :+-]*\])*[[:space:]]*$|[[:space:]]·[[:space:]]+\[[a-zA-Z0-9_. :+-]*\]|^[[:space:]]*[●○][[:space:]]'
+# frames then an elapsed cell, or when it carries omp's context-usage cell
+# after a middle dot: the `icon.context` glyph (`◫` unicode, `` nerd)
+# then the usage, e.g. ` 33.8%/1M` on omp 18.3.0 with a 1M window. The
+# glyph is what makes it omp's cell, so typed prose such as `bump model ·
+# window to 5%/1M` stays composer input. It is consulted only as the boundary
+# BELOW a bare composer, never on the composer row itself.
+FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*(◫|)[[:space:]]+[0-9]+(\.[0-9]+)?%/[0-9]+(\.[0-9]+)?[KM]|^[[:space:]]*\[[a-zA-Z0-9_. :+-]*\]([[:space:]]*\[[a-zA-Z0-9_. :+-]*\])*[[:space:]]*$|[[:space:]]·[[:space:]]+(\[[a-zA-Z0-9_. :+-]*\][[:space:]]*)+$|^[[:space:]]*[●○][[:space:]]'
 # The last three alternatives above cover the rows omp PLUGINS draw under the
 # composer, which the model/spinner/context rules never matched:
 #   - a row whose content is nothing but bracketed tokens is the hook and tool
 #     badge strip, e.g. `[axi: cdp - gh - lavish] [lint: lint] [quality]
 #     [fm-turnend-guard]`. Requiring the WHOLE row to be bracketed tokens keeps
 #     a typed line that merely contains brackets as composer input.
-#   - a row where omp's spaced middle dot separator leads straight into a
-#     bracketed badge is that same strip with ` · `-joined segments in front,
-#     e.g. `[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] ...` or
-#     `eslint prettier · [axi: ...]`. The quality score and linter names are
-#     not bracketed, so the whole-row rule missed them and an idle pane read
-#     `pending`; the separator is omp's `sep.dot`, not a keyboard character.
+#   - a row where omp's spaced middle dot separator leads into bracketed badges
+#     that run to the END of the row is that same strip with ` · `-joined
+#     segments in front, e.g. `[quality] 42% · eslint prettier · [axi: cdp -
+#     gh - lavish] [lint: lint]` or `eslint prettier · [axi: ...] [quality]`.
+#     The quality score and linter names are not bracketed, so the whole-row
+#     rule missed them and an idle pane read `pending`. Requiring badges
+#     through the row's end keeps a typed row such as `status · [PR 12]
+#     merged, please rerun` as composer input; a widget row cut off mid-badge
+#     on a narrow pane is not furniture either, which reads non-empty.
 #   - a row opening with a filled or hollow status bullet (U+25CF / U+25CB) is
 #     an extension state line, e.g. `● ADHD ON` or `○ ponytail: FULL`.
 # Measured 2026-09-21: with those rows unmatched, EVERY omp worker pane in this
