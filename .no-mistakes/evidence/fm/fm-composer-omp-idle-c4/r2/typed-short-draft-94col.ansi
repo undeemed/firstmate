@@ -1,0 +1,20 @@
+
+[0m[1mLab pane idle: waiting for your next message[0m                                                 
+                                                                                             
+[0m[38;2;196;167;231m- [0m[1mStatus:[0m Idle. No task is in progress.                                                      
+[0m[38;2;196;167;231m- [0m[1mWork done:[0m Nothing yet. No files were changed and no tools were run.                       
+[0m[38;2;196;167;231m- [0m[1mWaiting on:[0m Your next message.                                                             
+                                                                                             
+Next: send a task or a file path, and I'll start on it.                                      
+
+[0m[38;2;144;140;170m2026-09-26 00:44:33  Δ 7.4s   7.6K   669   14K   1.5s   93.9/s[0m                          
+
+[0m[38;2;246;193;119mWarning: priority: Priority/fast mode rejected for this model; retried without it. Fast mode [0m
+[0m[38;2;246;193;119mis now off.[0m                                                                                  
+
+❯ [0m[38;2;229;229;231mfix the flaky test[0m                                                                         
+[0m[38;2;144;140;170m[quality][0m [0m[38;2;235;111;146m42%[0m[38;2;144;140;170m · [0m[38;2;196;167;231meslint prettier[0m[38;2;144;140;170m · [0m[38;2;246;193;119m[axi:[0m [0m[38;2;156;207;216mcdp[0m[38;2;144;140;170m - [0m[38;2;196;167;231mgh[0m[38;2;144;140;170m - [0m[38;2;246;193;119mlavish][0m [0m[38;2;246;193;119m[lint:[0m [0m[38;2;156;207;216mlint[0m[38;2;246;193;119m][0m [0m[38;2;196;167;231m[format][0m [0m[38;2;110;106;134m[graph][0m     
+[0m[38;2;110;106;134m[fm-codegraph-pretool-check][0m [0m[38;2;110;106;134m[herdr-agent-state][0m [0m[38;2;235;111;146m[quality][0m                                   
+ [0m[38;2;156;207;216m nm-c4-live.pWawmY/scratch[0m [0m[38;2;64;61;82m·[0m [0m[38;2;246;193;119m master [0m[38;2;235;111;146m?3[0m [0m[38;2;64;61;82m·[0m [0m[38;2;196;167;231m󰪥 Opus 5.5[0m            [0m[38;2;144;140;170m2.2%/1M[0m [0m[38;2;144;140;170m󰁨[0m [0m[38;2;64;61;82m·[0m [0m[38;2;49;116;143m 93.9 tok/s[0m 
+● ADHD ON
+○ 🐴 ponytail: ⚡ FULL

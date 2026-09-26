@@ -1,0 +1,119 @@
+rect_width=58 styled HEAD=pending BASE=pending | plain HEAD=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh -
+    | lavish] [lint: lint] [format] [graph]
+    | [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5       2.2%/1M 󰁨
+
+rect_width=60 styled HEAD=pending BASE=pending | plain HEAD=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh -
+    | lavish] [lint: lint] [format] [graph]
+    | [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5         2.2%/1M 󰁨
+
+rect_width=62 styled HEAD=empty BASE=pending | plain HEAD=empty
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5           2.2%/1M 󰁨
+    | ● ADHD ON
+
+rect_width=64 styled HEAD=empty BASE=pending | plain HEAD=empty
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5             2.2%/1M 󰁨
+    | ● ADHD ON
+
+rect_width=65 styled HEAD=empty BASE=pending | plain HEAD=empty
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5              2.2%/1M 󰁨
+    | ● ADHD ON
+
+rect_width=66 styled HEAD=empty BASE=pending | plain HEAD=empty
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5               2.2%/1M 󰁨
+    | ● ADHD ON
+
+rect_width=67 styled HEAD=empty BASE=pending | plain HEAD=empty
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish]
+    | [lint: lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5                2.2%/1M 󰁨
+    | ● ADHD ON
+
+rect_width=68 styled HEAD=pending BASE=pending | plain HEAD=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5                 2.2%/1M 󰁨
+    | ● ADHD ON
+
+rect_width=69 styled HEAD=pending BASE=pending | plain HEAD=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5                  2.2%/1M 󰁨
+    | ● ADHD ON
+
+rect_width=70 styled HEAD=pending BASE=pending | plain HEAD=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5    2.2%/1M 󰁨 ·  37.6 tok/s
+    | ● ADHD ON
+
+rect_width=71 styled HEAD=pending BASE=pending | plain HEAD=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5     2.2%/1M 󰁨 ·  37.6 tok/s
+    | ● ADHD ON
+
+rect_width=72 styled HEAD=pending BASE=pending | plain HEAD=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5      2.2%/1M 󰁨 ·  37.6 tok/s
+    | ● ADHD ON
+
+rect_width=75 styled HEAD=empty BASE=pending | plain HEAD=empty
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state]
+    | [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5         2.2%/1M 󰁨 ·  37.6 tok/s
+    | ● ADHD ON
+
+rect_width=80 styled HEAD=empty BASE=pending | plain HEAD=empty
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint]
+    | [format] [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5     2.2%/1M 󰁨 ·  37.6 tok/s · 󰙺 0.08
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL
+
+rect_width=85 styled HEAD=empty BASE=pending | plain HEAD=empty
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format]
+    | [graph] [fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5          2.2%/1M 󰁨 ·  37.6 tok/s · 󰙺 0.08
+    | ● ADHD ON
+    | ○ 🐴 ponytail: ⚡ FULL

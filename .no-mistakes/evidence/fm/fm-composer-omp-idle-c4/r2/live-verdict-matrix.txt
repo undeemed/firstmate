@@ -1,0 +1,17 @@
+idle-fresh-94col | rect_width=94 | HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+idle-after-recap-94col | rect_width=94 | HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+typed-short-draft-94col | rect_width=94 | HEAD styled=pending plain=unknown | BASE styled=pending plain=unknown
+typed-wrapped-draft-ending-in-badges-94col | rect_width=94 | HEAD styled=pending plain=unknown | BASE styled=pending plain=unknown
+adversarial-bare-prompt-status-badge-row-94col | rect_width=94 | HEAD styled=pending plain=unknown | BASE styled=pending plain=unknown
+adversarial-bare-prompt-context-cell-row-94col | rect_width=94 | HEAD styled=pending plain=unknown | BASE styled=pending plain=unknown
+idle-after-recap-width70 | rect_width=70 | HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+adversarial-draft-directly-above-split-widget-width70 | rect_width=70 | HEAD styled=pending plain=unknown | BASE styled=pending plain=unknown
+adversarial-bare-prompt-status-badge-row-width70 | rect_width=70 | HEAD styled=pending plain=unknown | BASE styled=pending plain=unknown
+typed-short-draft-width70 | rect_width=70 | HEAD styled=pending plain=unknown | BASE styled=pending plain=unknown
+probe-draft-ending-in-badge-softwrapped-width70 | rect_width=70 | HEAD styled=pending plain=unknown | BASE styled=pending plain=unknown
+probe-draft-ending-in-badge-one-row-width70 | rect_width=70 | HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+pre-send-base-width70 | rect_width=70 | HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+pre-send-head-width70 | rect_width=70 | HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+after-head-send-width70 | rect_width=70 | HEAD styled=pending plain=unknown | BASE styled=pending plain=unknown
+pre-send-head-width54 | rect_width=54 | HEAD styled=empty plain=empty | BASE styled=pending plain=unknown
+pre-control-exit-width54 | rect_width=54 | HEAD styled=empty plain=empty | BASE styled=pending plain=unknown

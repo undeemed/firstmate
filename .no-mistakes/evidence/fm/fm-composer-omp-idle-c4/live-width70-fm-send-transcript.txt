@@ -1,0 +1,13 @@
+rect_width=70 styled HEAD=pending BASE=pending | plain HEAD=unknown
+    | ❯
+    | [quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint:
+    | lint] [format] [graph] [fm-codegraph-pretool-check]
+    | [herdr-agent-state] [quality]
+    |   scratch ·  master ?3 · 󰪟 Opus 5.5    2.2%/1M 󰁨 ·  37.6 tok/s
+    | ● ADHD ON
+
+$ fm-send.sh omplive '...' (HEAD classifier, idle omp pane at rect width 70)
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at /tmp/fmtest-01M3/fmhome/state/omplive.inbox/003.msg and the watcher will re-ring
+exit=0
+--- prompts omp received:

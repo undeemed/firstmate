@@ -1,0 +1,28 @@
+Live omp composer verdict matrix - run 01M3DFJMCPW574481DMX8NNV5T, 2026-09-26
+Product: omp 18.3.0 (user plugins: ponytail 4.10.0, i-have-adhd 0.3.0, custom-banners session-info widget) in an isolated Herdr 0.9.1 lab session
+(fm-lab-omp-idle-2330019-9955) provisioned/torn down through bin/fm-herdr-lab.sh; every Herdr call routed through the lab helper via a PATH shim.
+Scratch cwd mirrors the reported widget: .eslintrc.json, .prettierrc, .sentrux/baseline.json (quality 42%).
+Verdicts come from the real adapter `fm_backend_composer_state herdr <lab>:w1:p1`, sourced from HEAD (cf92a20) or from the base tree (682a969).
+"Plain" = the adapter's styled=0 fallback, driven by making the shim refuse `pane read --format ansi`.
+
+Scenario                                                   | HEAD styled | BASE styled | HEAD plain | BASE plain
+-----------------------------------------------------------|-------------|-------------|------------|-----------
+Idle bare prompt, widget+status+ADHD+ponytail rows (119c)  | empty       | pending     | empty      | unknown
+Idle after a real model turn, multi-line recap above (119c)| empty       | pending     | empty      | unknown
+Typed draft wrapped over 3 rows (119c)                     | pending     | pending     | -          | -
+Typed 'fix the flaky test' on the prompt row (119c)        | pending     | pending     | unknown    | -
+Bare prompt + typed row 'status · [PR 12] merged, please rerun' | pending | pending     | unknown    | unknown
+Bare prompt + typed row 'bump model · window to 5%/1M'     | pending     | pending     | unknown    | unknown
+Composer cleared back to bare prompt                       | empty       | -           | -          | -
+
+Control plane on the same live pane (temp FM_HOME, task record omplive -> lab pane, rect width 85):
+  BASE fm-send.sh omplive '...' -> "fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at .../omplive.inbox/001.msg and the watcher will re-ring" (omp received no prompt)
+  HEAD fm-send.sh omplive '...' -> exit 0, no skip notice; omp's before_agent_start received ": Firstmate instruction waiting: list '.../omplive.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '.../omplive.inbox'/handled/." (test guard extension aborted before any provider request)
+  BASE fm-control.sh omplive exit -> exit 1 "error: task omplive's composer visibly holds pending text; refusing to type the /quit exit command ..."
+  HEAD fm-control.sh omplive exit -> exit 0 "stopped omplive harness=omp backend=herdr endpoint=fm-lab-omp-idle-2330019-9955:w1:p1 ..."; herdr then reports agent_not_found (omp gone, shell remains)
+
+tmux backend (private socket, 150x40, same omp setup): cursored idle HEAD=empty BASE=empty; CURSORLESS idle HEAD=empty BASE=pending; typed HEAD=pending BASE=pending (cursored and cursorless).
+
+Width sweep with an attached lab viewer (HEAD styled): empty at rect widths 62-67 and 75-85; PENDING at 58-60 (accepted narrow band) and at 68-72, where
+omp word-wraps the widget between '[lint:' and 'lint]' so the first widget row ends in a half badge. At rect 70, HEAD fm-send still printed
+"fm-send: doorbell skipped (composer visibly holds pending text)" and omp received nothing. See live-width-sweep.txt and live-width70-*.

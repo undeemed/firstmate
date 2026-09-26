@@ -1,0 +1,20 @@
+╰──────────────────────────┴──────────────────────────────────────────────────────────────╯
+ Tip: Pair up live: `/collab` shares your session through an end-to-end encrypted relay
+      link — a teammate runs `/join <link>` to watch tool calls stream and prompt the agent
+      from their own omp
+
+Ponytail loaded: full
+
+─────────────────────────────────────────────────────────────────────────────────────────────
+Update Available
+New version 18.3.2 is available. Run: omp update
+─────────────────────────────────────────────────────────────────────────────────────────────
+
+Connected to MCP server: swarms-marketplace.
+
+❯
+[quality] 42% · eslint prettier · [axi: cdp - gh - lavish] [lint: lint] [format] [graph]
+[fm-codegraph-pretool-check] [herdr-agent-state] [quality]
+  nm-c4-live.pWawmY/scratch ·  master ?3 · 󰪥 Opus 5.5                      2.1%/1M 󰁨 · 󰙺
+● ADHD ON
+○ 🐴 ponytail: ⚡ FULL
