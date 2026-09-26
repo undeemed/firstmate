@@ -518,13 +518,21 @@ test_matrix_omp_plugin_rows_real_captures() {
     esac
     assert_screen "$f omp capture without the widget row reads empty" empty "$CAPS_STYLED" "$bare"
   done
+  # herdr-idle-width70.ansi is a live idle omp pane at a 70-column Herdr rect,
+  # where omp word-wraps the widget row inside its `[lint: lint]` badge
+  # (`... [lint:` over `lint] [format] ...`), so neither row matches alone and
+  # the pane read `pending` styled and `unknown` plain, skipping the doorbell.
+  screen=$(cat "$dir/herdr-idle-width70.ansi")
+  assert_screen "widget row word-wrapped inside a badge reads empty" empty "$CAPS_STYLED" "$screen"
+  assert_screen "widget row word-wrapped inside a badge on a plain read" empty "$CAPS_PLAIN" "$(printf '%s\n' "$screen" | fm_composer_strip_ansi)"
   # A draft whose first line is blank leaves the `❯` row bare, so its typed
   # second row is the only content; a spaced middle dot followed by a bracketed
-  # token or a context-shaped `5%/1M` there is still typed text.
+  # token or a context-shaped `5%/1M` there is still typed text, and directly
+  # above the width-70 split widget it never joins the widget's rows.
   for typed_row in 'status · [PR 12] merged, please rerun' 'bump model · window to 5%/1M'; do
     _fm_composer_row_is_omp_status "$typed_row" \
       && fail "typed row '$typed_row' must not be mistaken for omp furniture"
-    for f in herdr-idle tmux-idle; do
+    for f in herdr-idle tmux-idle herdr-idle-width70; do
       draft=$(awk -v typed="$typed_row" '{ print } /^❯/ { print "  " typed }' "$dir/$f.ansi")
       assert_screen "$f with '$typed_row' typed under a bare prompt stays pending" pending "$CAPS_STYLED" "$draft"
     done

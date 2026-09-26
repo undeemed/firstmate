@@ -1490,6 +1490,7 @@ Real captures verified these active distinctions:
   A scratch omp 18.3.0 pane holding a typed draft, and the same draft wrapped onto a second row, still read `pending`; `test_matrix_omp_plugin_rows_real_captures` pins those real captures from `tests/captures/omp-plugin-rows/`.
   A typed row `status · [PR 12] merged, please rerun` or `bump model · window to 5%/1M` under a bare `❯` also stays `pending`: the badges must reach the row's end, and a context cell counts only behind omp's `icon.context` glyph.
   omp's own status row on a 1M-window model carries its context cell as that glyph then `33.8%/1M`, and the same captures with the widget row removed pin that row as furniture too, so a pane without the widget still reads `empty`.
+  omp word-wraps the widget row at spaces, and at Herdr rect widths 68–72 (2026-09-26, omp 18.3.0) it split the `[lint: lint]` badge across two rows, so neither row matched and an idle pane still read `pending` styled and `unknown` plain; the classifier now drops the shortest run of trailing wrap rows that rejoins into the widget row, and `herdr-idle-width70.ansi` pins that pane reading `empty` on both reads while a typed row directly above the split widget stays `pending`.
 
 `tests/fm-composer-ghost.test.sh`, `tests/fm-composer-lib.test.sh`, and the Herdr composer cases pin the exact captured ANSI bytes.
 The U+2063 operational and routed-request separators were exercised through a real Pi-on-Herdr path; the byte-exact active regression is:
