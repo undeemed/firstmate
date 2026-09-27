@@ -596,6 +596,64 @@ EOF
   pass ".omp watch extension: fm_watch_arm_omp arms once, repeats as a no-op, and delivers an actionable close as one follow-up"
 }
 
+# An explicit omp followUp only queues: omp's idle drain resumes it only after
+# an assistant or tool-result tail, so an idle session whose tail is an advisor
+# card never runs the wake. The extension must therefore read the session state
+# at each wake: idle sends a plain prompt that starts a turn, streaming queues a
+# follow-up that joins the running run. Two closes cover both states in order.
+test_watch_extension_delivers_by_session_state() {
+  local repo home out status
+  repo="$TMP_ROOT/watch-idle/repo"; home="$TMP_ROOT/watch-idle/home"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-1\n' "$$"
+n=$(cat "${FM_HOME:?}/state/.e2e-fired" 2>/dev/null || echo 0)
+if [ "$n" -lt 2 ]; then
+  echo $((n + 1)) > "$FM_HOME/state/.e2e-fired"
+  sleep 1
+  printf 'signal: omp-e2e close %s\n' "$((n + 1))"
+  exit 0
+fi
+sleep 30
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync } from "node:fs";
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const handlers = new Map(); const sent = [];
+let idle = true;
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool() {},
+  sendUserMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+// An owning session_start arms without a model turn and hands over its context.
+await handlers.get("session_start")({}, { isIdle: () => idle });
+const until = async (n) => { for (let i = 0; i < 80 && sent.length < n; i += 1) await new Promise((r) => setTimeout(r, 100)); };
+await until(1);
+if (sent.length !== 1 || !sent[0].m.includes("signal: omp-e2e close 1")) throw new Error(`expected the first close, saw ${JSON.stringify(sent)}`);
+if (sent[0].o !== undefined) throw new Error(`an idle session must get a turn-starting prompt, not ${JSON.stringify(sent[0].o)}`);
+idle = false;
+await until(2);
+if (sent.length !== 2 || !sent[1].m.includes("signal: omp-e2e close 2")) throw new Error(`expected the second close, saw ${JSON.stringify(sent)}`);
+if (sent[1].o?.deliverAs !== "followUp") throw new Error(`a streaming session must queue a follow-up, not ${JSON.stringify(sent[1].o)}`);
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension delivery by session state: $out"
+  [ -z "$out" ] || fail "omp watch extension delivery by session state test printed output: $out"
+  pass ".omp watch extension: a wake starts a turn in an idle session and queues a follow-up in a streaming one"
+}
+
 # An opted-in home spawns the supervision host in the arm's place; its streamed
 # status line drives readiness and the handling handoff, and a handed-back
 # wake is delivered with every host line and the away note.
@@ -823,6 +881,7 @@ test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation
 test_watch_extension_arms_and_delivers
+test_watch_extension_delivers_by_session_state
 test_watch_extension_runs_the_supervision_host
 test_watch_extension_replays_a_host_only_boundary_across_replacement
 test_watch_extension_delivers_a_split_host_close_whole

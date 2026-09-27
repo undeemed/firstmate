@@ -9,6 +9,12 @@
 //   - pi.sendUserMessage returns synchronously (no promise) in omp, so "Pi
 //     accepted the follow-up" collapses to "the call returned"; consumption is
 //     still tracked at before_agent_start / message_start exactly as on Pi.
+//   - An explicit omp followUp never starts a turn by itself: omp's idle drain
+//     resumes a follow-up only when the transcript tail is an assistant or tool
+//     result, so a tail such as an advisor card strands the wake (verified, omp
+//     18.3.0). A wake to an idle main is therefore sent with no deliverAs,
+//     which omp documents as starting a turn when idle (and steering if a run
+//     started in between); only a streaming or unknown-state main gets followUp.
 //   - omp reports no session_shutdown reason, so EVERY shutdown with a pending
 //     actionable close persists the replacement handoff and the next owning
 //     session_start, in this process or a later one, replays it. Replaying a
@@ -47,7 +53,7 @@
 // Stale callbacks from a prior generation are no-ops against the active replacement.
 //
 // Delivery versus consumption (stated once here):
-// A main follow-up is delivered once omp accepts it (sendUserMessage returns).
+// A main wake is delivered once omp accepts it (sendUserMessage returns).
 // The successor pipeline never waits for the model to read it: a follow-up
 // queued while main is streaming joins the running run without ever raising
 // before_agent_start, so waiting on that event stalls every later close.
@@ -538,6 +544,8 @@ process.once("exit", cleanupOnProcessExit);
 export default function (pi: ExtensionAPI) {
   let generation = createGeneration();
   activateGeneration(generation);
+  // The latest session_start context; its isIdle() picks the wake delivery.
+  let sessionContext: { isIdle?: () => boolean } | undefined;
 
   async function sendWake(
     owner: SessionGeneration,
@@ -551,7 +559,7 @@ export default function (pi: ExtensionAPI) {
     );
     if (pending) owner.unconsumedWakes.set(pending.token, { content, pending });
     try {
-      await pi.sendUserMessage(content, { deliverAs: "followUp" });
+      await pi.sendUserMessage(content, sessionContext?.isIdle?.() ? undefined : { deliverAs: "followUp" });
     } catch (error) {
       if (pending) owner.unconsumedWakes.delete(pending.token);
       throw error;
@@ -1086,7 +1094,8 @@ export default function (pi: ExtensionAPI) {
     consumeWake(generation, userMessageText(message.content));
   });
 
-  pi.on?.("session_start", async () => {
+  pi.on?.("session_start", async (_event, ctx) => {
+    sessionContext = ctx;
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
     markLoaded();
