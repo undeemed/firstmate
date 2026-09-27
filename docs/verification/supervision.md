@@ -546,6 +546,25 @@ On 2026-09-22 the deterministic transition suite additionally proved that replac
 On 2026-09-02 the same suite, the strict typecheck, and the credential-free real-SDK guard were rerun against `@earendil-works/pi-coding-agent` 0.84.4 after the extension stopped waiting for `before_agent_start` before settling a main delivery; [`runtime-backends.md`](runtime-backends.md#2026-09-02-streaming-time-watcher-delivery) owns the exact commands and output.
 Observed guarantee: a wake delivered while main was streaming was followed by a verified successor and by delivery of the next actionable close, a replacement replayed only the follow-up Pi had not consumed, an exhausted restoration delivered its typed failure without launching an arm past the retry bound, and a verified successor that failed while a branch settlement still held its wake took the ordinary bounded retry once that delivery settled.
 
+omp idle-session wake delivery was verified on 2026-09-27 against omp 18.3.0 on Linux x64, in an isolated lab checkout and `HOME` driven by a local deterministic OpenAI-compatible model, with no credential read and no provider call.
+omp resumes an explicitly queued `followUp` from an idle session only when the transcript tail is an assistant or tool-result message, so an idle session whose tail is a custom message such as an advisor card kept the wake queued with no turn and persisted it into the replacement handoff at shutdown.
+With `.omp/extensions/fm-primary-omp-watch.ts` sending an idle-session wake with no `deliverAs`, the same lab started a turn carrying the wake and left no replacement handoff, while a streaming session still receives a `followUp`.
+
+```sh
+bin/fm-test-run.sh tests/fm-omp-idle-wake-live-e2e.test.sh
+tests/fm-omp-harness.test.sh
+```
+
+Observed output:
+
+```text
+ok - omp/18.3.0 starts a turn for a watcher wake in an idle session whose tail is a custom message
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=24520
+ok - .omp watch extension: a wake starts a turn in an idle session and queues a follow-up in a streaming one
+```
+
+Against the previous extension the live guard printed `not ok - omp/18.3.0: an actionable close did not start a turn in the idle session (tail role 'custom')`.
+
 The once-per-generation recovery bound and immediate handling-successor poll were verified on 2026-08-21 with the tracked Pi extension, real watcher processes, and an isolated home.
 The regression forced handling confirmation to fail, observed one recovery follow-up across the former repeat window, confirmed the successor remained live, and then proved a separate handling successor durably queued a crew event within the bounded poll window.
 
