@@ -1,0 +1,44 @@
+== before-fix-base-5da9f2b
+agent_start
+message_start role=user text=hello
+message_start role=custom text=⁣FIRSTMATE_OP: v1 session-start: ===================================================================
+message_start role=assistant text=ok
+agent_end
+-- replacement handoff at shutdown:
+session-replacement-actionable.json
+== after-fix-run1
+agent_start
+message_start role=user text=hello
+message_start role=custom text=⁣FIRSTMATE_OP: v1 session-start: ===================================================================
+message_start role=assistant text=ok
+agent_end
+agent_start
+message_start role=user text=⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /tmp/fm-omp-idle-wake.M3JFF7/project/stat
+message_start role=assistant text=ok
+agent_end
+-- replacement handoff at shutdown:
+(none)
+== after-fix-run2
+agent_start
+message_start role=user text=hello
+message_start role=custom text=⁣FIRSTMATE_OP: v1 session-start: ===================================================================
+message_start role=assistant text=ok
+agent_end
+agent_start
+message_start role=user text=⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /tmp/fm-omp-idle-wake.DnsVzD/project/stat
+message_start role=assistant text=ok
+agent_end
+-- replacement handoff at shutdown:
+(none)
+== after-fix-run3
+agent_start
+message_start role=user text=hello
+message_start role=custom text=⁣FIRSTMATE_OP: v1 session-start: ===================================================================
+message_start role=assistant text=ok
+agent_end
+agent_start
+message_start role=user text=⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /tmp/fm-omp-idle-wake.qZ9Bgp/project/stat
+message_start role=assistant text=ok
+agent_end
+-- replacement handoff at shutdown:
+(none)

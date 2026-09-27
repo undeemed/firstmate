@@ -1,0 +1,4 @@
+total 4
+drwxr-xr-x 2 ubuntu ubuntu  60 Sep 27 11:56 .
+drwxr-xr-x 3 ubuntu ubuntu  60 Sep 27 11:56 ..
+-rw------- 1 ubuntu ubuntu 184 Sep 27 11:56 session-replacement-actionable.json

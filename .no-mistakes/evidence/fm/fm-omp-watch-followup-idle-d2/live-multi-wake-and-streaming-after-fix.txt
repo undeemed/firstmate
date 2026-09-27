@@ -1,0 +1,38 @@
+wake1: idle session (tail 'custom') started turn; agent_end count=2
+before wake2: tail role=custom
+wake2: idle session (tail 'custom') started turn; agent_end count=3
+streaming close fired at 11:59:13
+ordered transcript:
+  agent_start
+  message_start role=user text=hello
+  message_start role=custom text=⁣FIRSTMATE_OP: v1 session-start: ================================================================================
+SESSION START - /tmp/fm-om
+  message_start role=assistant text=ok
+  assistant_end
+  agent_end
+  agent_start
+  message_start role=user text=⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /tmp/fm-omp-idle-wake.uwfxOV/project/state/idle-wake.status
+
+Run bin/fm-wake-drai
+  message_start role=assistant text=ok
+  assistant_end
+  agent_end
+  agent_start
+  message_start role=user text=⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /tmp/fm-omp-idle-wake.uwfxOV/project/state/idle-wake2.status
+
+Run bin/fm-wake-dra
+  message_start role=assistant text=ok
+  assistant_end
+  agent_end
+  agent_start
+  message_start role=user text=SLOWPLEASE take your time
+  message_start role=assistant text=ok
+  assistant_end
+  message_start role=user text=⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /tmp/fm-omp-idle-wake.uwfxOV/project/state/stream-wake.status
+
+Run bin/fm-wake-dr
+  message_start role=assistant text=ok
+  assistant_end
+  agent_end
+no replacement handoff left at shutdown
+ok - omp/18.3.0: two idle wakes each started a turn and a streaming wake was queued as a follow-up and consumed

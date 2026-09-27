@@ -1,0 +1,45 @@
+
+╭─── omp v18.3.0 ──────────────────────────────────────────────────────────────────────────────────╮
+│                          │ Tips                                                                  │
+│      Welcome back!       │ # for prompt actions                                                  │
+│                          │ / for commands                                                        │
+│       ████████████       │ ! to run bash                                                         │
+│          ██  ██          │ $ to run python                                                       │
+│          ██  ██          │ ───────────────────────────────────────────────────────────────────── │
+│          ▒▒  ██          │ LSP Servers                                                           │
+│              ██          │ ● vscode-html-language-server .html .htm                              │
+│                          │ ● vscode-css-language-server .css .scss .sass                         │
+│      deterministic       │ ● vscode-json-language-server .json .jsonc                            │
+│      idle-wake-lab       │ ● bashls .sh .bash .zsh                                               │
+│                          │ ───────────────────────────────────────────────────────────────────── │
+│                          │ Recent sessions                                                       │
+│                          │ No recent sessions                                                    │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: Hit a Codex rate limit? `/usage reset` spends a saved reset credit to immediately restore your
+      quota
+
+
+ hello
+
+
+ lab-reply-32
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                              │
+│ 📦 idle-wake-lab-note                                                                                                                                        │
+│                                                                                                                                                              │
+│ LAB-CUSTOM-TAIL-NOTE                                                                                                                                         │
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ watcher: started omp extension arm child 1; future ordinary re-arms are automatic; call fm_watch_arm_omp again only after a later notification says the cycle
+ is missing, failed, or unhealthy
+
+ π > ⬢ deterministic > 🗑 fm-omp-tui-idle.CF1Tg0/project > ⑂ fm/fm-omp-watch-followup-idle-d2 ?1 ▶─0.0%──────────────────────────────────────╎─────┃────────128K─
+╰─
+
+

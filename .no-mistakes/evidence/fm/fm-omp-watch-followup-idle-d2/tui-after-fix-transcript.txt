@@ -1,0 +1,85 @@
+--- snapshot 01-started
+│                          │ Recent sessions                                                       │
+│                          │ No recent sessions                                                    │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: Hit a Codex rate limit? `/usage reset` spends a saved reset credit to immediately restore your
+      quota
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.3.4 is available. Run: omp update
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ π > ⬢ deterministic > 🗑 fm-omp-tui-idle.CF1Tg0/project > ⑂ fm/fm-omp-watch-followup-idle-d2 ?1 ▶──────────────24%──────────────────────────╎─────┃────────128K─
+╰─
+WARN: no first reply
+--- snapshot 02-idle-armed-custom-tail
+│          ██  ██          │ $ to run python                                                       │
+│          ██  ██          │ ───────────────────────────────────────────────────────────────────── │
+│          ▒▒  ██          │ LSP Servers                                                           │
+│              ██          │ ● vscode-html-language-server .html .htm                              │
+│                          │ ● vscode-css-language-server .css .scss .sass                         │
+│      deterministic       │ ● vscode-json-language-server .json .jsonc                            │
+│      idle-wake-lab       │ ● bashls .sh .bash .zsh                                               │
+│                          │ ───────────────────────────────────────────────────────────────────── │
+│                          │ Recent sessions                                                       │
+│                          │ No recent sessions                                                    │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: Hit a Codex rate limit? `/usage reset` spends a saved reset credit to immediately restore your
+      quota
+ hello
+ lab-reply-32
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                              │
+│ 📦 idle-wake-lab-note                                                                                                                                        │
+│                                                                                                                                                              │
+│ LAB-CUSTOM-TAIL-NOTE                                                                                                                                         │
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ watcher: started omp extension arm child 1; future ordinary re-arms are automatic; call fm_watch_arm_omp again only after a later notification says the cycle
+ is missing, failed, or unhealthy
+ π > ⬢ deterministic > 🗑 fm-omp-tui-idle.CF1Tg0/project > ⑂ fm/fm-omp-watch-followup-idle-d2 ?1 ▶─0.0%──────────────────────────────────────╎─────┃────────128K─
+╰─
+model requests before wake: 32
+close fired at 12:05:17
+--- snapshot 03-after-wake
+│      idle-wake-lab       │ ● bashls .sh .bash .zsh                                               │
+│                          │ ───────────────────────────────────────────────────────────────────── │
+│                          │ Recent sessions                                                       │
+│                          │ No recent sessions                                                    │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: Hit a Codex rate limit? `/usage reset` spends a saved reset credit to immediately restore your
+      quota
+ hello
+ lab-reply-32
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                              │
+│ 📦 idle-wake-lab-note                                                                                                                                        │
+│                                                                                                                                                              │
+│ LAB-CUSTOM-TAIL-NOTE                                                                                                                                         │
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /tmp/fm-omp-tui-idle.CF1Tg0/project/state/tui-idle-wake.status
+ Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+ lab-reply-33
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                              │
+│ 📦 idle-wake-lab-note                                                                                                                                        │
+│                                                                                                                                                              │
+│ LAB-CUSTOM-TAIL-NOTE                                                                                                                                         │
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ π > ⬢ deterministic > 🗑 fm-omp-tui-idle.CF1Tg0/project > ⑂ fm/fm-omp-watch-followup-idle-d2 ?1 ▶─0.0%──────────────────────────────────────╎─────┃────────128K─
+╰─
+model requests after wake: 33
+RESULT: turn-started
