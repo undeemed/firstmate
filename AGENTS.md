@@ -336,8 +336,10 @@ On a `no-mistakes-prod-only` project, classify the task's surface: internal-only
 An unregistered project or absent registry resolves to `no-mistakes` with yolo off, and the registration gap goes to the captain.
 Record the resulting mode, `yolo` merge posture, and the one-line reason for any deviation in the backlog item note.
 
-Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
-Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
+At intake, decompose multi-part work into independently buildable slices and dispatch every slice at once with no concurrency cap; file or subsystem overlap is a risk signal rather than a reason to wait when each slice can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
+A shared piece that does not exist yet, such as a foundation, schema, API, fixture set, or component, is not a reason to serialize when its interface can be fixed up front: state that contract in every slice's brief, build the slices concurrently against it, and name one integration owner that reconciles them, into one PR when that is what was asked.
+A stacked PR series is a review and merge ordering, never a build ordering, so never plan work as a chain where each slice waits for the previous one to land.
+Serialize only when a slice cannot be specified until another slice's result exists (for example an investigation whose answer decides what to build), for shared mutable external state, for an incompatible concurrent migration, or for another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, genuine blockers remain durable, and the stated reason goes in the backlog item note.
 Write the task-specific brief under section 11 before spawning.
 Fill the task subsections according to section 11.
 
