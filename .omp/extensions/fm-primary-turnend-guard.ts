@@ -511,15 +511,6 @@ function runCdCheck(command: string): Promise<{ code: number; stderr: string }> 
 // a mirror of delegated work outlives the work silently. Direct reports are
 // this home's live task records plus its retirement tombstones
 // (bin/fm-retire-lib.sh), matched as whole ids in the item text or blocker.
-type TodoTask = { content?: unknown; status?: unknown; blocker?: unknown };
-// omp session entries, reduced to the fields its own todo restore reads.
-type TodoSnapshotEntry = {
-  type?: unknown;
-  customType?: unknown;
-  data?: { phases?: unknown };
-  message?: { role?: unknown; toolName?: unknown; isError?: unknown; details?: { phases?: unknown } };
-};
-
 function blockedTodoOnDirectReports(ctx: { sessionManager?: { getBranch?: () => unknown } } | undefined): string[] {
   let branch: unknown;
   try {
@@ -527,33 +518,30 @@ function blockedTodoOnDirectReports(ctx: { sessionManager?: { getBranch?: () => 
   } catch {
     return [];
   }
-  // Vendor session entries: every field read below is optional and checked.
-  const entries = (Array.isArray(branch) ? branch : []) as TodoSnapshotEntry[];
-  let phases: unknown[] | undefined;
-  for (let i = entries.length - 1; i >= 0 && !phases; i -= 1) {
-    const entry = entries[i];
-    const message = entry?.message;
-    const snapshot = entry?.type === "custom" && entry.customType === "user_todo_edit"
+  // Vendor session entries, reduced to the optional fields omp's own todo restore reads.
+  const entries = (Array.isArray(branch) ? branch : []) as {
+    type?: unknown;
+    customType?: unknown;
+    data?: { phases?: unknown };
+    message?: { role?: unknown; toolName?: unknown; isError?: unknown; details?: { phases?: unknown } };
+  }[];
+  const phases: unknown[] = entries.map((entry) =>
+    entry?.type === "custom" && entry.customType === "user_todo_edit"
       ? entry.data?.phases
-      : entry?.type === "message" && message?.role === "toolResult" && message.toolName === "todo" && !message.isError
-        ? message.details?.phases
-        : undefined;
-    if (Array.isArray(snapshot)) phases = snapshot;
-  }
-  const blocked = (phases ?? [])
-    .flatMap((phase) => (phase && typeof phase === "object" && "tasks" in phase && Array.isArray(phase.tasks) ? phase.tasks : []) as TodoTask[])
+      : entry?.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === "todo" && !entry.message.isError
+        ? entry.message.details?.phases
+        : undefined).reverse().find(Array.isArray) ?? [];
+  const blocked = phases
+    .flatMap((phase) => (phase && typeof phase === "object" && "tasks" in phase && Array.isArray(phase.tasks) ? phase.tasks : []) as
+      { content?: unknown; status?: unknown; blocker?: unknown }[])
     .filter((task) => task?.status === "blocked");
   if (blocked.length === 0 || lockOwnership() !== "owned") return [];
   const ids = new Set<string>();
   try {
     for (const name of readdirSync(state)) if (name.endsWith(".meta")) ids.add(name.slice(0, -5));
+    for (const line of readFileSync(`${state}/.retired-tasks`, "utf8").split("\n")) ids.add(line.split("\t")[1] ?? "");
   } catch {}
-  try {
-    for (const line of readFileSync(`${state}/.retired-tasks`, "utf8").split("\n")) {
-      const id = line.split("\t")[1];
-      if (id) ids.add(id);
-    }
-  } catch {}
+  ids.delete("");
   return blocked.flatMap((task) => {
     const text = `${String(task.content ?? "")} ${String(task.blocker ?? "")}`;
     const named = [...ids].filter((id) =>
