@@ -145,6 +145,7 @@ type SessionstartGeneration = {
   source: SessionstartSource;
   stopping: boolean;
   delivered: boolean;
+  sendPending: boolean;
   child: ChildProcess | null;
   processGroupId: number | null;
   childClosed: boolean;
@@ -403,6 +404,7 @@ function createSessionstartGeneration(
     source,
     stopping: false,
     delivered: false,
+    sendPending: false,
     child: null,
     processGroupId: null,
     childClosed: false,
@@ -576,7 +578,9 @@ export default function (pi: ExtensionAPI) {
     ctx: SessionStartContext,
     options?: { triggerTurn: boolean },
   ): Promise<void> => {
+    generation.sendPending = true;
     const message = await claimSessionstartMessage(generation, ctx);
+    generation.sendPending = false;
     if (!message || !sessionstartGenerationIsLive(generation)) return;
     try {
       pi.sendMessage?.(message, options);
@@ -587,7 +591,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on?.("before_agent_start", async (_event, ctx) => {
     const generation = sessionstartGeneration;
-    if (!generation) return undefined;
+    if (!generation || generation.sendPending) return undefined;
     if (!(await sessionstartSettlesInTime(generation))) {
       void sendSessionstartWhenReady(generation, ctx, { triggerTurn: true });
       return undefined;

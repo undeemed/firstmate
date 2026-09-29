@@ -558,10 +558,10 @@ mod.default(pi);
 const ctx = { sessionManager: { getSessionId: () => "s1" } };
 const delay = (s) => writeFileSync(`${process.env.FM_HOME}/state/delay`, `${s}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const timed = async (name, event) => {
+const timed = async (name, event, limitMs = 1000) => {
   const started = Date.now();
   const result = await handlers.get(name)(event, ctx);
-  if (Date.now() - started > 1000) throw new Error(`${name} blocked past the wait bound`);
+  if (Date.now() - started > limitMs) throw new Error(`${name} blocked past ${limitMs}ms`);
   return result;
 };
 const waitSent = async (n) => { for (let i = 0; i < 50 && sent.length < n; i += 1) await sleep(100); };
@@ -570,7 +570,7 @@ const waitSent = async (n) => { for (let i = 0; i < 50 && sent.length < n; i += 
 delay(1.5);
 handlers.get("session_start")({ type: "session_start" }, ctx);
 if ((await timed("before_agent_start", { prompt: "hi" })) !== undefined) throw new Error("slow digest was injected");
-if ((await timed("before_agent_start", { prompt: "again" })) !== undefined) throw new Error("second slow wait was injected");
+if ((await timed("before_agent_start", { prompt: "again" }, 100)) !== undefined) throw new Error("second slow wait was injected");
 await waitSent(1);
 await sleep(300);
 if (sent.length !== 1 || !sent[0].includes("OMP DIGEST source=startup")) throw new Error(`slow startup delivered ${JSON.stringify(sent)}`);
