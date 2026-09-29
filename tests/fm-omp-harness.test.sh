@@ -628,8 +628,9 @@ test_turnend_guard_extension_flags_todo_blocked_on_direct_reports() {
   printf '#!/usr/bin/env bash\ncat >/dev/null; exit 0\n' >"$repo/bin/fm-turnend-guard.sh"
   chmod +x "$repo/bin/fm-turnend-guard.sh"
   printf 'window=fm:1\n' >"$home/state/fm-live-t1.meta"
+  printf 'window=fm:4\n' >"$home/state/fm-x.meta"
   printf 'window=fm:3\n' >"$home/state/docs.meta"
-  printf '1700000000\tfm-gone-t2\tfm:2\n' >"$home/state/.retired-tasks"
+  printf '1700000000\tfm-gone-t2\tfm:2\n1700000001\tfm-hack\tfm:5\n' >"$home/state/.retired-tasks"
   out=$(
     FM_HOME="$home" EXT="$repo/.omp/extensions/fm-primary-turnend-guard.ts" node --input-type=module 2>&1 <<'EOF'
 import { pathToFileURL } from "node:url";
@@ -650,16 +651,19 @@ const branch = [
     { content: "Merge the fix", status: "blocked", blocker: "captain approval" },
     { content: "Tear down fm-live-t1", status: "pending" },
     { content: "Lookalike", status: "blocked", blocker: "fm-gone-t2x" },
+    { content: "Collect demo video", status: "blocked", blocker: "waiting on fm-hack" },
+    { content: "Land the fix", status: "blocked", blocker: "fm-x PR merge" },
+    { content: "Near miss", status: "blocked", blocker: "waiting on fm-hackx" },
   ]),
 ];
 const r1 = await stop(false, branch);
 if (r1?.continue !== true) throw new Error(`a todo blocked on direct reports did not compel a continuation: ${JSON.stringify(r1)}`);
 const text = r1.additionalContext;
 if (!text.startsWith("⁣FIRSTMATE_OP: v1 turn-end-guard: ") || text.includes("TURN WOULD END BLIND")) throw new Error(`wrong continuation shape: ${text}`);
-for (const want of ["TODO LIST WAITS ON DIRECT REPORTS", "- Collect hackathon deliverables (blocked on fm-gone-t2)", "- Await fm-live-t1 PR (blocked on fm-live-t1)"]) {
+for (const want of ["TODO LIST WAITS ON DIRECT REPORTS", "- Collect hackathon deliverables (blocked on fm-gone-t2)", "- Await fm-live-t1 PR (blocked on fm-live-t1)", "- Collect demo video (blocked on fm-hack)", "- Land the fix (blocked on fm-x)"]) {
   if (!text.includes(want)) throw new Error(`continuation is missing '${want}': ${text}`);
 }
-for (const unwanted of ["Superseded", "Merge the fix", "Tear down", "Lookalike", "Publish release notes", "Chase fm-live-t1"]) {
+for (const unwanted of ["Superseded", "Merge the fix", "Tear down", "Lookalike", "Near miss", "Publish release notes", "Chase fm-live-t1"]) {
   if (text.includes(unwanted)) throw new Error(`continuation wrongly names '${unwanted}': ${text}`);
 }
 if (await stop(true, branch) !== undefined) throw new Error("the flagged continuation stop must stand down");

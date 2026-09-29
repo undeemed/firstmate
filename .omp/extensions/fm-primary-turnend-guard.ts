@@ -542,7 +542,9 @@ function runCdCheck(command: string): Promise<{ code: number; stderr: string }> 
 // the list from - and its `blocked` items never trigger omp's own reminder, so
 // a mirror of delegated work outlives the work silently. Direct reports are
 // this home's live task records plus its retirement tombstones
-// (bin/fm-retire-lib.sh), matched only when an item's blocker is exactly one id.
+// (bin/fm-retire-lib.sh). An id with a hyphen or digit (the generated task-id
+// shape) matches as a whole token of an item's blocker; any other id matches
+// only as the entire blocker, so an ordinary word in a reason never fires.
 function blockedTodoOnDirectReports(ctx: { sessionManager?: { getBranch?: () => unknown } } | undefined): string[] {
   let branch: unknown;
   try {
@@ -574,7 +576,9 @@ function blockedTodoOnDirectReports(ctx: { sessionManager?: { getBranch?: () => 
   ids.delete("");
   return blocked.flatMap((task) => {
     const blocker = String(task.blocker ?? "").trim();
-    return ids.has(blocker) ? [`- ${String(task.content ?? "")} (blocked on ${blocker})`] : [];
+    const tokens = new Set(blocker.split(/[^A-Za-z0-9._-]+/));
+    const hit = ids.has(blocker) ? blocker : [...ids].find((id) => /[-0-9]/.test(id) && tokens.has(id));
+    return hit ? [`- ${String(task.content ?? "")} (blocked on ${hit})`] : [];
   });
 }
 
