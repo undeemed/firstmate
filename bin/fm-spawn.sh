@@ -1690,14 +1690,12 @@ fi
 # respawned into its existing home: refusing it would leave a persistent
 # secondmate stopped, which no automatic path may do.
 # See bin/fm-spawn-memory-floor-lib.sh.
-spawn_is_secondmate_respawn() {
-  local home
-  [ "$KIND" = secondmate ] || return 1
-  home=$(fm_meta_get "$STATE/$ID.meta" home)
-  [ -n "$home" ] || home=$(secondmate_registry_field "$DATA/secondmates.md" "$ID" home 2>/dev/null) || return 1
-  [ -n "$home" ] && [ -d "$home" ]
-}
-if [ "$RELAUNCH" -eq 0 ] && ! spawn_is_secondmate_respawn; then
+SM_EXISTING_HOME=
+if [ "$KIND" = secondmate ]; then
+  SM_EXISTING_HOME=$(fm_meta_get "$STATE/$ID.meta" home)
+  [ -n "$SM_EXISTING_HOME" ] || SM_EXISTING_HOME=$(secondmate_registry_field "$DATA/secondmates.md" "$ID" home 2>/dev/null) || SM_EXISTING_HOME=
+fi
+if [ "$RELAUNCH" -eq 0 ] && { [ -z "$SM_EXISTING_HOME" ] || [ ! -d "$SM_EXISTING_HOME" ]; }; then
   fm_spawn_memory_floor_check || exit 1
 fi
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
