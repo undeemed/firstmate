@@ -254,7 +254,8 @@ The blocking and bounded-follow-up mechanisms were validated across seven harnes
 
 ### omp blocked-todo backstop, 2026-09-29
 
-The session-todo backstop in `.omp/extensions/fm-primary-turnend-guard.ts` was verified on 2026-09-29 against omp 18.4.2 on Linux x64 with the `openai-codex/gpt-5.6-astra` model, in the isolated rpc lab of `tests/fm-omp-primary-live-e2e.test.sh` with the guard script stubbed to exit 0 so the continuation could only come from the backstop.
+The session-todo backstop in `.omp/extensions/fm-primary-turnend-guard.ts` was verified on 2026-09-29 against omp 18.4.2 on Linux x64 with the `openai-codex/gpt-6-astra` model, in the isolated rpc lab of `tests/fm-omp-primary-live-e2e.test.sh` with the guard script stubbed to exit 0 so the continuation could only come from the backstop.
+That stage ran on its own after the lab's extension-discovery check, because on this host the full suite stopped earlier, at its session-start digest and watcher re-arm stages, independent of this change.
 The lab tombstoned `fm-e2e-gone` in `state/.retired-tasks`, and the model initialized one todo item and blocked it with the blocker `fm-e2e-gone`.
 
 ```text
@@ -266,8 +267,9 @@ omp 18.4.2 ran that continuation inside the same agent loop, so the rpc stream c
 The same lab against the extension without the backstop never raised a `stop_hook_active: true` stop.
 `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes this evidence in its blocked-todo stage.
 
-Claude Code, Codex, OpenCode, Pi, Grok, and Cursor carry no backstop because none gives a primary integration a supported structural read of the live session's todo or plan state with a waiting state.
-Claude Code 2.1.274 and codex-cli 0.147.0 put no todo or plan field in their `Stop` hook payloads; the only route is the session transcript file, whose record format is not a hook API.
+Claude Code, Codex, OpenCode, Pi, Grok, and Cursor carry no backstop because none gives a primary integration a supported read of the live session's todo or plan state that can express waiting on someone else.
+Claude Code's `PostToolUse` hook matched on `TodoWrite` receives the written list as `tool_input.todos`, but its statuses are `pending`, `in_progress`, and `completed`, with no blocked state, and its `Stop` payload carries only `transcript_path`, whose record format is not a hook API.
+codex-cli 0.147.0 puts no todo or plan field in its `Stop` hook payload either.
 OpenCode 1.18.32 publishes `todo.updated` to plugins, but its statuses are `pending`, `in_progress`, `completed`, and `cancelled`, with no blocked state.
 Pi 0.84.2 ships no todo or plan tool.
 Grok and Cursor were not installed on the measuring host, and the stop payloads [`turnend-guard.md`](../turnend-guard.md#harness-integrations) records for them carry no todo field.
