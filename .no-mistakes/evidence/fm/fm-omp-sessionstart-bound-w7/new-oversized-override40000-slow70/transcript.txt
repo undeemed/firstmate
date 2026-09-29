@@ -1,0 +1,13 @@
+[t+1.2s] extension under test: /home/ubuntu/.no-mistakes/worktrees/8966b1e14cee/01M3NDXY9P2KKTH5GWJ4YKGW9V/.omp/extensions/fm-primary-turnend-guard.ts (sha256 0f4c635dc998); digest sleep 70s; mode single; FM_OMP_SESSIONSTART_WAIT_MS=40000; omp/18.4.2
+[t+1.9s] omp launched (session_start starts the stub digest now)
+[t+6.6s] omp rpc ready
+[t+6.8s] SEND {"id":"m","type":"set_model","provider":"drive-lab","modelId":"deterministic"}
+[t+7.5s] SEND {"id":"p1","type":"prompt","message":"hello"}
+[t+30.7s] model request #1 received 22.9s after prompt 1 sent (digest pending)
+[t+31.6s] agent_end #1
+[t+77.1s] stub digest done
+[t+92.8s] settled: agent_end count=2, model requests=2
+[t+92.8s] request #1 nonce occurrences: 0
+[t+92.9s] request #2 nonce occurrences: 1
+[t+93.5s] total nonce occurrences across requests: 1
+[t+93.7s] handler-timeout lines in omp logs/rpc output: 0

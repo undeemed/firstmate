@@ -1,0 +1,14 @@
+[t+1.4s] extension under test: /home/ubuntu/.no-mistakes/evidence/01M3NDXY9P2KKTH5GWJ4YKGW9V/base-fm-primary-turnend-guard.ts (sha256 7c2d30b69065); digest sleep 70s; mode single; omp/18.4.2
+[t+2.0s] omp launched (session_start starts the stub digest now)
+[t+10.8s] omp rpc ready
+[t+10.9s] SEND {"id":"m","type":"set_model","provider":"drive-lab","modelId":"deterministic"}
+[t+12.4s] SEND {"id":"p1","type":"prompt","message":"hello"}
+[t+45.1s] model request #1 received 32.6s after prompt 1 sent (digest pending)
+[t+45.8s] agent_end #1
+[t+80.8s] stub digest done
+[t+95.9s] settled: agent_end count=1, model requests=1
+[t+95.9s] request #1 nonce occurrences: 0
+[t+95.9s] total nonce occurrences across requests: 0
+[t+96.0s] handler-timeout lines in omp logs/rpc output: 2
+[t+96.0s]   {"timestamp":"2026-09-29T03:09:51.088+00:00","level":"warn","pid":2514816,"message":"Extension handler timed out","extensionPath":"/tmp/fm-omp-drive.Bo5PrV/project/.omp/extensions/fm-primary-turnend-guard.ts","event":"before_agent_start","timeoutMs":30000}
+[t+96.0s]   {"type":"extension_error","extensionPath":"/tmp/fm-omp-drive.Bo5PrV/project/.omp/extensions/fm-primary-turnend-guard.ts","event":"before_agent_start","error":"handler timed out after 30000ms"}

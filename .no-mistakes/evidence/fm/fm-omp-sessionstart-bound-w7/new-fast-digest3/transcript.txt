@@ -1,0 +1,14 @@
+[t+2.1s] extension under test: /home/ubuntu/.no-mistakes/worktrees/8966b1e14cee/01M3NDXY9P2KKTH5GWJ4YKGW9V/.omp/extensions/fm-primary-turnend-guard.ts (sha256 0f4c635dc998); digest sleep 3s; mode single; omp/18.4.2
+[t+2.9s] omp launched (session_start starts the stub digest now)
+[t+28.6s] omp rpc ready
+[t+28.8s] SEND {"id":"m","type":"set_model","provider":"drive-lab","modelId":"deterministic"}
+[t+29.1s] SEND {"id":"p1","type":"prompt","message":"hello"}
+[t+41.5s] model request #1 received 12.3s after prompt 1 sent (digest done)
+[t+43.7s] agent_end #1
+[t+43.7s] stub digest done
+[t+60.6s] settled: agent_end count=1, model requests=1
+[t+61.4s] request #1 nonce occurrences: 1
+[t+62.1s] total nonce occurrences across requests: 1
+[t+63.2s] handler-timeout lines in omp logs/rpc output: 1
+[t+65.2s]   {"type":"available_commands_update","commands":[{"name":"security","description":"Plan, run, inspect, import, and compare OMP-native security scans","input":{"hint":"<plan|scan|status|cancel|scans|show|import|export|validate|compare|disposition>"},"subcommands":[{"name":"plan","description":"Create an immutable security scan plan"},{"name":"scan","description":"Start a planned or newly planned nat
+NOTE (added after run): the "handler-timeout lines: 1" above came from an over-broad "timed out" grep that matched an unrelated omp command description in available_commands_update; exact "handler timed out" matches in rpc.log/rpc.err/omp home logs = 0
