@@ -336,10 +336,11 @@ On a `no-mistakes-prod-only` project, classify the task's surface: internal-only
 An unregistered project or absent registry resolves to `no-mistakes` with yolo off, and the registration gap goes to the captain.
 Record the resulting mode, `yolo` merge posture, and the one-line reason for any deviation in the backlog item note.
 
-At intake, decompose multi-part work into independently buildable slices and dispatch every slice at once with no concurrency cap; file or subsystem overlap is a risk signal, not a reason to wait, when each slice can be validated on its own and the selected delivery path can reconcile ordinary rebases or conflicts.
+At intake, decompose multi-part work into independently buildable slices and dispatch every slice at once with no concurrency cap; file or subsystem overlap is a risk signal, not a reason to wait, when each slice can be validated on its own and the integration owner's delivery path can reconcile ordinary rebases or conflicts.
 A shared piece that does not exist yet, such as a foundation, schema, API, fixture set, or component, never serializes slices when its interface can be fixed up front: state that contract in every slice's brief and build the slices concurrently against it; a requested stacked PR series is cut from the integrated result, never built slice by slice, so no slice's build waits for another to land.
-Each slice passes its gates against its brief's contract, using a local stand-in for any piece it depends on, and hands its branch to the integration owner without opening or landing a PR of its own.
-Name one integration owner, a ship task given the sibling branches, which merges them, removes every stand-in, and publishes the one integrated result for review and merge.
+Each slice spawns `local-only`, passes its gates against its brief's contract using a local stand-in for any piece it depends on, and hands its branch to the integration owner without opening or landing a PR of its own; firstmate never merges a slice branch.
+Name one integration owner, a ship task given the sibling branches and spawned under the delivery mode and `yolo` posture resolved at intake, which merges them, removes every stand-in, and publishes the one integrated result for review and merge.
+This rule is itself the recorded reason for the slices' lower mode, so no per-task deviation note is needed.
 Serialize only when a slice cannot be specified until another slice's result exists (for example an investigation whose answer decides what to build), for shared mutable external state, for an incompatible concurrent migration, or for another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, genuine blockers remain durable, and the stated reason goes in the backlog item note.
 Write the task-specific brief under section 11 before spawning.
 Fill the task subsections according to section 11.
