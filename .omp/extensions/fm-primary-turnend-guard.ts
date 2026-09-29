@@ -25,7 +25,9 @@
 // completed a full startup; session_compact maps to `compact`.
 // before_agent_start returning { message } was verified to reach model context
 // on omp 18.1.11 (the model quoted an injected marker back), so omp qualifies
-// for the Run tier.
+// for the Run tier. omp caps every extension handler at 30s, so that handler
+// waits at most sessionstartInjectWaitMs for the digest; a slower startup is
+// sent with pi.sendMessage the moment it completes, as session_compact does.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -120,6 +122,7 @@ const sessionstartManualFallback =
   "Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions.";
 const sessionstartIneligibleExit = 3;
 const sessionstartRetireTimeoutMs = 1000;
+const sessionstartInjectWaitMs = Number(process.env.FM_OMP_SESSIONSTART_WAIT_MS) || 20000;
 
 // One active generation owns native startup from child launch through context
 // claim. Replacement activates first, serially retires every predecessor, and
@@ -457,6 +460,22 @@ async function claimSessionstartMessage(
   return sessionstartMessage(generation, result);
 }
 
+// omp caps every extension handler at 30s, so a handler waits at most
+// sessionstartInjectWaitMs for the run; false means it is still running.
+async function sessionstartSettlesInTime(generation: SessionstartGeneration): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      generation.result.then(() => true),
+      new Promise<boolean>((resolveWait) => {
+        timer = setTimeout(resolveWait, sessionstartInjectWaitMs, false);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // The shared guard reads stop_hook_active exactly as it does from Claude's
 // payload: a true value allows the stop, which is what bounds omp to one
 // forced continuation per turn.
@@ -547,9 +566,29 @@ export default function (pi: ExtensionAPI) {
     sessionstartGeneration = createSessionstartGeneration(source, sessionIdFromContext(ctx));
   });
 
+  // Claims and sends a digest outside any handler budget; the claim's
+  // generation and delivered checks keep it exactly-once and drop it once
+  // the generation is superseded or shut down.
+  const sendSessionstartWhenReady = async (
+    generation: SessionstartGeneration,
+    ctx: SessionStartContext,
+  ): Promise<void> => {
+    const message = await claimSessionstartMessage(generation, ctx);
+    if (!message || !sessionstartGenerationIsLive(generation)) return;
+    try {
+      pi.sendMessage?.(message);
+    } catch {
+      generation.delivered = false;
+    }
+  };
+
   pi.on?.("before_agent_start", async (_event, ctx) => {
     const generation = sessionstartGeneration;
     if (!generation) return undefined;
+    if (!(await sessionstartSettlesInTime(generation))) {
+      void sendSessionstartWhenReady(generation, ctx);
+      return undefined;
+    }
     const message = await claimSessionstartMessage(generation, ctx);
     return message ? { message } : undefined;
   });
@@ -561,13 +600,8 @@ export default function (pi: ExtensionAPI) {
     registerSessionstartExitListener();
     const generation = createSessionstartGeneration("compact", sessionIdFromContext(ctx));
     sessionstartGeneration = generation;
-    const message = await claimSessionstartMessage(generation, ctx);
-    if (!message || !sessionstartGenerationIsLive(generation)) return;
-    try {
-      pi.sendMessage?.(message);
-    } catch {
-      generation.delivered = false;
-    }
+    const delivery = sendSessionstartWhenReady(generation, ctx);
+    if (await sessionstartSettlesInTime(generation)) await delivery;
   });
 
   pi.on?.("session_shutdown", async () => {
