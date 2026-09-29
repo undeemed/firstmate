@@ -164,6 +164,25 @@ await_pid_exit() {  # <pid> <tenths>
   ! kill -0 "$1" 2>/dev/null
 }
 
+# seed_inactive_done_child <home>: a direct child whose current state reads done
+# and whose meta/status have been quiet longer than the 60s inactive window
+# callers pass as FM_INACTIVE_RECONCILE_SECS, so the locked inactive-outcome scan
+# has exactly one terminal outcome to queue. The current-state reader is a fake
+# at <world>/fm-crew-state.sh (FM_INACTIVE_CREW_STATE_BIN): its real sources are
+# owned by tests/fm-crew-state.test.sh, not by this stage.
+seed_inactive_done_child() {  # <home>
+  local home=$1 fake
+  fake="$(dirname "$home")/fm-crew-state.sh"
+  cat > "$fake" <<'SH'
+#!/usr/bin/env bash
+printf 'state: done · source: fake\n'
+SH
+  chmod +x "$fake"
+  fm_write_meta "$home/state/child.meta" 'window=firstmate:fm-child' 'kind=ship' 'spawn_gen=s1'
+  printf 'done: finished\n' > "$home/state/child.status"
+  fm_touch_epoch "$(( $(date +%s) - 120 ))" "$home/state/child.meta" "$home/state/child.status"
+}
+
 # --- tests -------------------------------------------------------------------
 
 # `start` is called from inside a session-open hook whose stdout the harness
@@ -379,41 +398,34 @@ EOF
   pass "fm-startup-network: an actionable state=done report still queues a wake"
 }
 
-test_deferred_invalid_secondmate_markers_queue_durable_findings() {
-  local kind rec home root log target report err seq generation
-  for kind in malformed symlink; do
-    rec=$(new_world "deferred-invalid-marker-$kind")
-    IFS='|' read -r home root log <<EOF
+test_deferred_inactive_scan_queues_durable_findings() {
+  local rec home root log report err seq generation
+  rec=$(new_world deferred-inactive-scan)
+  IFS='|' read -r home root log <<EOF
 $rec
 EOF
-    printf '%s\n' $$ > "$home/state/.lock"
-    if [ "$kind" = malformed ]; then
-      printf '../other-home\n' > "$home/.fm-secondmate-home"
-    else
-      target="$TMP_ROOT/deferred-invalid-marker-$kind/marker-target"
-      printf 'mate\n' > "$target"
-      ln -s "$target" "$home/.fm-secondmate-home"
-    fi
+  printf '%s\n' $$ > "$home/state/.lock"
+  seed_inactive_done_child "$home"
 
+  FM_INACTIVE_CREW_STATE_BIN="$(dirname "$home")/fm-crew-state.sh" FM_INACTIVE_RECONCILE_SECS=60 \
     FM_FAKE_BOOTSTRAP_LOG="$log" run_stage "$home" "$root" run --locked 1
-    assert_grep $'check\tinactive-reconcile-diagnostic:invalid-secondmate-home\t' "$home/state/.wake-queue" \
-      "$kind marker finding was swallowed by the deferred startup stage"
-    report=$(run_stage "$home" "$root" report)
-    assert_contains "$report" "(silent - no problems found)" \
-      "$kind marker fixture unexpectedly depended on the network report"
+  assert_grep $'check\tinactive-outcome:' "$home/state/.wake-queue" \
+    "the inactive terminal outcome was swallowed by the deferred startup stage"
+  report=$(run_stage "$home" "$root" report)
+  assert_contains "$report" "(silent - no problems found)" \
+    "the inactive-outcome fixture unexpectedly depended on the network report"
 
-    err="$home/drain.err"
-    FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" >/dev/null 2> "$err"
-    seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p' "$err")
-    generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
-    [ -n "$seq" ] && [ -n "$generation" ] \
-      || fail "$kind marker wake did not issue a durable acknowledgement"
-    FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" \
-      --ack-through "$seq" --recovery-generation "$generation" >/dev/null
-    assert_no_grep 'inactive-reconcile-diagnostic:invalid-secondmate-home' "$home/state/.wake-queue" \
-      "$kind marker wake could not be acknowledged"
-  done
-  pass "fm-startup-network: deferred invalid secondmate markers produce durable wakes"
+  err="$home/drain.err"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" >/dev/null 2> "$err"
+  seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p' "$err")
+  generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
+  [ -n "$seq" ] && [ -n "$generation" ] \
+    || fail "the inactive-outcome wake did not issue a durable acknowledgement"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" \
+    --ack-through "$seq" --recovery-generation "$generation" >/dev/null
+  assert_no_grep $'check\tinactive-outcome:' "$home/state/.wake-queue" \
+    "the inactive-outcome wake could not be acknowledged"
+  pass "fm-startup-network: the deferred inactive scan queues a durable, acknowledgeable wake"
 }
 
 # The worker outlives the command that launched it. If another session took the
@@ -514,7 +526,7 @@ test_locked_start_is_not_satisfied_by_an_inflight_probe() {
 $rec
 EOF
   printf '%s\n' $$ > "$home/state/.lock"
-  printf '../other-home\n' > "$home/.fm-secondmate-home"
+  seed_inactive_done_child "$home"
 
   FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=6 \
     run_stage "$home" "$root" start --locked 0 --harvest-pid $$
@@ -525,13 +537,13 @@ EOF
   assert_grep 'network=only detect_only=1' "$log" \
     "the probe-only worker was not in flight before the locked request"
 
-  FM_FAKE_BOOTSTRAP_LOG="$log" \
-    run_stage "$home" "$root" start --locked 1 --harvest-pid $$
+  FM_INACTIVE_CREW_STATE_BIN="$(dirname "$home")/fm-crew-state.sh" FM_INACTIVE_RECONCILE_SECS=60 \
+    FM_FAKE_BOOTSTRAP_LOG="$log" run_stage "$home" "$root" start --locked 1 --harvest-pid $$
   run_stage "$home" "$root" wait 30 >/dev/null \
     || fail "the locked request never published"
   assert_grep 'network=only detect_only=0' "$log" \
     "the in-flight probe-only worker suppressed the locked sweeps"
-  assert_grep $'check\tinactive-reconcile-diagnostic:invalid-secondmate-home\t' "$home/state/.wake-queue" \
+  assert_grep $'check\tinactive-outcome:' "$home/state/.wake-queue" \
     "the in-flight probe-only worker suppressed the locked inactive scan"
   pass "fm-startup-network: locked requests supersede in-flight probe-only workers"
 }
@@ -866,7 +878,7 @@ test_a_claimant_crash_after_publish_still_queues_the_wake
 test_a_report_publication_failure_is_failed_and_still_wakes
 test_a_successful_result_never_queues_a_wake
 test_an_actionable_successful_result_still_queues_a_wake
-test_deferred_invalid_secondmate_markers_queue_durable_findings
+test_deferred_inactive_scan_queues_durable_findings
 test_mutating_sweeps_are_refused_when_the_lock_changed_hands
 test_the_stage_bound_is_reported_not_swallowed
 test_an_abandoned_run_reads_as_needing_a_rerun

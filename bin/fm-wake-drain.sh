@@ -39,7 +39,6 @@ ACK_GENERATION=
 ACK_REMOVED=0
 PRESENTED_MAX=0
 ACK_FINGERPRINTS=
-ACK_NOTICE_FINGERPRINTS=
 PRESENTATION_LOCK_TIMEOUT=${FM_STATUS_PRESENTATION_LOCK_TIMEOUT:-10}
 case "$PRESENTATION_LOCK_TIMEOUT" in ''|*[!0-9]*|0) PRESENTATION_LOCK_TIMEOUT=10 ;; esac
 
@@ -266,11 +265,11 @@ inactive_outcome_fingerprints() { # <sequence> <key-prefix> [<rows-file>]
   done < "$FM_WAKE_QUEUE"
 }
 
-acknowledge_inactive_outcomes() { # <mode> <newline-separated-fingerprints>
-  local mode=$1 fingerprints=$2 fingerprint
+acknowledge_inactive_outcomes() { # <newline-separated-fingerprints>
+  local fingerprints=$1 fingerprint
   while IFS= read -r fingerprint; do
     [ -n "$fingerprint" ] || continue
-    "$SCRIPT_DIR/fm-inactive-reconcile.sh" "$mode" "$fingerprint" || return 1
+    "$SCRIPT_DIR/fm-inactive-reconcile.sh" acknowledge "$fingerprint" || return 1
   done <<< "$fingerprints"
 }
 
@@ -811,7 +810,6 @@ if [ -n "$ACK_THROUGH" ]; then
     # construction (docs/pi-supervision-branch.md) - so a branch-actor ack
     # never removes one and these scans would find nothing relevant anyway.
     ACK_FINGERPRINTS=
-    ACK_NOTICE_FINGERPRINTS=
   else
     if { [ -e "$MAIN_ROWS_FILE" ] || [ -L "$MAIN_ROWS_FILE" ]; } \
       && ! rows_file_valid "$MAIN_ROWS_FILE"; then
@@ -819,12 +817,10 @@ if [ -n "$ACK_THROUGH" ]; then
       exit 1
     fi
     ACK_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-outcome:' "$MAIN_ROWS_FILE") || exit 1
-    ACK_NOTICE_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-reconcile:' "$MAIN_ROWS_FILE") || exit 1
   fi
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
-  if ! acknowledge_inactive_outcomes acknowledge "$ACK_FINGERPRINTS" \
-    || ! acknowledge_inactive_outcomes acknowledge-notice "$ACK_NOTICE_FINGERPRINTS"; then
+  if ! acknowledge_inactive_outcomes "$ACK_FINGERPRINTS"; then
     echo "wake drain: inactive outcome receipt could not be recorded safely" >&2
     exit 1
   fi

@@ -51,9 +51,9 @@
 #   this user owns but cannot write to is left exactly as its owner set it.
 #
 # LIVE OWNERSHIP
-#   A "live mate" is this home plus every firstmate home running a watcher
-#   right now, discovered from the process table rather than from a hardcoded
-#   layout. A name with a state/<name>.meta in any of those homes is owned and
+#   A "live mate" is this home, every secondmate home this home records, and
+#   every firstmate home running a watcher right now, discovered from the
+#   process table rather than from a hardcoded layout. A name with a state/<name>.meta in any of those homes is owned and
 #   is never swept, whatever its age.
 #
 # HOLDERS
@@ -125,10 +125,14 @@ trap 'rm -f -- "$HOLDERS"' EXIT
 
 # Every home a live mate is working in. The watcher process is the one durable
 # per-home artifact in the process table, so a home that is genuinely running
-# is discovered even when this sweep has never heard of it.
+# is discovered even when this sweep has never heard of it. A secondmate this
+# home records counts as live even while its watcher is down, so a stopped
+# secondmate's work is never swept as litter.
 collect_live_homes() {
 	{
 		printf '%s\n' "$FM_HOME"
+		grep -l -x 'kind=secondmate' "$FM_HOME"/state/*.meta 2>/dev/null |
+			while IFS= read -r meta; do sed -n 's/^home=//p' "$meta" | tail -1; done
 		pgrep -a -u "$(id -u)" -f 'bin/fm-watch\.sh' 2>/dev/null |
 			sed -n 's#.*[[:space:]]\(/[^[:space:]]*\)/bin/fm-watch\.sh.*#\1#p'
 	} | sort -u

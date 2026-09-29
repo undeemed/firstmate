@@ -16,7 +16,9 @@
 # is measured - free swap is deliberately NOT counted, because "there is swap
 # left" is exactly the state that ends in a thrashing, unreachable host.
 # Relaunches never pass through this gate: they reuse a lane that already
-# exists. Hosts without /proc/meminfo (macOS) skip the gate.
+# exists. Neither does a registered secondmate respawned into its existing
+# home, so a persistent secondmate is never left stopped by it.
+# Hosts without /proc/meminfo (macOS) skip the gate.
 
 FM_SPAWN_MEMORY_FLOOR_FILE="spawn-memory-floor-mb"
 FM_SPAWN_MEMORY_MEMINFO="${FM_SPAWN_MEMORY_MEMINFO:-/proc/meminfo}"

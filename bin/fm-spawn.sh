@@ -1686,8 +1686,18 @@ fi
 # memory guardian only reaps stale panes, so bounding concurrency here - before
 # a worktree is leased or any state is written - is the one place that prevents
 # the 2026-09-17 swap-exhaustion shape without destroying work. Relaunches
-# reuse an existing lane and skip it. See bin/fm-spawn-memory-floor-lib.sh.
-if [ "$RELAUNCH" -eq 0 ]; then
+# reuse an existing lane and skip it, and so does a registered secondmate
+# respawned into its existing home: refusing it would leave a persistent
+# secondmate stopped, which no automatic path may do.
+# See bin/fm-spawn-memory-floor-lib.sh.
+spawn_is_secondmate_respawn() {
+  local home
+  [ "$KIND" = secondmate ] || return 1
+  home=$(fm_meta_get "$STATE/$ID.meta" home)
+  [ -n "$home" ] || home=$(secondmate_registry_field "$DATA/secondmates.md" "$ID" home 2>/dev/null) || return 1
+  [ -n "$home" ] && [ -d "$home" ]
+}
+if [ "$RELAUNCH" -eq 0 ] && ! spawn_is_secondmate_respawn; then
   fm_spawn_memory_floor_check || exit 1
 fi
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
@@ -4482,8 +4492,10 @@ assert_worktree_unclaimed "$WT_SOURCE" "$T"
 # GOTMPDIR (rationale in this script's header).
 # The root itself is private (0700) because its path stays predictable and
 # FM_TASKTMP_ROOT may point it at a shared parent: a root that already exists is
-# reused only as a real directory owned by this user and writable by nobody
-# else, then tightened, so no other local user can plant or swap a file in it.
+# reused only as a real directory owned by this user holding nothing another
+# user owns, then tightened, so no other local user can plant or swap a file in
+# it. Loose permissions alone (an older release created roots 0775) are
+# tightened rather than refused, so a relaunch is never stopped by them.
 # The staged launch command lives in a sibling directory namespaced by home
 # identity, not in this shared per-id root.
 RELAUNCH_RECORDED_TASKTMP=
@@ -4498,8 +4510,8 @@ fi
 mkdir -p "$(dirname "$TASK_TMP")"
 if ! (umask 077 && mkdir "$TASK_TMP") 2>/dev/null; then
   if [ -L "$TASK_TMP" ] || [ ! -d "$TASK_TMP" ] || [ ! -O "$TASK_TMP" ] ||
-    [ -n "$(find "$TASK_TMP" -prune \( -perm -g=w -o -perm -o=w \) -print 2>/dev/null)" ] ||
-    ! chmod 700 "$TASK_TMP"; then
+    ! chmod 700 "$TASK_TMP" ||
+    [ -n "$(find "$TASK_TMP" ! -uid "$(id -u)" -print -quit 2>&1)" ]; then
     echo "error: task temp root $TASK_TMP already exists and is not a private directory owned by this user; refusing to stage the launch command there; inspect and remove it, then retry" >&2
     exit 1
   fi

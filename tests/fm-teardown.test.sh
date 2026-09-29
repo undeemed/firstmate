@@ -2104,75 +2104,76 @@ test_secondmate_pr_registration_publishes_ready_line() {
   pass "fm-pr-check publishes the PR-ready line on a secondmate's parent channel once"
 }
 
-# Tearing a child down inside a secondmate home delivers the child's final
-# ledger line to the parent before the record goes, and refuses (retaining
-# every record) while the parent channel cannot be written; a rerun after the
-# repair delivers and completes.
-test_secondmate_home_teardown_delivers_final_line_or_refuses() {
-  local case_dir rc channel wt_head err seq generation
-
-  case_dir=$(make_case mate-teardown-delivers)
+# Tearing a child down inside a secondmate home writes nothing to the parent
+# channel - it succeeds even while that channel cannot be written - and leaves
+# the child's undelivered terminal outcome (its pending record and queued
+# check wake) in the mate's own home.
+test_secondmate_home_teardown_leaves_outcome_in_mate_home() {
+  local case_dir rc channel wt_head pending fp record_before
+  case_dir=$(make_case mate-teardown-no-parent-write)
   configure_secondmate_home "$case_dir" local "$case_dir/parent"
-  mkdir -p "$case_dir/parent/state"
+  # The channel path is occupied by a directory, so no line could be appended.
   channel="$case_dir/parent/state/mate-x.status"
+  mkdir -p "$channel"
   write_meta "$case_dir" local-only ship
-  wt_commit "$case_dir" "merged work"
-  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
-  printf 'working: shipping\ndone: PR https://github.com/example/repo/pull/9 checks green\n' \
-    > "$case_dir/state/task-x1.status"
-  set +e
-  FM_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-  expect_code 0 "$rc" "mate-teardown-delivers: teardown should succeed: $(cat "$case_dir/stderr")"
-  sed -E 's/ \[at=[0-9]+\]//' "$channel" | grep -Eq '^done \[key=child-outcome-task-x1-done-[0-9a-f]{8}\]: child task-x1 done: PR https://github.com/example/repo/pull/9 checks green pr=https://github.com/example/repo/pull/9 mode=local-only$' \
-    || fail "mate-teardown-delivers: the final ledger line did not reach the parent: $(cat "$channel" 2>/dev/null)"
-  [ ! -e "$case_dir/state/task-x1.meta" ] || fail "mate-teardown-delivers: teardown left the task record"
-
-  case_dir=$(make_case mate-teardown-refuses)
-  configure_secondmate_home "$case_dir" local "$case_dir/parent"
-  # The channel path is occupied by a directory, so no line can be appended.
-  mkdir -p "$case_dir/parent/state/mate-x.status"
-  channel="$case_dir/parent/state/mate-x.status"
-  write_meta "$case_dir" local-only ship
-  mkdir -p "$case_dir/tasktmp"
-  printf '!\n' > "$case_dir/state/task-x1.grok-turnend-token"
-  printf '!\n' > "$case_dir/state/task-x1.kimi-turnend-token"
-  printf 'tasktmp=%s\n' "$case_dir/tasktmp" >> "$case_dir/state/task-x1.meta"
   wt_commit "$case_dir" "merged work"
   wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
   printf 'done: PR https://github.com/example/repo/pull/9 checks green\n' > "$case_dir/state/task-x1.status"
+  # The mate's cadence scan has already recorded the outcome and queued its check.
+  cat > "$case_dir/crew-state" <<'SH'
+#!/usr/bin/env bash
+printf 'state: done · source: fake\n'
+SH
+  chmod +x "$case_dir/crew-state"
+  FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" FM_INACTIVE_RECONCILE_SECS=60 \
+    FM_INACTIVE_RECONCILE_NOW=$(( $(date +%s) + 3600 )) FM_INACTIVE_CREW_STATE_BIN="$case_dir/crew-state" \
+    "$ROOT/bin/fm-inactive-reconcile.sh" scan --startup 2> "$case_dir/scan.err" \
+    || fail "mate-teardown-no-parent-write: seeding scan failed: $(cat "$case_dir/scan.err")"
+  pending=$(find "$case_dir/state/terminal-outcomes" -name '*.pending')
+  [ -f "$pending" ] || fail "mate-teardown-no-parent-write: the scan did not record a pending outcome"
+  fp=$(basename "$pending" .pending)
+  assert_grep "inactive-outcome:$fp" "$case_dir/state/.wake-queue" \
+    "mate-teardown-no-parent-write: the scan did not queue the outcome check"
+  record_before=$(cat "$pending")
+
   set +e
   FM_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "mate-teardown-refuses: teardown proceeded with an undelivered final line"
-  grep -q 'has not reached the parent channel' "$case_dir/stderr" \
-    || fail "mate-teardown-refuses: refusal did not name the parent channel: $(cat "$case_dir/stderr")"
-  [ -f "$case_dir/state/task-x1.meta" ] && [ -f "$case_dir/state/task-x1.status" ] \
-    || fail "mate-teardown-refuses: refusal did not retain the task records"
-  [ -f "$case_dir/state/task-x1.grok-turnend-token" ] \
-    && [ -f "$case_dir/state/task-x1.kimi-turnend-token" ] \
-    && [ -d "$case_dir/tasktmp" ] \
-    || fail "mate-teardown-refuses: refusal removed endpoint records before parent delivery"
-  rmdir "$channel"
-  err=$(FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
-    "$ROOT/bin/fm-wake-drain.sh" 2>&1 >/dev/null)
-  seq=$(printf '%s\n' "$err" | sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p')
-  generation=$(printf '%s\n' "$err" | sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p')
-  [ -z "$seq" ] || FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
-    "$ROOT/bin/fm-wake-drain.sh" --ack-through "$seq" --recovery-generation "$generation" >/dev/null
+  expect_code 0 "$rc" "mate-teardown-no-parent-write: teardown should succeed: $(cat "$case_dir/stderr")"
+  [ ! -e "$case_dir/state/task-x1.meta" ] || fail "mate-teardown-no-parent-write: teardown left the task record"
+  [ -d "$channel" ] && [ -z "$(ls -A "$channel")" ] \
+    || fail "mate-teardown-no-parent-write: teardown touched the parent channel"
+  ! grep -rq task-x1 "$case_dir/parent" \
+    || fail "mate-teardown-no-parent-write: teardown wrote the child to the parent: $(grep -r task-x1 "$case_dir/parent")"
+  [ "$(cat "$pending" 2>/dev/null)" = "$record_before" ] \
+    || fail "mate-teardown-no-parent-write: teardown changed or removed the pending outcome record"
+  assert_grep "inactive-outcome:$fp" "$case_dir/state/.wake-queue" \
+    "mate-teardown-no-parent-write: teardown dropped the queued outcome check"
+  pass "a secondmate home's teardown writes nothing to the parent and keeps the undelivered outcome in the mate's home"
+}
+
+# Retiring a secondmate is main's decision: the supervision branch is refused
+# even without --force, and the secondmate's record and home stay in place.
+test_branch_cannot_retire_secondmate() {
+  local case_dir rc
+  case_dir=$(make_case branch-retire-secondmate)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_tmux_children "$case_dir"
+
   set +e
-  FM_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout2" 2> "$case_dir/stderr2"
+  FM_SUPERVISION_ACTOR=branch run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
-  expect_code 0 "$rc" "mate-teardown-refuses: rerun after repair should succeed: $(cat "$case_dir/stderr2")"
-  sed -E 's/ \[at=[0-9]+\]//' "$channel" | grep -Eq '^done \[key=child-outcome-task-x1-done-[0-9a-f]{8}\]: child task-x1 done: PR https://github.com/example/repo/pull/9 checks green' \
-    || fail "mate-teardown-refuses: the rerun did not deliver the final line"
-  [ ! -e "$case_dir/state/task-x1.meta" ] || fail "mate-teardown-refuses: rerun left the task record"
-  pass "a secondmate home's teardown delivers the child's final line or refuses until it can"
+  expect_code 6 "$rc" "branch-retire-secondmate: the branch must be refused: $(cat "$case_dir/stderr")"
+  assert_grep "secondmate retirement (fm-teardown) refused - the supervision branch never performs this action" \
+    "$case_dir/stderr" "branch-retire-secondmate: refusal lost the partition wording"
+  [ -f "$case_dir/state/task-x1.meta" ] || fail "branch-retire-secondmate: refusal removed the secondmate record"
+  [ -f "$case_dir/secondmate-home/.fm-secondmate-home" ] \
+    && [ -f "$case_dir/secondmate-home/state/child-a.meta" ] \
+    || fail "branch-retire-secondmate: refusal removed the secondmate home"
+  pass "the supervision branch cannot retire a secondmate"
 }
 
 test_teardown_missing_busy_sidecar_completes() {
@@ -4508,7 +4509,8 @@ test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line
-test_secondmate_home_teardown_delivers_final_line_or_refuses
+test_secondmate_home_teardown_leaves_outcome_in_mate_home
+test_branch_cannot_retire_secondmate
 test_teardown_missing_busy_sidecar_completes
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes

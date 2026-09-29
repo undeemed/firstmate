@@ -26,6 +26,10 @@
 #   (p) a fenced process with live evidence, and the real table   -> KEPT, untouched
 #   (q) a pool with a relative pointer to a live source repo      -> KEPT
 #   (r) a pool whose relative pointer resolves to a gone repo     -> REMOVED
+#   (s) a desktop a registered secondmate's home records, its
+#       watcher down                                              -> KEPT
+#   (t) a pool a registered secondmate's home records, its
+#       watcher down                                              -> KEPT
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -63,12 +67,16 @@ TMP_SWEPT="$TMP_ROOT/tmp"
 
 mkdir -p "$HOME_DIR/state" "$X_SOCKETS" "$POOLS" "$TMP_SWEPT"
 
-for name in owned-mate dead-mate up-mate; do
+for name in owned-mate dead-mate up-mate mate-task; do
 	mkdir -p "$DESKTOPS/$name/chrome-profile"
 	printf 'session state\n' >"$DESKTOPS/$name/chrome-profile/Cookies"
 done
-printf 'owned-mate\t41\ndead-mate\t42\nup-mate\t43\n' >"$REGISTRY"
+printf 'owned-mate\t41\ndead-mate\t42\nup-mate\t43\nmate-task\t44\n' >"$REGISTRY"
 fm_write_meta "$HOME_DIR/state/owned-mate.meta" 'kind=secondmate' "home=$TMP_ROOT/owned"
+# The registered secondmate's own home records a task's desktop and pool; no
+# watcher runs for that home, so only this home's registration names it.
+mkdir -p "$TMP_ROOT/owned/state"
+fm_write_meta "$TMP_ROOT/owned/state/mate-task.meta" 'kind=ship'
 : >"$X_SOCKETS/X43"
 
 seed_pool "$POOLS/dead-pool" "$TMP_ROOT/repo-that-is-gone"
@@ -86,6 +94,9 @@ seed_pool "$POOLS/rel-live-pool" "$TMP_ROOT/rel-live-source"
 printf 'gitdir: ../../../../rel-live-source/.git/worktrees/repo\n' \
 	>"$POOLS/rel-live-pool/1/repo/.git"
 seed_pool "$POOLS/rel-dead-pool" "$TMP_ROOT/rel-gone-source"
+seed_pool "$POOLS/mate-pool" "$TMP_ROOT/repo-that-is-gone"
+fm_write_meta "$TMP_ROOT/owned/state/mate-pool-task.meta" 'kind=ship' \
+	"worktree=$POOLS/mate-pool/1/repo"
 printf 'gitdir: ../../../../rel-gone-source/.git/worktrees/repo\n' \
 	>"$POOLS/rel-dead-pool/1/repo/.git"
 
@@ -200,6 +211,15 @@ pass "(q) a relative worktree pointer is resolved against its own directory, so 
 
 [ ! -d "$POOLS/rel-dead-pool" ] || fail "(r) a pool whose relative pointer resolves to a gone repository survived"
 pass "(r) a relative pointer resolving to a gone source repository still proves an orphan"
+
+[ -f "$DESKTOPS/mate-task/chrome-profile/Cookies" ] ||
+	fail "(s) a desktop a registered secondmate's home records was removed while its watcher was down"
+assert_grep 'mate-task' "$REGISTRY" "(s) a registered secondmate's desktop registry line was dropped"
+pass "(s) a desktop a registered secondmate's home records is kept even with no watcher running there"
+
+[ -f "$POOLS/mate-pool/1/repo/.git" ] ||
+	fail "(t) a pool a registered secondmate's home records was removed while its watcher was down"
+pass "(t) a pool a registered secondmate's home records is kept even with no watcher running there"
 
 [ ! -d "$TMP_SWEPT/old-junk" ] || fail "(i) an aged tmp entry survived"
 pass "(i) a tmp entry older than the window, with nothing using it, is removed"

@@ -455,7 +455,7 @@ pass "nested remote reports relay while an undeliverable foreign pointer fails o
 # prose the path its report WILL be written to, then explains the resulting
 # false alarm in two more lines of the same delta. None of that is an offer, so
 # nothing is fetched, nothing is noted, and no decision ever opens. The report
-# arrives through the ledger publisher's structured offer once it exists.
+# arrives through a later structured offer once it exists.
 INCIDENT_DOC=data/reply/voice-scout-report.md
 rm -f "$REMOTE/$INCIDENT_DOC"
 mirror_lines "reply [corr=3333333333333333]: dispatched the voice scout, report path $INCIDENT_DOC, will relay on completion"
@@ -469,12 +469,12 @@ assert_grep "report path $INCIDENT_DOC, will relay" "$PARENT/state/ios.status" \
   "the prose announcement was not mirrored verbatim"
 mirrored_cursor_is_current "the prose announcement delta did not advance the cursor"
 printf '# voice scout report\n\nfindings\n' > "$REMOTE/$INCIDENT_DOC"
-# The exact shape bin/fm-inactive-reconcile.sh publishes for a finished child.
+# A generic structured outcome line whose report= field offers the finished document.
 mirror_lines "done [key=child-outcome-voice-scout-done-ab12cd34]: child voice-scout done: report ready mode=scout report=$INCIDENT_DOC"
 cmp -s "$REMOTE/$INCIDENT_DOC" "$PARENT/data/remote-secondmates/ios/$INCIDENT_DOC" \
-  || fail "the structured ledger offer did not deliver the finished report"
+  || fail "the structured offer did not deliver the finished report"
 assert_grep "report ready mode=scout report=data/remote-secondmates/ios/$INCIDENT_DOC" "$PARENT/state/ios.status" \
-  "the structured ledger offer was not rewritten to its local copy"
+  "the structured offer was not rewritten to its local copy"
 assert_no_document_decision "the reported incident left a document decision standing"
 pass "the reported incident raises no standing decision and still delivers the report"
 

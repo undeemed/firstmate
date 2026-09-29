@@ -12,17 +12,14 @@
 # outcome that depends on the model remembering to write to the channel.
 # The fix is structural: every script that RECORDS a captain-facing outcome in a
 # mate home publishes it on the parent channel itself, so delivery never
-# depends on the model. This library owns where that channel lives and how a
-# line is appended to it. The publishers are:
-#   - bin/fm-inactive-reconcile.sh   a direct child's terminal done or failed
-#                                    ledger line, on every watcher poll, plus
-#                                    the silent-ledger inactive-outcome fallback
+# depends on the model. A child's routine terminal outcome is not one of them:
+# the mate owns its crew and is woken by it in its own home, so republishing
+# every child completion upward only floods the parent. This library owns
+# where that channel lives and how a line is appended to it. The publishers are:
 #   - bin/fm-pr-check.sh             a registered PR-ready line carrying the
 #                                    canonical URL
 #   - bin/fm-captain-hold.sh         a task held for the captain and its answer
 #   - bin/fm-merge-outcome-lib.sh    a merged PR
-#   - bin/fm-teardown.sh             the child's final ledger line, refusing to
-#                                    remove the child while it is undelivered
 #   - bin/fm-secondmate-report.sh     a marked request's correlated answer,
 #                                    with this resolver choosing its destination
 # The mate's own appends are reserved for judgement (bin/fm-brief.sh charter).

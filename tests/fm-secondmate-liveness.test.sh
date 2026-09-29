@@ -374,6 +374,36 @@ test_sweep_respawns_confirmed_dead_secondmate() {
   pass "sweep: a confirmed-dead secondmate endpoint is killed and respawned"
 }
 
+# A memory floor far above MemAvailable refuses every fresh spawn, but a
+# registered secondmate respawned into its existing home is not fresh: the
+# floor must never leave a persistent secondmate stopped.
+test_sweep_respawn_bypasses_memory_floor() {
+  local w fb tmuxfb log out meminfo
+  w=$(new_world sweep-memory-floor)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+  meminfo="$w/meminfo"
+  printf 'MemTotal:       24021684 kB\nMemAvailable:     102400 kB\nSwapFree:       52428796 kB\n' > "$meminfo"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log" \
+    FM_SPAWN_MEMORY_FLOOR_MB=999999 FM_SPAWN_MEMORY_MEMINFO="$meminfo")
+
+  assert_not_contains "$out" "spawn refused" "the memory floor must not refuse a secondmate respawn"
+  assert_not_contains "$out" "MemAvailable" "the memory floor must not refuse a secondmate respawn"
+  assert_contains "$(cat "$log")" "new-window" \
+    "a confirmed-dead secondmate must be relaunched despite the memory floor"
+  assert_grep 'relaunched' "$w/home/state/.secondmate-relaunch-sm1" \
+    "the respawn under the memory floor did not record a relaunch"
+
+  out=$(PATH="$tmuxfb:$fb:$BASE_PATH" TMUX='' FM_BACKEND=tmux FM_HOME="$w/home" FM_SPAWN_NO_GUARD=1 \
+    FM_TMUX_CALL_LOG="$log" FM_SPAWN_MEMORY_FLOOR_MB=999999 FM_SPAWN_MEMORY_MEMINFO="$meminfo" \
+    "$ROOT/bin/fm-spawn.sh" fresh1 someproj --mode local-only --yolo off 2>&1)
+  assert_contains "$out" "spawn refused: host MemAvailable is 100 MB" \
+    "a fresh ordinary spawn must still be refused by the same memory floor"
+  pass "sweep: a secondmate respawn into its existing home is exempt from the memory floor"
+}
+
 test_sweep_skips_mate_whose_liveness_lock_is_held() {
   local w fb tmuxfb log out holder i=0
   w=$(new_world sweep-lock-held)
@@ -716,6 +746,7 @@ test_sweep_converges_no_retouch_once_alive
 test_sweep_skipped_under_detect_only
 test_sweep_noop_with_no_secondmate_meta
 test_sweep_skips_mate_whose_liveness_lock_is_held
+test_sweep_respawn_bypasses_memory_floor
 test_sweep_refuses_relaunch_on_ledger_errors
 test_remote_poll_probe_maps_states
 test_remote_poll_probe_unreachable_preserves_route

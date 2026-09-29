@@ -379,17 +379,19 @@ kimi_typed_launch_file() {
   printf '%s' "$src"
 }
 
-test_kimi_spawn_refuses_shared_task_temp_root() {
-  local id rec out rc task_tmp launch_dir launch_file stale_file
+test_kimi_spawn_refuses_symlinked_task_temp_root_and_tightens_loose_owned_root() {
+  local id rec out rc task_tmp link_target launch_dir launch_file stale_file
   id="kimi-sharedtmp-z1-$$"
   # The scratch root resolves through bin/fm-tasktmp-lib.sh, which tests/lib.sh
   # pins at FM_TASKTMP_ROOT for this suite, so the unsafe directory is planted
   # where the spawn will actually look for it.
   task_tmp="$FM_TASKTMP_ROOT/fm-$id"
+  link_target="$FM_TASKTMP_ROOT/fm-$id-link-target"
   KIMI_RUNTIME_TASK_TMP=$task_tmp
-  rm -rf "$task_tmp"
-  mkdir "$task_tmp"
-  chmod 777 "$task_tmp"
+  rm -rf "$task_tmp" "$link_target"
+  mkdir "$link_target"
+  chmod 755 "$link_target"
+  ln -s "$link_target" "$task_tmp"
   rec=$(make_spawn_case sharedtmp "$id")
   read_spawn_record "$rec"
   launch_dir=$(kimi_launch_dir "$id" "$HOME_DIR")
@@ -397,15 +399,20 @@ test_kimi_spawn_refuses_shared_task_temp_root() {
   rm -rf "$launch_dir"
   out=$(run_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id")
   rc=$?
-  [ "$rc" -ne 0 ] || fail "kimi spawn accepted a world-writable task temp root"
+  [ "$rc" -ne 0 ] || fail "kimi spawn accepted a symlinked task temp root"
   assert_contains "$out" "is not a private directory owned by this user" \
     "kimi spawn did not name the unsafe task temp root"
-  assert_absent "$task_tmp/launch.sh" "kimi spawn staged its launch command in a shared directory"
-  assert_absent "$launch_dir" "kimi spawn staged a namespaced launch directory after refusing the shared temp root"
-  [ ! -s "$CASE_DIR/launch.log" ] || fail "kimi spawn launched despite an unsafe task temp root"
-  rm -rf "$task_tmp"
+  assert_absent "$link_target/launch.sh" "kimi spawn staged its launch command through a symlinked temp root"
+  assert_absent "$link_target/tmp" "kimi spawn created scratch directories through a symlinked temp root"
+  [ "$(path_mode "$link_target")" = 755 ] \
+    || fail "kimi spawn chmodded through a symlinked task temp root: $(path_mode "$link_target")"
+  assert_absent "$launch_dir" "kimi spawn staged a namespaced launch directory after refusing the symlinked temp root"
+  [ ! -s "$CASE_DIR/launch.log" ] || fail "kimi spawn launched despite a symlinked task temp root"
+  rm -rf "$task_tmp" "$link_target"
+  # Loose permissions alone (older releases created roots 0775) are tightened,
+  # not refused, so a relaunch is never stopped by them.
   mkdir "$task_tmp"
-  chmod 755 "$task_tmp"
+  chmod 777 "$task_tmp"
   rec=$(make_spawn_case ownedtmp "$id")
   read_spawn_record "$rec"
   launch_dir=$(kimi_launch_dir "$id" "$HOME_DIR")
@@ -441,7 +448,7 @@ test_kimi_spawn_refuses_shared_task_temp_root() {
   grep -qF -- "-l . '$launch_file'" "$CASE_DIR/tmux-calls.log" \
     || fail "kimi spawn did not type a short line sourcing its namespaced launch command"
   rm -rf "$task_tmp" "$launch_dir"
-  pass "fm-spawn: unsafe task roots are refused, owned roots are tightened, and launch files stay unique and 0600"
+  pass "fm-spawn: a symlinked task root is refused, a loose owned root is tightened to 0700, and launch files stay unique and 0600"
 }
 
 test_kimi_hook_install_is_surgical_idempotent_and_removable() {
@@ -1146,7 +1153,7 @@ test_kimi_hook_remove_preserves_owned_newline_boundary
 test_kimi_hook_fails_closed_on_missing_malformed_or_partial_config
 test_kimi_hook_install_refuses_without_jq
 test_kimi_launch_then_send_is_verified
-test_kimi_spawn_refuses_shared_task_temp_root
+test_kimi_spawn_refuses_symlinked_task_temp_root_and_tightens_loose_owned_root
 test_kimi_hook_is_silent_and_requires_registered_workspace_token
 test_kimi_spawn_refuses_unsafe_global_config_before_pane_creation
 test_kimi_teardown_removes_pointer_and_registry_token

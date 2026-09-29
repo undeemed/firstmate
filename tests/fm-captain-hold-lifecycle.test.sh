@@ -1325,8 +1325,7 @@ test_secondmate_hold_stays_in_authoritative_home() {
   cp "$ROOT/.tasks.toml" "$mate/.tasks.toml"
   printf '# Synthetic secondmate home\n' > "$mate/AGENTS.md"
   printf 'sample-mate\n' > "$mate/.fm-secondmate-home"
-  # A seeded home always carries its parent binding; teardown delivers the
-  # scout's final line through it before removing the record.
+  # A seeded home always carries its parent binding.
   printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$parent" \
     > "$mate/.fm-secondmate-parent"
   cat > "$mate/data/backlog.md" <<'EOF'
@@ -1349,8 +1348,7 @@ EOF
     || fail "secondmate-owned hold creation failed"
   run_captain "$mate" complete "$origin" sample-release-call >/dev/null \
     || fail "secondmate-owned completion failed"
-  # The parent registers the mate before its children are ever torn down;
-  # teardown resolves that registration to deliver the scout's final line.
+  # The parent registers the mate before its children are ever torn down.
   printf -- '- sample-mate - synthetic scope (home: %s; scope: sample reviews; projects: sample; added 2026-07-14)\n' \
     "$mate" > "$parent/data/secondmates.md"
   fm_write_secondmate_meta "$parent/state/sample-mate.meta" "$mate" \
@@ -1358,9 +1356,10 @@ EOF
   run_teardown "$mate" "$origin" >/dev/null 2> "$mate/teardown.err" \
     || fail "secondmate investigation teardown failed: $(cat "$mate/teardown.err")"
   tasks_in "$mate" "done" "$origin" --report "data/$origin/report.md" --keep 0 >/dev/null
-  grep -Eq "^done \\[key=child-outcome-$origin-done-[0-9a-f]{8}\\] \\[at=[0-9]+\\]: child $origin done: report and visual review complete mode=scout report=data/$origin/report.md$" \
-    "$parent/state/sample-mate.status" \
-    || fail "the scout's final line did not reach the parent at teardown"
+  # Teardown writes nothing to the parent: an undelivered outcome stays in
+  # the mate's own home.
+  assert_no_grep "child-outcome-" "$parent/state/sample-mate.status" \
+    "teardown wrote the scout's outcome to the parent channel"
 
   json=$(run_bearings "$parent") || fail "parent Bearings could not read the secondmate captain call"
   printf '%s' "$json" | jq -e '
