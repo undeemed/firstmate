@@ -545,6 +545,7 @@ test_turnend_guard_extension_flags_todo_blocked_on_direct_reports() {
   printf '#!/usr/bin/env bash\ncat >/dev/null; exit 0\n' >"$repo/bin/fm-turnend-guard.sh"
   chmod +x "$repo/bin/fm-turnend-guard.sh"
   printf 'window=fm:1\n' >"$home/state/fm-live-t1.meta"
+  printf 'window=fm:3\n' >"$home/state/docs.meta"
   printf '1700000000\tfm-gone-t2\tfm:2\n' >"$home/state/.retired-tasks"
   out=$(
     FM_HOME="$home" EXT="$repo/.omp/extensions/fm-primary-turnend-guard.ts" node --input-type=module 2>&1 <<'EOF'
@@ -559,8 +560,10 @@ const todo = (tasks) => ({ type: "message", message: { role: "toolResult", toolN
 const branch = [
   todo([{ content: "Superseded snapshot", status: "blocked", blocker: "fm-gone-t2" }]),
   todo([
-    { content: "Collect hackathon deliverables", status: "blocked", blocker: "secondmate fm-gone-t2." },
-    { content: "Await fm-live-t1 PR", status: "blocked" },
+    { content: "Collect hackathon deliverables", status: "blocked", blocker: "fm-gone-t2" },
+    { content: "Await fm-live-t1 PR", status: "blocked", blocker: " fm-live-t1 " },
+    { content: "Publish release notes", status: "blocked", blocker: "captain sign-off on docs wording" },
+    { content: "Chase fm-live-t1 review", status: "blocked", blocker: "captain approval" },
     { content: "Merge the fix", status: "blocked", blocker: "captain approval" },
     { content: "Tear down fm-live-t1", status: "pending" },
     { content: "Lookalike", status: "blocked", blocker: "fm-gone-t2x" },
@@ -573,7 +576,7 @@ if (!text.startsWith("⁣FIRSTMATE_OP: v1 turn-end-guard: ") || text.includes("T
 for (const want of ["TODO LIST WAITS ON DIRECT REPORTS", "- Collect hackathon deliverables (blocked on fm-gone-t2)", "- Await fm-live-t1 PR (blocked on fm-live-t1)"]) {
   if (!text.includes(want)) throw new Error(`continuation is missing '${want}': ${text}`);
 }
-for (const unwanted of ["Superseded", "Merge the fix", "Tear down", "Lookalike"]) {
+for (const unwanted of ["Superseded", "Merge the fix", "Tear down", "Lookalike", "Publish release notes", "Chase fm-live-t1"]) {
   if (text.includes(unwanted)) throw new Error(`continuation wrongly names '${unwanted}': ${text}`);
 }
 if (await stop(true, branch) !== undefined) throw new Error("the flagged continuation stop must stand down");
@@ -581,6 +584,12 @@ const cleared = [...branch, { type: "custom", customType: "user_todo_edit", data
 if (await stop(false, cleared) !== undefined) throw new Error("a cleared todo list must let the turn end");
 writeFileSync(lock, "1\n");
 if (await stop(false, branch) !== undefined) throw new Error("a session that does not own the home lock must not be nagged");
+writeFileSync(lock, `${process.pid}\n`);
+const ownSteps = [todo([
+  { content: "Publish release notes", status: "blocked", blocker: "captain sign-off on docs wording" },
+  { content: "Chase fm-live-t1 review", status: "blocked", blocker: "captain approval" },
+])];
+if (await stop(false, ownSteps) !== undefined) throw new Error("an own step whose text merely mentions a record id must not compel a continuation");
 EOF
   )
   status=$?

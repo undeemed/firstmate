@@ -510,7 +510,7 @@ function runCdCheck(command: string): Promise<{ code: number; stderr: string }> 
 // the list from - and its `blocked` items never trigger omp's own reminder, so
 // a mirror of delegated work outlives the work silently. Direct reports are
 // this home's live task records plus its retirement tombstones
-// (bin/fm-retire-lib.sh), matched as whole ids in the item text or blocker.
+// (bin/fm-retire-lib.sh), matched only when an item's blocker is exactly one id.
 function blockedTodoOnDirectReports(ctx: { sessionManager?: { getBranch?: () => unknown } } | undefined): string[] {
   let branch: unknown;
   try {
@@ -541,10 +541,8 @@ function blockedTodoOnDirectReports(ctx: { sessionManager?: { getBranch?: () => 
   } catch {}
   ids.delete("");
   return blocked.flatMap((task) => {
-    const text = `${String(task.content ?? "")} ${String(task.blocker ?? "")}`;
-    const named = [...ids].filter((id) =>
-      new RegExp(`(^|[^A-Za-z0-9_-])${id.replace(/[.]/g, "\\.")}($|[^A-Za-z0-9_-])`).test(text));
-    return named.length ? [`- ${String(task.content ?? "")} (blocked on ${named.join(", ")})`] : [];
+    const blocker = String(task.blocker ?? "").trim();
+    return ids.has(blocker) ? [`- ${String(task.content ?? "")} (blocked on ${blocker})`] : [];
   });
 }
 
