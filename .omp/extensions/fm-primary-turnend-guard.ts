@@ -519,22 +519,20 @@ function blockedTodoOnDirectReports(ctx: { sessionManager?: { getBranch?: () => 
     return [];
   }
   // Vendor session entries, reduced to the optional fields omp's own todo restore reads.
+  type Phases = { tasks?: { content?: unknown; status?: unknown; blocker?: unknown }[] }[];
   const entries = (Array.isArray(branch) ? branch : []) as {
     type?: unknown;
     customType?: unknown;
-    data?: { phases?: unknown };
-    message?: { role?: unknown; toolName?: unknown; isError?: unknown; details?: { phases?: unknown } };
+    data?: { phases?: Phases };
+    message?: { role?: unknown; toolName?: unknown; isError?: unknown; details?: { phases?: Phases } };
   }[];
-  const phases: unknown[] = entries.map((entry) =>
+  const phases = entries.map((entry) =>
     entry?.type === "custom" && entry.customType === "user_todo_edit"
       ? entry.data?.phases
       : entry?.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === "todo" && !entry.message.isError
         ? entry.message.details?.phases
         : undefined).reverse().find(Array.isArray) ?? [];
-  const blocked = phases
-    .flatMap((phase) => (phase && typeof phase === "object" && "tasks" in phase && Array.isArray(phase.tasks) ? phase.tasks : []) as
-      { content?: unknown; status?: unknown; blocker?: unknown }[])
-    .filter((task) => task?.status === "blocked");
+  const blocked = phases.flatMap((phase) => phase?.tasks ?? []).filter((task) => task?.status === "blocked");
   if (blocked.length === 0 || lockOwnership() !== "owned") return [];
   const ids = new Set<string>();
   try {
