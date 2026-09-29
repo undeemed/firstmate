@@ -25,7 +25,11 @@
 // completed a full startup; session_compact maps to `compact`.
 // before_agent_start returning { message } was verified to reach model context
 // on omp 18.1.11 (the model quoted an injected marker back), so omp qualifies
-// for the Run tier.
+// for the Run tier. omp caps every extension handler at 30s, so that handler
+// waits at most sessionstartInjectWaitMs for the digest; a slower startup is
+// sent with pi.sendMessage the moment it completes, with triggerTurn so an
+// idle session acts on it (omp steers it into a turn still streaming).
+// Compaction keeps its plain send, which lands in the retried or next turn.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -43,7 +47,7 @@ import {
 // where they are used here.
 type ExtensionAPI = {
   on?: (event: string, handler: (event: any, ctx: any) => unknown) => void;
-  sendMessage?: (message: unknown) => void;
+  sendMessage?: (message: unknown, options?: { triggerTurn?: boolean }) => void;
 };
 
 type LockOwnership = "owned" | "missing" | "other";
@@ -120,6 +124,16 @@ const sessionstartManualFallback =
   "Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions.";
 const sessionstartIneligibleExit = 3;
 const sessionstartRetireTimeoutMs = 1000;
+const sessionstartDefaultInjectWaitMs = 20000;
+// FM_OMP_SESSIONSTART_WAIT_MS is a test hook that may only shorten the wait;
+// any other value falls back to the default so no setting passes omp's cap.
+const sessionstartWaitOverride = Number(process.env.FM_OMP_SESSIONSTART_WAIT_MS);
+export const sessionstartInjectWaitMs =
+  Number.isInteger(sessionstartWaitOverride) &&
+  sessionstartWaitOverride > 0 &&
+  sessionstartWaitOverride <= sessionstartDefaultInjectWaitMs
+    ? sessionstartWaitOverride
+    : sessionstartDefaultInjectWaitMs;
 
 // One active generation owns native startup from child launch through context
 // claim. Replacement activates first, serially retires every predecessor, and
@@ -140,6 +154,7 @@ type SessionstartGeneration = {
   source: SessionstartSource;
   stopping: boolean;
   delivered: boolean;
+  sendPending: boolean;
   child: ChildProcess | null;
   processGroupId: number | null;
   childClosed: boolean;
@@ -398,6 +413,7 @@ function createSessionstartGeneration(
     source,
     stopping: false,
     delivered: false,
+    sendPending: false,
     child: null,
     processGroupId: null,
     childClosed: false,
@@ -455,6 +471,22 @@ async function claimSessionstartMessage(
   }
   generation.delivered = true;
   return sessionstartMessage(generation, result);
+}
+
+// omp caps every extension handler at 30s, so a handler waits at most
+// sessionstartInjectWaitMs for the run; false means it is still running.
+async function sessionstartSettlesInTime(generation: SessionstartGeneration): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      generation.result.then(() => true),
+      new Promise<boolean>((resolveWait) => {
+        timer = setTimeout(resolveWait, sessionstartInjectWaitMs, false);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // The shared guard reads stop_hook_active exactly as it does from Claude's
@@ -589,27 +621,46 @@ export default function (pi: ExtensionAPI) {
     sessionstartGeneration = createSessionstartGeneration(source, sessionIdFromContext(ctx));
   });
 
+  // Claims and sends a digest outside any handler budget; the claim's
+  // generation and delivered checks keep it exactly-once and drop it once
+  // the generation is superseded or shut down.
+  const sendSessionstartWhenReady = async (
+    generation: SessionstartGeneration,
+    ctx: SessionStartContext,
+    options?: { triggerTurn: boolean },
+  ): Promise<void> => {
+    generation.sendPending = true;
+    const message = await claimSessionstartMessage(generation, ctx);
+    generation.sendPending = false;
+    if (!message || !sessionstartGenerationIsLive(generation)) return;
+    try {
+      pi.sendMessage?.(message, options);
+    } catch {
+      generation.delivered = false;
+    }
+  };
+
   pi.on?.("before_agent_start", async (_event, ctx) => {
     const generation = sessionstartGeneration;
-    if (!generation) return undefined;
+    if (!generation || generation.sendPending) return undefined;
+    if (!(await sessionstartSettlesInTime(generation))) {
+      void sendSessionstartWhenReady(generation, ctx, { triggerTurn: true });
+      return undefined;
+    }
     const message = await claimSessionstartMessage(generation, ctx);
     return message ? { message } : undefined;
   });
 
   // omp's compaction equivalent, delivered the way Pi's is: manual compaction
   // is idle and auto-compaction may retry without another before_agent_start,
-  // so the message is sent directly while sharing generation ownership.
+  // so the message is sent directly while sharing generation ownership. The
+  // handler waits for that send only within the bound, never past omp's cap.
   pi.on?.("session_compact", async (_event, ctx) => {
     registerSessionstartExitListener();
     const generation = createSessionstartGeneration("compact", sessionIdFromContext(ctx));
     sessionstartGeneration = generation;
-    const message = await claimSessionstartMessage(generation, ctx);
-    if (!message || !sessionstartGenerationIsLive(generation)) return;
-    try {
-      pi.sendMessage?.(message);
-    } catch {
-      generation.delivered = false;
-    }
+    const delivery = sendSessionstartWhenReady(generation, ctx);
+    if (await sessionstartSettlesInTime(generation)) await delivery;
   });
 
   pi.on?.("session_shutdown", async () => {
