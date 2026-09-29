@@ -125,6 +125,8 @@ const sessionstartManualFallback =
 const sessionstartIneligibleExit = 3;
 const sessionstartRetireTimeoutMs = 1000;
 const sessionstartDefaultInjectWaitMs = 20000;
+// FM_OMP_SESSIONSTART_WAIT_MS is a test hook that may only shorten the wait;
+// any other value falls back to the default so no setting passes omp's cap.
 const sessionstartWaitOverride = Number(process.env.FM_OMP_SESSIONSTART_WAIT_MS);
 export const sessionstartInjectWaitMs =
   Number.isInteger(sessionstartWaitOverride) &&
