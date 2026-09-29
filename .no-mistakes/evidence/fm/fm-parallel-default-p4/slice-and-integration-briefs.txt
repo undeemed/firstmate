@@ -1,0 +1,8 @@
+$ FM_HOME=<throwaway secondmate home> bin/fm-brief.sh demo-agents-page subliminal --mode local-only
+scaffolded: .../data/demo-agents-page/brief.md (ship, mode=local-only; replace {TASK} and {FIRSTMATE_SPEC})
+1. Never push to any remote and never open a PR. Work only on your `fm/demo-agents-page` branch; firstmate handles the merge into local `main`.
+The task is complete only when committed on your branch `fm/demo-agents-page`. Do NOT push, do NOT open a PR, do NOT merge.
+When it is implemented and committed, append `done [at=<epoch>]: ready in branch fm/demo-agents-page` to the status file and stop.
+
+$ FM_HOME=<throwaway secondmate home> bin/fm-brief.sh demo-integration subliminal --mode no-mistakes
+scaffolded: .../data/demo-integration/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
