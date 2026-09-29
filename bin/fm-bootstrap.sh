@@ -496,12 +496,9 @@ secondmate_sync() {
   }
 
   # A live mate whose agent launched before a change to its harness launch
-  # surface is restarted onto it (secondmate_reload_start). An agent launched
-  # before spawns recorded launch_head ran at best the commit this sweep found.
+  # surface is restarted onto it (secondmate_reload_start).
   fm_ff_after_secondmate_settled() {  # <id> <home> <window> <status> <instr> <from>
-    local meta="$STATE/$1.meta" launch
-    launch=$(fm_meta_get "$meta" launch_head)
-    if launch_surface_stale "$2" "${launch:-$6}" HEAD "$(fm_meta_get "$meta" harness)"; then
+    if launch_surface_stale "$2" "$STATE/$1.meta" "$6"; then
       RELOAD_IDS="$RELOAD_IDS $1"
     fi
   }

@@ -252,16 +252,19 @@ launch_surface_paths() { # <harness>
   esac
 }
 
-# Succeeds when an agent launched at <launch-commit> has not loaded the launch
-# surface <commit> carries for <harness>. An unrecorded or unreadable launch
-# commit cannot prove the agent current, so it counts as stale.
-launch_surface_stale() { # <dir> <launch-commit> <commit> <harness>
-  local paths
-  paths=$(launch_surface_paths "$4")
+# Succeeds when the agent a live mate's <meta> records has not loaded the launch
+# surface <dir>'s HEAD carries for its harness. It launched at the meta's
+# launch_head, or, recorded before spawns wrote one, at best at <from>, the
+# commit its home sat on before this sync. An unknown launch counts as stale.
+launch_surface_stale() { # <dir> <meta> <from>
+  local paths launch
+  paths=$(launch_surface_paths "$(sed -n 's/^harness=//p' "$2" 2>/dev/null | tail -1)")
   [ -n "$paths" ] || return 1
-  [ -n "$2" ] && git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null || return 0
+  launch=$(sed -n 's/^launch_head=//p' "$2" 2>/dev/null | tail -1)
+  launch=${launch:-$3}
+  [ -n "$launch" ] && git -C "$1" cat-file -e "$launch^{commit}" 2>/dev/null || return 0
   # shellcheck disable=SC2086 # a word list of fixed pathspecs
-  ! git -C "$1" diff --quiet "$2" "$3" -- $paths 2>/dev/null
+  ! git -C "$1" diff --quiet "$launch" HEAD -- $paths 2>/dev/null
 }
 
 # " (N commit(s) behind)" when the target is genuinely behind its fast-forward

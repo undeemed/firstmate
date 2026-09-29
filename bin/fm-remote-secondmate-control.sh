@@ -345,7 +345,7 @@ import_home_commit() { # <home> <commit>
 }
 
 cmd_sync() {
-  local id=$1 commit report out meta from recorded launch=''
+  local id=$1 commit report out meta from launch=''
   validate_id "$id"
   validate_home "$id"
   if [ "$#" -ge 2 ]; then
@@ -365,14 +365,10 @@ cmd_sync() {
   rm -f "$report"
   # launch=stale says the agent this host launched in the home has not loaded
   # the harness launch surface the home now carries, so the parent restarts it;
-  # this host's own record of that launch is the only one that tracks relaunches,
-  # and an agent launched before that record existed ran at best <from>.
+  # this host's own record of that launch is the only one that tracks relaunches.
   meta=$(meta_path "$id")
-  if [ "$FF_STATUS" != skipped ] && [ -f "$meta" ]; then
-    recorded=$(fm_meta_get "$meta" launch_head)
-    if launch_surface_stale "$TARGET_HOME" "${recorded:-$from}" HEAD "$(fm_meta_get "$meta" harness)"; then
-      launch=' launch=stale'
-    fi
+  if [ "$FF_STATUS" != skipped ] && [ -f "$meta" ] && launch_surface_stale "$TARGET_HOME" "$meta" "$from"; then
+    launch=' launch=stale'
   fi
   case "$FF_STATUS" in
     # instr= names the watched instruction paths this advance changed, with no

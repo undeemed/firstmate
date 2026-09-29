@@ -254,14 +254,16 @@ harvest_restarts() {
 # and one busy mate delays only itself.
 
 LOCKS=()
-# shellcheck disable=SC2329 # invoked from the EXIT traps below
-release_restart_locks() {
+RESULT_DIR=
+# shellcheck disable=SC2329 # invoked from the EXIT trap below
+cleanup() {
   local lock
+  [ -z "$RESULT_DIR" ] || rm -rf -- "$RESULT_DIR"
   for lock in "${LOCKS[@]:-}"; do
     [ -z "$lock" ] || fm_lock_release "$lock"
   done
 }
-trap release_restart_locks EXIT
+trap cleanup EXIT
 
 i=0
 while [ "$i" -lt "${#IDS[@]}" ]; do
@@ -338,7 +340,6 @@ RESULT_DIR=$(mktemp -d "$STATE/.secondmate-restart.XXXXXX") || {
   echo "error: could not create restart result directory under $STATE" >&2
   exit 1
 }
-trap 'rm -rf -- "$RESULT_DIR"; release_restart_locks' EXIT
 pending_count=0
 restart_active_count=0
 i=0
