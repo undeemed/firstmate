@@ -693,7 +693,7 @@ secondmate_sync() {
     if sync_out=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh sync "$id" \
       "$primary_head" < /dev/null 2>&1); then
       case "$sync_out" in synced:*) nudge_needed=1 ;; esac
-      case "$sync_out" in *' launch=stale') printf '%s\n' "$id" >>"$reload_remote" ;; esac
+      case "$sync_out" in *' launch=stale') printf '%s ' "$id" >>"$reload_remote" ;; esac
     else
       sync_rc=$?
       echo "SECONDMATE_SYNC: secondmate $id: skipped: remote tracked-file sync failed on $remote_host: $(remote_sync_failure_reason "$sync_rc" "$sync_out")"
@@ -749,7 +749,7 @@ secondmate_sync() {
     fi
   done < <(live_secondmate_meta_records "$STATE" "$DATA/secondmates.md")
   [ "$parallel" -eq 0 ] || bootstrap_parallel_finish
-  RELOAD_IDS="$RELOAD_IDS $(tr '\n' ' ' <"$reload_remote")"
+  RELOAD_IDS="$RELOAD_IDS $(cat "$reload_remote")"
   [ "$reload_remote" = /dev/null ] || rm -f "$reload_remote"
   # shellcheck disable=SC2086 # a word list of validated ids
   [ -z "${RELOAD_IDS// /}" ] || secondmate_reload_start $RELOAD_IDS
