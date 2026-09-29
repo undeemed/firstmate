@@ -252,6 +252,26 @@ The blocking and bounded-follow-up mechanisms were validated across seven harnes
 | Grok | 0.2.112 native and 0.2.73 pre-native | Running-payload adaptive `Stop` | Native false-to-true continuation stayed in one process with two model turns and zero resume launches; the field-absent pre-native process launched exactly one guarded resume. |
 | Cursor | 2026.08.11-e8db854 | Awaited `stop` hook park returning one `followup_message` | Exit 2 ended the turn normally, proving it cannot block; a returned follow-up ran a genuine second turn; a sleeping hook held the boundary open and the wake landed after it; `loop_limit` stopped the hook being invoked at its ceiling. |
 
+### omp blocked-todo backstop, 2026-09-29
+
+The session-todo backstop in `.omp/extensions/fm-primary-turnend-guard.ts` was verified on 2026-09-29 against omp 18.4.2 on Linux x64 with the `openai-codex/gpt-5.6-astra` model, in the isolated rpc lab of `tests/fm-omp-primary-live-e2e.test.sh` with the guard script stubbed to exit 0 so the continuation could only come from the backstop.
+The lab tombstoned `fm-e2e-gone` in `state/.retired-tasks`, and the model initialized one todo item and blocked it with the blocker `fm-e2e-gone`.
+
+```text
+ok - omp omp/18.4.2: session_stop read a blocked todo item naming a retired report from the session branch, compelled one continuation, and the model cleared the item
+```
+
+The guard spy recorded `rc=0` stops only, followed by a stop carrying `stop_hook_active: true`, and the continuation's own `todo` call used `op: rm`.
+omp 18.4.2 ran that continuation inside the same agent loop, so the rpc stream carried one `agent_end` for the whole turn.
+The same lab against the extension without the backstop never raised a `stop_hook_active: true` stop.
+`FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes this evidence in its blocked-todo stage.
+
+Claude Code, Codex, OpenCode, Pi, Grok, and Cursor carry no backstop because none gives a primary integration a supported structural read of the live session's todo or plan state with a waiting state.
+Claude Code 2.1.274 and codex-cli 0.147.0 put no todo or plan field in their `Stop` hook payloads; the only route is the session transcript file, whose record format is not a hook API.
+OpenCode 1.18.32 publishes `todo.updated` to plugins, but its statuses are `pending`, `in_progress`, `completed`, and `cancelled`, with no blocked state.
+Pi 0.84.2 ships no todo or plan tool.
+Grok and Cursor were not installed on the measuring host, and the stop payloads [`turnend-guard.md`](../turnend-guard.md#harness-integrations) records for them carry no todo field.
+
 ### Cursor primary park, 2026-08-13
 
 Cursor was validated as a primary on 2026-08-13 against the installed CLI on macOS 26.5.2 arm64 with tmux 3.6a, in a throwaway firstmate home on a private tmux socket, never against a live home and never with a user-scope hook.

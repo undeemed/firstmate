@@ -536,6 +536,59 @@ EOF
   pass ".omp turn-end guard: digest delivery, seatbelt block, one compelled continuation, flagged stop stands down"
 }
 
+test_turnend_guard_extension_flags_todo_blocked_on_direct_reports() {
+  local repo home out status
+  repo="$TMP_ROOT/todo/repo"
+  home="$TMP_ROOT/todo/home"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  printf '#!/usr/bin/env bash\ncat >/dev/null; exit 0\n' >"$repo/bin/fm-turnend-guard.sh"
+  chmod +x "$repo/bin/fm-turnend-guard.sh"
+  printf 'window=fm:1\n' >"$home/state/fm-live-t1.meta"
+  printf '1700000000\tfm-gone-t2\tfm:2\n' >"$home/state/.retired-tasks"
+  out=$(
+    FM_HOME="$home" EXT="$repo/.omp/extensions/fm-primary-turnend-guard.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync } from "node:fs";
+const lock = `${process.env.FM_HOME}/state/.lock`;
+writeFileSync(lock, `${process.pid}\n`);
+const handlers = new Map();
+(await import(pathToFileURL(process.env.EXT).href)).default({ on(e, h) { handlers.set(e, h); }, sendMessage() {} });
+const stop = (active, entries) => handlers.get("session_stop")({ type: "session_stop", stop_hook_active: active }, { sessionManager: { getBranch: () => entries } });
+const todo = (tasks) => ({ type: "message", message: { role: "toolResult", toolName: "todo", details: { phases: [{ name: "Fleet", tasks }] } } });
+const branch = [
+  todo([{ content: "Superseded snapshot", status: "blocked", blocker: "fm-gone-t2" }]),
+  todo([
+    { content: "Collect hackathon deliverables", status: "blocked", blocker: "secondmate fm-gone-t2." },
+    { content: "Await fm-live-t1 PR", status: "blocked" },
+    { content: "Merge the fix", status: "blocked", blocker: "captain approval" },
+    { content: "Tear down fm-live-t1", status: "pending" },
+    { content: "Lookalike", status: "blocked", blocker: "fm-gone-t2x" },
+  ]),
+];
+const r1 = await stop(false, branch);
+if (r1?.continue !== true) throw new Error(`a todo blocked on direct reports did not compel a continuation: ${JSON.stringify(r1)}`);
+const text = r1.additionalContext;
+if (!text.startsWith("⁣FIRSTMATE_OP: v1 turn-end-guard: ") || text.includes("TURN WOULD END BLIND")) throw new Error(`wrong continuation shape: ${text}`);
+for (const want of ["TODO LIST WAITS ON DIRECT REPORTS", "- Collect hackathon deliverables (blocked on fm-gone-t2)", "- Await fm-live-t1 PR (blocked on fm-live-t1)"]) {
+  if (!text.includes(want)) throw new Error(`continuation is missing '${want}': ${text}`);
+}
+for (const unwanted of ["Superseded", "Merge the fix", "Tear down", "Lookalike"]) {
+  if (text.includes(unwanted)) throw new Error(`continuation wrongly names '${unwanted}': ${text}`);
+}
+if (await stop(true, branch) !== undefined) throw new Error("the flagged continuation stop must stand down");
+const cleared = [...branch, { type: "custom", customType: "user_todo_edit", data: { phases: [{ name: "Fleet", tasks: [{ content: "Await fm-live-t1 PR", status: "abandoned" }] }] } }];
+if (await stop(false, cleared) !== undefined) throw new Error("a cleared todo list must let the turn end");
+writeFileSync(lock, "1\n");
+if (await stop(false, branch) !== undefined) throw new Error("a session that does not own the home lock must not be nagged");
+EOF
+  )
+  status=$?
+  expect_code 0 "$status" "omp todo backstop contract: $out"
+  [ -z "$out" ] || fail "omp todo backstop test printed output: $out"
+  pass ".omp turn-end guard: a todo item blocked on a live or retired direct report compels one continuation"
+}
+
 test_watch_extension_arms_and_delivers() {
   local repo home out status
   repo="$TMP_ROOT/watch/repo"; home="$TMP_ROOT/watch/home"
@@ -880,6 +933,7 @@ test_busy_extension_lifecycle
 test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation
+test_turnend_guard_extension_flags_todo_blocked_on_direct_reports
 test_watch_extension_arms_and_delivers
 test_watch_extension_delivers_by_session_state
 test_watch_extension_runs_the_supervision_host

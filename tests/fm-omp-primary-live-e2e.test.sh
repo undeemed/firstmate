@@ -14,6 +14,8 @@
 #   4. with the successor watcher frozen until its beacon passes the lab grace,
 #      the next turn end is genuinely unsupervised, so session_stop must compel
 #      the turn-end guard continuation and the model reaches for the tool.
+#   5. a todo item blocked on a retired direct report compels one
+#      continuation, read from the real session branch, and the model clears it.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -291,6 +293,30 @@ if [ -z "$repaired_pid" ] || ! kill -0 "$repaired_pid" 2>/dev/null; then
   fail "no live watcher after the guard stage"
 fi
 pass "omp $OMP_VERSION: session_stop compelled the guard continuation (guard rc=2, then a stop_hook_active stop) and the model reached for fm_watch_arm_omp"
+
+# --- 4. a todo item blocked on a retired direct report --------------------------
+# omp's own todo reminder skips blocked items, so only the guard extension's
+# session-branch read catches one waiting on a report this home retired. The
+# watcher is healthy again, so the guard itself exits 0 and a stop_hook_active
+# stop after this prompt can only come from the todo backstop's continuation.
+printf '%s\tfm-e2e-gone\t\n' "$(date +%s)" >> "$PROJECT/state/.retired-tasks"
+: > "$GUARD_SPY_LOG"
+todo_cleared() { # the continuation's own todo call that retires the item
+  jq -r 'select(.type == "tool_execution_start" and .toolName == "todo") | .args.op' "$RPC_LOG" 2>/dev/null |
+    grep -Eqx 'rm|drop|done|unblock'
+}
+rpc_send '{"id":"p4","type":"prompt","message":"Call the todo tool to init one phase named Fleet with the single task Collect fm-e2e-gone deliverables, then call the todo tool again to block that task with the blocker fm-e2e-gone. Then reply with exactly TODO_SET and nothing else."}'
+i=0
+while [ "$i" -lt 360 ]; do
+  grep -q 'stop_hook_active":true' "$GUARD_SPY_LOG" 2>/dev/null && todo_cleared && break
+  sleep 0.5
+  i=$((i + 1))
+done
+grep -q '"status":"blocked"' "$RPC_LOG" || fail "the model never blocked the todo item, so the stage proves nothing (rpc: $(tail -3 "$RPC_LOG"))"
+grep -q 'stop_hook_active":true' "$GUARD_SPY_LOG" || fail "a todo item blocked on a retired report did not compel a continuation (spy log: $(cat "$GUARD_SPY_LOG"))"
+! grep -q '^rc=2 ' "$GUARD_SPY_LOG" || fail "the guard refused a stop, so the continuation is not attributable to the todo backstop (spy log: $(cat "$GUARD_SPY_LOG"))"
+todo_cleared || fail "the model did not clear the blocked item after the todo continuation"
+pass "omp $OMP_VERSION: session_stop read a blocked todo item naming a retired report from the session branch, compelled one continuation, and the model cleared the item"
 
 # --- shutdown -------------------------------------------------------------------
 # omp documents that closing rpc stdin disposes the session and exits 0. On

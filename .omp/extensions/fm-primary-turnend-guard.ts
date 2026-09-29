@@ -28,7 +28,7 @@
 // for the Run tier.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // Shared with the Pi extensions; the owner resolves bin/fm-operational-input.sh
@@ -504,6 +504,64 @@ function runCdCheck(command: string): Promise<{ code: number; stderr: string }> 
   return runChecker("fm-cd-pretool-check.sh", command);
 }
 
+// AGENTS.md section 10: the session todo never waits on a direct report. omp
+// keeps its todo list in the session branch as the newest `todo` tool result
+// (or `user_todo_edit` entry) carrying `phases` - the same entries omp restores
+// the list from - and its `blocked` items never trigger omp's own reminder, so
+// a mirror of delegated work outlives the work silently. Direct reports are
+// this home's live task records plus its retirement tombstones
+// (bin/fm-retire-lib.sh), matched as whole ids in the item text or blocker.
+type TodoTask = { content?: unknown; status?: unknown; blocker?: unknown };
+// omp session entries, reduced to the fields its own todo restore reads.
+type TodoSnapshotEntry = {
+  type?: unknown;
+  customType?: unknown;
+  data?: { phases?: unknown };
+  message?: { role?: unknown; toolName?: unknown; isError?: unknown; details?: { phases?: unknown } };
+};
+
+function blockedTodoOnDirectReports(ctx: { sessionManager?: { getBranch?: () => unknown } } | undefined): string[] {
+  let branch: unknown;
+  try {
+    branch = ctx?.sessionManager?.getBranch?.();
+  } catch {
+    return [];
+  }
+  // Vendor session entries: every field read below is optional and checked.
+  const entries = (Array.isArray(branch) ? branch : []) as TodoSnapshotEntry[];
+  let phases: unknown[] | undefined;
+  for (let i = entries.length - 1; i >= 0 && !phases; i -= 1) {
+    const entry = entries[i];
+    const message = entry?.message;
+    const snapshot = entry?.type === "custom" && entry.customType === "user_todo_edit"
+      ? entry.data?.phases
+      : entry?.type === "message" && message?.role === "toolResult" && message.toolName === "todo" && !message.isError
+        ? message.details?.phases
+        : undefined;
+    if (Array.isArray(snapshot)) phases = snapshot;
+  }
+  const blocked = (phases ?? [])
+    .flatMap((phase) => (phase && typeof phase === "object" && "tasks" in phase && Array.isArray(phase.tasks) ? phase.tasks : []) as TodoTask[])
+    .filter((task) => task?.status === "blocked");
+  if (blocked.length === 0 || lockOwnership() !== "owned") return [];
+  const ids = new Set<string>();
+  try {
+    for (const name of readdirSync(state)) if (name.endsWith(".meta")) ids.add(name.slice(0, -5));
+  } catch {}
+  try {
+    for (const line of readFileSync(`${state}/.retired-tasks`, "utf8").split("\n")) {
+      const id = line.split("\t")[1];
+      if (id) ids.add(id);
+    }
+  } catch {}
+  return blocked.flatMap((task) => {
+    const text = `${String(task.content ?? "")} ${String(task.blocker ?? "")}`;
+    const named = [...ids].filter((id) =>
+      new RegExp(`(^|[^A-Za-z0-9_-])${id.replace(/[.]/g, "\\.")}($|[^A-Za-z0-9_-])`).test(text));
+    return named.length ? [`- ${String(task.content ?? "")} (blocked on ${named.join(", ")})`] : [];
+  });
+}
+
 export default function (pi: ExtensionAPI) {
   let sessionstartGeneration: SessionstartGeneration | null = null;
   let sessionstartExitListenerRegistered = false;
@@ -596,22 +654,28 @@ export default function (pi: ExtensionAPI) {
   // The blocking turn boundary. Returning undefined lets the session settle;
   // returning { continue: true, additionalContext } compels one more agent
   // loop with the guard text attached (verified on omp 18.1.2 and 18.1.11).
-  pi.on?.("session_stop", async (event) => {
+  pi.on?.("session_stop", async (event, ctx) => {
     const stopHookActive = Boolean(event && (event as { stop_hook_active?: unknown }).stop_hook_active === true);
     const result = await runGuard(stopHookActive);
-    if (result.code !== 2) return undefined;
+    const mirrored = stopHookActive ? [] : blockedTodoOnDirectReports(ctx);
+    if (result.code !== 2 && mirrored.length === 0) return undefined;
+    const parts: string[] = [];
+    if (result.code === 2) {
+      parts.push("TURN WOULD END BLIND - supervision is off. " +
+        "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n" +
+        result.stderr);
+    }
+    if (mirrored.length) {
+      parts.push("TODO LIST WAITS ON DIRECT REPORTS - these todo items are blocked on delegated work, " +
+        "which the backlog and status records own (AGENTS.md section 10). " +
+        "Remove them from the todo list before ending the turn.\n" + mirrored.join("\n"));
+    }
+    const text = parts.join("\n\n");
     let content: string;
     try {
-      content = encodeFirstmateOperationalInput(
-        "turn-end-guard",
-        "TURN WOULD END BLIND - supervision is off. " +
-          "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n" +
-          result.stderr,
-      );
+      content = encodeFirstmateOperationalInput("turn-end-guard", text);
     } catch {
-      content = "TURN WOULD END BLIND - supervision is off. " +
-        "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n" +
-        result.stderr;
+      content = text;
     }
     return { continue: true, additionalContext: content };
   });

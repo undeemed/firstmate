@@ -571,6 +571,8 @@ Mention cost as a courtesy when unusually much work is running, but never block 
 
 The configured `tasks-axi` backend is the durable queue; the tracked default is `data/backlog.md`.
 It tracks work items only, never agents; persistent secondmates never appear as backlog items.
+The harness's own session todo or plan list is never a second tracker: it holds only steps this session executes itself and never mirrors or waits on delegated crew, scout, or secondmate work, whose state the backlog and status records own.
+Never end a turn with a todo item blocked on a direct report.
 Work routed to a secondmate is recorded in that secondmate home's own backlog, not the main backlog.
 A decision is simply a task held for the captain: create the task with `bin/fm-tasks-axi.sh add` when needed, then always hold it through `bin/fm-captain-hold.sh hold <id> --reason "<reason>"`, with `--until <date>` when the captain defers it.
 When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item and hold it through that wrapper.
