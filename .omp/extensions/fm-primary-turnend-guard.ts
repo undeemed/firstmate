@@ -576,7 +576,7 @@ function blockedTodoOnDirectReports(ctx: { sessionManager?: { getBranch?: () => 
   ids.delete("");
   return blocked.flatMap((task) => {
     const blocker = String(task.blocker ?? "").trim();
-    const tokens = new Set(blocker.split(/[^A-Za-z0-9._-]+/));
+    const tokens = new Set(blocker.split(/[^A-Za-z0-9._-]+/).map((token) => token.replace(/^\.+|\.+$/g, "")));
     const hit = ids.has(blocker) ? blocker : [...ids].find((id) => /[-0-9]/.test(id) && tokens.has(id));
     return hit ? [`- ${String(task.content ?? "")} (blocked on ${hit})`] : [];
   });

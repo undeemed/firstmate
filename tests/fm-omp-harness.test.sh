@@ -654,13 +654,14 @@ const branch = [
     { content: "Collect demo video", status: "blocked", blocker: "waiting on fm-hack" },
     { content: "Land the fix", status: "blocked", blocker: "fm-x PR merge" },
     { content: "Near miss", status: "blocked", blocker: "waiting on fm-hackx" },
+    { content: "Upload slides", status: "blocked", blocker: "Waiting on fm-hack." },
   ]),
 ];
 const r1 = await stop(false, branch);
 if (r1?.continue !== true) throw new Error(`a todo blocked on direct reports did not compel a continuation: ${JSON.stringify(r1)}`);
 const text = r1.additionalContext;
 if (!text.startsWith("⁣FIRSTMATE_OP: v1 turn-end-guard: ") || text.includes("TURN WOULD END BLIND")) throw new Error(`wrong continuation shape: ${text}`);
-for (const want of ["TODO LIST WAITS ON DIRECT REPORTS", "- Collect hackathon deliverables (blocked on fm-gone-t2)", "- Await fm-live-t1 PR (blocked on fm-live-t1)", "- Collect demo video (blocked on fm-hack)", "- Land the fix (blocked on fm-x)"]) {
+for (const want of ["TODO LIST WAITS ON DIRECT REPORTS", "- Collect hackathon deliverables (blocked on fm-gone-t2)", "- Await fm-live-t1 PR (blocked on fm-live-t1)", "- Collect demo video (blocked on fm-hack)", "- Land the fix (blocked on fm-x)", "- Upload slides (blocked on fm-hack)"]) {
   if (!text.includes(want)) throw new Error(`continuation is missing '${want}': ${text}`);
 }
 for (const unwanted of ["Superseded", "Merge the fix", "Tear down", "Lookalike", "Near miss", "Publish release notes", "Chase fm-live-t1"]) {
