@@ -397,13 +397,13 @@ done
 
 # --- summary ---------------------------------------------------------------
 
+# The wake goes first so the summary line stays the last thing a pass records.
+if [ "$((nudged_count + unreached_count))" -gt 0 ] && [ -n "${FM_SECONDMATE_RESTART_WAKE:-}" ]; then
+  fm_wake_append check "secondmate-restart:$(date +%s)" \
+    "check: secondmate restart pass left $nudged_count nudged and $unreached_count unreached of ${#IDS[@]}; see $FM_SECONDMATE_RESTART_WAKE" \
+    || true
+fi
 printf 'summary: %d of %d restarted, %d nudged, %d unreached\n' \
   "$restarted_count" "${#IDS[@]}" "$nudged_count" "$unreached_count"
-if [ "$((nudged_count + unreached_count))" -gt 0 ]; then
-  [ -z "${FM_SECONDMATE_RESTART_WAKE:-}" ] \
-    || fm_wake_append check "secondmate-restart:$(date +%s)" \
-      "check: secondmate restart pass left $nudged_count nudged and $unreached_count unreached of ${#IDS[@]}; see $FM_SECONDMATE_RESTART_WAKE" \
-    || true
-  exit 3
-fi
+[ "$((nudged_count + unreached_count))" -eq 0 ] || exit 3
 exit 0

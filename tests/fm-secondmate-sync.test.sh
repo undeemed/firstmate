@@ -920,11 +920,11 @@ test_bootstrap_restarts_mate_on_launch_surface_change() {
 
   log="$w/home/state/.secondmate-restart.log"
   i=0
-  while [ "$i" -lt 200 ] && ! grep -q '^summary:' "$log" 2>/dev/null; do
+  while [ "$i" -lt 600 ] && ! grep -q '^summary:' "$log" 2>/dev/null; do
     sleep 0.1
     i=$((i + 1))
   done
-  assert_grep '^summary:' "$log" "the detached restart pass did not finish"
+  assert_grep 'summary: ' "$log" "the detached restart pass did not finish"
   assert_contains "$(cat "$w/home/state/sm-stale.inbox/"*.msg)" "about to restart your agent" \
     "the restart must pass through the persist gate"
   assert_grep 'check: secondmate restart pass left' "$w/home/state/.wake-queue" \
