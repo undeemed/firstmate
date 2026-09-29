@@ -66,11 +66,13 @@ tests/fm-omp-harness.test.sh
 Observed output:
 
 ```text
-ok - omp/18.4.2 delivers a session-start digest slower than the handler cap exactly once with no handler timeout
+ok - omp/18.4.2 delivers a session-start digest slower than the handler cap once, as a turn, with no handler timeout
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=119826
 ok - .omp turn-end guard: a digest slower than the wait bound releases the handler and is sent exactly once
 ```
 
-Against the previous extension the live guard printed `not ok - omp/18.4.2: the next request carried the slow digest 0 times, not once`, because omp abandoned the timed-out handler's result after the claim had already marked the digest delivered.
+Against the previous extension, on the same day and host, an earlier revision of this guard that sent a second prompt printed `not ok - omp/18.4.2: the next request carried the slow digest 0 times, not once`, because omp abandoned the timed-out handler's result after the claim had already marked the digest delivered.
+The current guard requires the late digest to start its own turn in the idle session, which `sendMessage` with `triggerTurn` does.
 
 ### Run-tier source vocabulary and context-reset injection
 

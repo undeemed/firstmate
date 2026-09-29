@@ -27,7 +27,9 @@
 // on omp 18.1.11 (the model quoted an injected marker back), so omp qualifies
 // for the Run tier. omp caps every extension handler at 30s, so that handler
 // waits at most sessionstartInjectWaitMs for the digest; a slower startup is
-// sent with pi.sendMessage the moment it completes, as session_compact does.
+// sent with pi.sendMessage the moment it completes, with triggerTurn so an
+// idle session acts on it (omp steers it into a turn still streaming).
+// Compaction keeps its plain send, which lands in the retried or next turn.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -45,7 +47,7 @@ import {
 // where they are used here.
 type ExtensionAPI = {
   on?: (event: string, handler: (event: any, ctx: any) => unknown) => void;
-  sendMessage?: (message: unknown) => void;
+  sendMessage?: (message: unknown, options?: { triggerTurn?: boolean }) => void;
 };
 
 type LockOwnership = "owned" | "missing" | "other";
@@ -572,11 +574,12 @@ export default function (pi: ExtensionAPI) {
   const sendSessionstartWhenReady = async (
     generation: SessionstartGeneration,
     ctx: SessionStartContext,
+    options?: { triggerTurn: boolean },
   ): Promise<void> => {
     const message = await claimSessionstartMessage(generation, ctx);
     if (!message || !sessionstartGenerationIsLive(generation)) return;
     try {
-      pi.sendMessage?.(message);
+      pi.sendMessage?.(message, options);
     } catch {
       generation.delivered = false;
     }
@@ -586,7 +589,7 @@ export default function (pi: ExtensionAPI) {
     const generation = sessionstartGeneration;
     if (!generation) return undefined;
     if (!(await sessionstartSettlesInTime(generation))) {
-      void sendSessionstartWhenReady(generation, ctx);
+      void sendSessionstartWhenReady(generation, ctx, { triggerTurn: true });
       return undefined;
     }
     const message = await claimSessionstartMessage(generation, ctx);

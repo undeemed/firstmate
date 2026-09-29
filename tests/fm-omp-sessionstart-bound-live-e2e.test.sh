@@ -8,8 +8,9 @@
 # omp: a real rpc session in an isolated lab checkout and HOME, driven by a
 # local deterministic OpenAI-compatible model (no credentials, no provider
 # call), runs its first turn while a stub digest is still sleeping past the
-# cap, then requires the next model request to carry that digest exactly once
-# and omp to have logged no handler timeout.
+# cap, then requires the idle session to start a turn on its own whose model
+# request carries that digest exactly once, and omp to have logged no handler
+# timeout.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -134,12 +135,11 @@ for _ in $(seq 80); do
   sleep 0.5
 done
 [ -e "$LAB/digest-done" ] || fail "the stub digest never completed"
-sleep 3
-send '{"id":"p2","type":"prompt","message":"again"}'
-wait_for_ends 2 60 || fail "did not finish the second turn"
-[ "$(nonce_count 2)" -eq 1 ] || fail "the next request carried the slow digest $(nonce_count 2) times, not once"
+wait_for_ends 2 60 || fail "the late digest did not start a turn in the idle session"
+[ "$(nonce_count 2)" -eq 1 ] || fail "the digest-started request carried the slow digest $(nonce_count 2) times, not once"
+[ "$(wc -l <"$REQUESTS")" -eq 2 ] || fail "expected exactly two model requests, saw $(wc -l <"$REQUESTS")"
 
 if grep -rqs 'handler timed out' "$LAB/home" "$RPC_LOG" "$LAB/rpc.err"; then
   fail "omp logged an extension handler timeout: $(grep -rhs 'handler timed out' "$LAB/home" "$RPC_LOG" "$LAB/rpc.err" | head -1)"
 fi
-printf 'ok - %s delivers a session-start digest slower than the handler cap exactly once with no handler timeout\n' "$OMP_VERSION"
+printf 'ok - %s delivers a session-start digest slower than the handler cap once, as a turn, with no handler timeout\n' "$OMP_VERSION"
