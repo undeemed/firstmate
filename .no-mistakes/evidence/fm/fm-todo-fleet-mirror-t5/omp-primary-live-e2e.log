@@ -1,0 +1,47 @@
+Note: switching to '3925cb7b8a6136f2d464a2ae71e169052edfd8a1'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+ok - omp omp/18.4.2: both tracked .omp/extensions loaded by auto-discovery with no -e and no trust dialog
+not ok - the session-start digest did not reach model context before the first turn; reply was: SESSION START - Captain, no session-start digest is present in the provided context.
+# rpc frame types seen:
+     44 "type":"thinking"
+     44 "type":"text"
+     20 "type":"message_update"
+     16 "type":"text_delta"
+      9 "type":"extension_ui_request"
+      3 "type":"reasoning"
+      3 "type":"output_text"
+      3 "type":"message_start"
+      3 "type":"message_end"
+      3 "type":"message"
+      1 "type":"turn_start"
+      1 "type":"turn_end"
+      1 "type":"thinking_start"
+      1 "type":"thinking_end"
+      1 "type":"text_start"
+      1 "type":"text_end"
+      1 "type":"session_settled"
+      1 "type":"response"
+      1 "type":"ready"
+      1 "type":"prompt_result"
+      1 "type":"extension_error"
+      1 "type":"available_commands_update"
+      1 "type":"agent_start"
+      1 "type":"agent_end"
+# guard spy log:
+rc=0 payload={"stop_hook_active":false}
+# last stderr lines:

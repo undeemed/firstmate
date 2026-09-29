@@ -1,0 +1,10 @@
+ok - omp omp/18.4.2: both tracked .omp/extensions loaded by auto-discovery with no -e and no trust dialog
+ok - omp omp/18.4.2: before_agent_start delivered the digest into model context and the lock names the omp process
+ok - omp omp/18.4.2: fm_watch_arm_omp started a live watcher through the extension
+not ok - the model re-armed from memory instead of the extension (fm_watch_arm_omp call count 0)
+# rpc frame types seen:
+# guard spy log:
+rc=0 payload={"stop_hook_active":false}
+rc=0 payload={"stop_hook_active":false}
+rc=0 payload={"stop_hook_active":false}
+# last stderr lines:

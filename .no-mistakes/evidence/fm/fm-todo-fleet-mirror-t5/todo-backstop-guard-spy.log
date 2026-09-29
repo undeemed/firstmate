@@ -1,0 +1,2 @@
+rc=0 payload={"stop_hook_active":false}
+rc=0 payload={"stop_hook_active":true}

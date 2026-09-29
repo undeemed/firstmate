@@ -1,0 +1,8 @@
+ok - omp omp/18.4.2: both tracked .omp/extensions loaded by auto-discovery with no -e and no trust dialog
+# DRIVER: digest not in model context (host load; before_agent_start timeout is unrelated to this change): SESSION START - Captain, no session-start digest is present in this context.
+ok - omp omp/18.4.2: before_agent_start delivered the digest into model context and the lock names the omp process
+not ok - no live watcher holds the lab home lock after fm_watch_arm_omp
+# rpc frame types seen:
+# guard spy log:
+# last stderr lines:
+# lab kept at /home/ubuntu/.no-mistakes/worktrees/8966b1e14cee/01M3NEFM01NTAXBVERBWMQA5B5/.omp-live-e2e.3133559
