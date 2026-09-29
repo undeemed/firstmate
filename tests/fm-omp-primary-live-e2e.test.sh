@@ -303,7 +303,7 @@ printf '%s\tfm-e2e-gone\t\n' "$(date +%s)" >> "$PROJECT/state/.retired-tasks"
 : > "$GUARD_SPY_LOG"
 todo_cleared() { # the continuation's own todo call that retires the item
   jq -r 'select(.type == "tool_execution_start" and .toolName == "todo") | .args.op' "$RPC_LOG" 2>/dev/null |
-    grep -Eqx 'rm|drop|done|unblock'
+    grep -Eqx 'rm|drop'
 }
 rpc_send '{"id":"p4","type":"prompt","message":"Call the todo tool to init one phase named Fleet with the single task Collect fm-e2e-gone deliverables, then call the todo tool again to block that task with the blocker fm-e2e-gone. Then reply with exactly TODO_SET and nothing else."}'
 i=0
