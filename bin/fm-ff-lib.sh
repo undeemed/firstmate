@@ -24,14 +24,17 @@
 # A tracked-files fast-forward never touches the gitignored operational dirs
 # (data/, state/, config/, projects/, .no-mistakes/), so it cannot disturb a
 # secondmate's backlog, projects, or in-flight work.
-# The seeded .fm-secondmate-home identity marker is gitignored too; the local
-# sync tolerates only that marker during the one-time upgrade of pre-ignore
-# linked-worktree homes.
-# A clean secondmate divergence is reconciled only when a three-way tree proof
-# shows that its complete local result is already present in the target, as
-# happens after an upstream squash merge. Every other divergence stays put and
-# records an inspectable state/.secondmate-update-reconcile/<id>.pending marker
-# in the supervising home until a later successful convergence clears it.
+# Only tracked changes make a target dirty. An untracked path - the gitignore-
+# predating seed marker, a home's own local harness config such as .omp/mcp.json -
+# never blocks a sync, because git itself refuses a fast-forward or reset --keep
+# that would overwrite an untracked file, so a colliding one still skips safely.
+# A clean secondmate divergence is reconciled only when its complete local
+# result is already present in the target: a three-way tree proof covers an
+# upstream squash merge, and a matching tree anywhere in the target's history
+# covers an upstream history rewrite that left no common ancestor at all. Every
+# other divergence stays put and records an inspectable
+# state/.secondmate-update-reconcile/<id>.pending marker in the supervising home
+# until a later successful convergence clears it.
 # Locally leased homes start at a detached HEAD on the default branch, so their
 # fast-forward advances HEAD only and never moves the shared default branch or
 # any other worktree's checkout. A standalone remote home may instead advance
@@ -233,6 +236,34 @@ changed_instr() {
   printf '%s' "$out"
 }
 
+# The tracked paths a primary harness reads once, when its agent starts, per the
+# harness-adapters reference for each supported primary and the secondmate launch
+# template in bin/fm-spawn.sh. A change under one reaches a running agent only by
+# replacing it. Kimi and the crewmate-only harnesses have no primary surface.
+launch_surface_paths() { # <harness>
+  case "$1" in
+    claude) echo .claude/settings.json .claude/mods ;;
+    cursor) echo .cursor/hooks.json .claude/settings.json ;;
+    codex) echo .codex/hooks.json ;;
+    opencode) echo .opencode/plugins ;;
+    pi|pi-signed) echo .pi/extensions ;;
+    grok) echo .grok/hooks ;;
+    omp) echo .omp/extensions .omp/fm-worker-overlay.yml ;;
+  esac
+}
+
+# Succeeds when an agent launched at <launch-commit> has not loaded the launch
+# surface <commit> carries for <harness>. An unrecorded or unreadable launch
+# commit cannot prove the agent current, so it counts as stale.
+launch_surface_stale() { # <dir> <launch-commit> <commit> <harness>
+  local paths
+  paths=$(launch_surface_paths "$4")
+  [ -n "$paths" ] || return 1
+  [ -n "$2" ] && git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null || return 0
+  # shellcheck disable=SC2086 # a word list of fixed pathspecs
+  ! git -C "$1" diff --quiet "$2" "$3" -- $paths 2>/dev/null
+}
+
 # " (N commit(s) behind)" when the target is genuinely behind its fast-forward
 # base, and empty otherwise. Every skip below carries it, because a skip has to
 # say that real commits are being LEFT behind: a silent skip is how a whole fleet
@@ -259,12 +290,7 @@ remote_sync_failure_reason() { # <exit-status> <output>
 }
 
 dirty_status() {
-  local dir=$1 ignore_seed_marker=${2:-no}
-  if [ "$ignore_seed_marker" = yes ]; then
-    git -C "$dir" status --porcelain 2>/dev/null | awk -v marker="?? $SUB_HOME_MARKER" '$0 != marker { print; exit }'
-  else
-    git -C "$dir" status --porcelain 2>/dev/null | head -1
-  fi
+  git -C "$1" status --porcelain --untracked-files=no 2>/dev/null | head -1
 }
 
 secondmate_update_reconcile_marker_path() { # <state> <id>
@@ -314,12 +340,17 @@ secondmate_update_reconcile_clear() { # <state> <id>
   rm -f -- "$marker"
 }
 
-# Prove that merging LOCAL into TARGET from their real merge base adds no tree
-# change to TARGET. A temporary index performs the three-way comparison without
-# touching the worktree or writing a merge commit. Conflicts or any remaining
-# content difference are not redundant and therefore stay diverged.
+# Prove that the LOCAL result is already present in TARGET. A tree identical to
+# one TARGET's history passed through is present by definition, even when an
+# upstream history rewrite left the two commits no merge base. Otherwise merging
+# LOCAL into TARGET from their real merge base must add no tree change to TARGET;
+# a temporary index performs that three-way comparison without touching the
+# worktree or writing a merge commit. Conflicts or any remaining content
+# difference are not redundant and therefore stay diverged.
 divergence_is_redundant() { # <dir> <local-commit> <target-commit>
-  local dir=$1 local_commit=$2 target_commit=$3 ancestor scratch index result=1
+  local dir=$1 local_commit=$2 target_commit=$3 ancestor scratch index result=1 tree
+  tree=$(git -C "$dir" rev-parse --verify --quiet "$local_commit^{tree}") || return 1
+  git -C "$dir" log --format=%T "$target_commit" 2>/dev/null | grep -xF "$tree" >/dev/null && return 0
   ancestor=$(git -C "$dir" merge-base "$local_commit" "$target_commit" 2>/dev/null) || return 1
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/fm-ff-redundant.XXXXXX" 2>/dev/null) || return 1
   index="$scratch/index"
@@ -374,8 +405,8 @@ live_secondmate_meta_records() {
 FF_STATUS=""
 FF_INSTR=""
 ff_target() {
-  local dir=$1 label=$2 base_mode=$3 allow_detached=${4:-no} ignore_seed_marker=${5:-no}
-  local secondmate_id=${6:-} reconciliation_state=${7:-}
+  local dir=$1 label=$2 base_mode=$3 allow_detached=${4:-no}
+  local secondmate_id=${5:-} reconciliation_state=${6:-}
   FF_STATUS="skipped"
   FF_INSTR=""
 
@@ -424,7 +455,7 @@ ff_target() {
     return 0
   fi
 
-  if [ -n "$(dirty_status "$dir" "$ignore_seed_marker")" ]; then
+  if [ -n "$(dirty_status "$dir")" ]; then
     echo "$label: skipped: dirty working tree$(ff_behind_note "$dir" "$base")"
     return 0
   fi
@@ -514,17 +545,18 @@ FF_SEEN_HOMES=""
 #   fm_ff_after_instruction_update <id> <home> <window> <instr>
 #     the nudge-shaped hook: only for an advance that changed the instruction
 #     surface, and only under nudge_requires_instr=yes.
-#   fm_ff_after_secondmate_settled <id> <home> <window> <status> <instr>
+#   fm_ff_after_secondmate_settled <id> <home> <window> <status> <instr> <from>
 #     the settled-state hook: for every home this sweep left AT the base with a
 #     live window, whether it advanced (status=updated) or was already there
-#     (status=current). A home that was SKIPPED is never settled, so a dirty,
+#     (status=current); <from> is the commit the home sat on before this sweep.
+#     A home that was SKIPPED is never settled, so a dirty,
 #     diverged, offline, or unsafe home never reaches this hook and nothing here
 #     forces, stashes, or discards its work. /updatefirstmate uses this hook to
 #     reach every live mate that is genuinely on the new bytes, including the
 #     ones that needed no advance to get there.
 # An undefined hook is simply not called.
 process_secondmate() {
-  local id=$1 home=$2 window=${3:-} base_mode=$4 nudge_requires_instr=${5:-no} home_real fm_root_real
+  local id=$1 home=$2 window=${3:-} base_mode=$4 nudge_requires_instr=${5:-no} home_real fm_root_real from
   [ -n "$id" ] || return 0
   [ -n "$home" ] || return 0
   fm_root_real=$(fm_worktree_real_path "$FM_ROOT")
@@ -540,10 +572,11 @@ process_secondmate() {
   esac
   FF_SEEN_HOMES="$FF_SEEN_HOMES $home_real"
 
-  ff_target "$home_real" "secondmate $id" "$base_mode" yes yes "$id" "${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+  from=$(git -C "$home_real" rev-parse --verify --quiet HEAD 2>/dev/null || true)
+  ff_target "$home_real" "secondmate $id" "$base_mode" yes "$id" "${FM_STATE_OVERRIDE:-$FM_HOME/state}"
   if [ -n "$window" ] && { [ "$FF_STATUS" = "updated" ] || [ "$FF_STATUS" = "current" ]; } \
     && type fm_ff_after_secondmate_settled >/dev/null 2>&1; then
-    fm_ff_after_secondmate_settled "$id" "$home_real" "$window" "$FF_STATUS" "$FF_INSTR"
+    fm_ff_after_secondmate_settled "$id" "$home_real" "$window" "$FF_STATUS" "$FF_INSTR" "$from"
   fi
   if [ "$FF_STATUS" = "updated" ] && [ -n "$window" ]; then
     if [ "$nudge_requires_instr" = yes ] && [ -z "$FF_INSTR" ]; then

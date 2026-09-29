@@ -97,14 +97,12 @@ fi
 # The relaxation is placement only - the update stays fast-forward-only, still
 # refuses a dirty or diverged home, and still moves HEAD alone.
 self_allow_detached=no
-self_ignore_seed_marker=no
 if [ -f "$FM_ROOT/$SUB_HOME_MARKER" ] && [ ! -L "$FM_ROOT/$SUB_HOME_MARKER" ]; then
   self_allow_detached=yes
-  self_ignore_seed_marker=yes
 fi
 
 reread_firstmate="no"
-ff_target "$FM_ROOT" "firstmate" origin "$self_allow_detached" "$self_ignore_seed_marker"
+ff_target "$FM_ROOT" "firstmate" origin "$self_allow_detached"
 if [ "$FF_STATUS" = "updated" ]; then
   if [ -n "$FF_INSTR" ]; then
     reread_firstmate="yes"
@@ -207,7 +205,8 @@ if [ -f "$SECONDMATES_MD" ]; then
     home=$SECONDMATE_REGISTRY_HOME
     if [ "$SECONDMATE_REGISTRY_REMOTE" -eq 1 ]; then
       if remote_out=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh update "$id" < /dev/null 2>&1); then
-        remote_result=$(printf '%s\n' "$remote_out" | tail -1)
+        # launch=stale feeds the session-start restart; this pass restarts anyway.
+        remote_result=$(printf '%s\n' "$remote_out" | tail -1 | sed 's/ launch=stale$//')
         case "$remote_result" in
           synced:*)
             remote_detail=${remote_result#synced: }

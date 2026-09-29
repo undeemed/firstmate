@@ -400,6 +400,32 @@ test_unknown_mate_is_accounted_for() {
   pass "T4 every named mate is accounted for, including one this home does not know"
 }
 
+# --- T4b: a mate another pass is restarting is never restarted twice --------
+# The session-start sweep runs this pass unattended while /updatefirstmate may
+# run it too; the second pass must leave that mate to the first.
+test_mate_held_by_another_pass_is_not_restarted_twice() {
+  local dir out rc holder
+  dir=$(new_case held)
+  add_local_mate "$dir" sm1
+  add_local_mate "$dir" sm2
+  arm_answer "$dir" sm2
+  FM_HOME="$dir/home" bash -c '. "$1"; fm_lock_try_acquire "$2" && exec sleep 60' _ \
+    "$ROOT/bin/fm-wake-lib.sh" "$dir/home/state/.secondmate-restart-sm1.lock" &
+  holder=$!
+  for _ in $(seq 100); do [ -e "$dir/home/state/.secondmate-restart-sm1.lock" ] && break; sleep 0.05; done
+
+  out=$(run_restart "$dir" sm1 sm2); rc=$?
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  expect_code 3 "$rc" "a held mate must be accounted as not restarted"$'\n'"$out"
+  assert_contains "$out" "unreached: sm1: another restart pass" "the held mate must name why it was left alone"
+  assert_contains "$out" "restarted: sm2" "a mate no other pass holds must still restart"
+  [ ! -e "$dir/home/state/sm1.inbox" ] || fail "a held mate was sent a second persist request"
+  assert_contains "$out" "summary: 1 of 2 restarted, 0 nudged, 1 unreached" "the summary must count both mates"
+  pass "T4b a mate another restart pass holds is left to that pass"
+}
+
 # --- T5: a refused restart leaves the mate running and says so ---------------
 test_refused_restart_falls_back_without_claiming_a_reload() {
   local dir out rc before
@@ -845,6 +871,7 @@ test_arrived_answer_precedes_deadline_check
 test_answer_between_resolution_and_timeout_wins
 test_unprovable_runtime_falls_back
 test_unknown_mate_is_accounted_for
+test_mate_held_by_another_pass_is_not_restarted_twice
 test_refused_restart_falls_back_without_claiming_a_reload
 test_local_restart_uses_the_home_pin_and_reports_what_ran
 test_native_ultra_restart_keeps_local_and_remote_profiles

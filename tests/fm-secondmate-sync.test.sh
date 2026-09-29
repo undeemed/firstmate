@@ -131,12 +131,11 @@ seed_marked_home() {
 
 # run_ff <dir> <base>: drive the shared ff helper in THIS shell (output to a file,
 # not a subshell, so FF_STATUS / FF_INSTR propagate). Sets FF_OUT to the printed
-# status line. Uses allow_detached=yes, ignore_seed_marker=yes (the secondmate
-# home contract).
+# status line. Uses allow_detached=yes (the secondmate home contract).
 FF_OUT=""
 run_ff() {
   local dir=$1 base=$2 outfile="$TMP_ROOT/ff.out"
-  ff_target "$dir" "secondmate sm" "$base" yes yes >"$outfile" 2>&1
+  ff_target "$dir" "secondmate sm" "$base" yes >"$outfile" 2>&1
   FF_OUT=$(cat "$outfile")
 }
 
@@ -827,6 +826,112 @@ SH
   pass "T11 spawn warns when pre-launch sync is skipped"
 }
 
+# --- T11b: untracked local paths never block a sync ------------------------
+# A home's own untracked harness config (.omp/mcp.json, .omp/rules/) used to read
+# as a dirty tree, so the home never advanced and every restart relaunched it on
+# the same stale code. Only an untracked path an incoming commit would overwrite
+# may stop the sync, and git itself refuses that case.
+test_untracked_path_does_not_block_sync() {
+  local w c1 c2 c3
+  w=$(new_world untracked)
+  c1=$(head_of "$w/main")
+  add_sm_worktree "$w" sm "$c1"
+  mkdir -p "$w/sm/.omp/rules"
+  printf '{}\n' > "$w/sm/.omp/mcp.json"
+  printf 'rule\n' > "$w/sm/.omp/rules/local.md"
+  bump_primary "$w" instr
+  c2=$(head_of "$w/main")
+  run_ff "$w/sm" "$c2"
+  [ "$FF_STATUS" = updated ] || fail "untracked local config blocked the sync: $FF_OUT"
+  [ "$(head_of "$w/sm")" = "$c2" ] || fail "home did not advance past untracked local config"
+  [ -f "$w/sm/.omp/mcp.json" ] && [ -f "$w/sm/.omp/rules/local.md" ] || fail "untracked local config was removed"
+
+  printf 'mine\n' > "$w/sm/incoming.txt"
+  printf 'theirs\n' > "$w/main/incoming.txt"
+  git -C "$w/main" add incoming.txt
+  git -C "$w/main" commit -qm incoming
+  c3=$(head_of "$w/main")
+  run_ff "$w/sm" "$c3"
+  [ "$FF_STATUS" = skipped ] || fail "an untracked path the commit would overwrite did not stop the sync: $FF_OUT"
+  [ "$(head_of "$w/sm")" = "$c2" ] || fail "colliding sync moved HEAD"
+  [ "$(cat "$w/sm/incoming.txt")" = mine ] || fail "colliding untracked file was overwritten"
+  pass "T11b untracked local paths never block a sync, and a colliding one is still refused"
+}
+
+# --- T11c: a home on a rewritten upstream history converges ---------------
+# After an upstream history rewrite, a home's commit shares no ancestor with the
+# primary even though its tree is exactly one the primary's history holds.
+test_rewritten_history_reconciles() {
+  local w c2 old c3 out
+  w=$(new_world rewrite)
+  bump_primary "$w" instr
+  c2=$(head_of "$w/main")
+  old=$(git -C "$w/main" commit-tree "$c2^{tree}" -m pre-rewrite)
+  add_sm_worktree "$w" sm "$old"
+  bump_primary "$w" readme
+  c3=$(head_of "$w/main")
+  [ -z "$(git -C "$w/main" merge-base "$old" "$c3" 2>/dev/null)" ] || fail "precondition: the rewritten commit still shares history"
+  ff_target "$w/sm" "secondmate sm" "$c3" yes sm "$w/home/state" >"$TMP_ROOT/ff.out" 2>&1
+  out=$(cat "$TMP_ROOT/ff.out")
+  [ "$FF_STATUS" = updated ] || fail "a home whose content main already holds was left behind: $out"
+  assert_contains "$out" "reconciled redundant divergence" "the rewrite case must reconcile, not fast-forward"
+  [ "$(head_of "$w/sm")" = "$c3" ] || fail "reconciled home is not on the primary's HEAD"
+  [ ! -e "$w/home/state/.secondmate-update-reconcile/sm.pending" ] || fail "reconciliation left a divergence record"
+
+  git -C "$w/main" worktree add -q --detach "$w/sm2" "$old"
+  printf 'own\n' > "$w/sm2/own.txt"
+  git -C "$w/sm2" add own.txt
+  git -C "$w/sm2" commit -qm own
+  ff_target "$w/sm2" "secondmate sm2" "$c3" yes sm2 "$w/home/state" >"$TMP_ROOT/ff.out" 2>&1
+  [ "$FF_STATUS" = skipped ] || fail "unique local work on a rewritten history was reconciled away"
+  pass "T11c a home on a rewritten history reconciles only when main already holds its tree"
+}
+
+# --- T11d: the sweep restarts a live mate onto a changed launch surface -----
+# A harness reads its launch surface once (launch_surface_paths); a live mate
+# whose home moves past a change to it keeps the old code until it is replaced.
+test_bootstrap_restarts_mate_on_launch_surface_change() {
+  local w c1 c2 fakebin out info log i
+  w=$(new_world launch-surface)
+  c1=$(head_of "$w/main")
+  add_sm_worktree "$w" sm-stale "$c1"
+  mkdir -p "$w/main/.codex"
+  printf '{"hooks":{}}\n' > "$w/main/.codex/hooks.json"
+  git -C "$w/main" add -A
+  git -C "$w/main" commit -qm codex-hooks
+  c2=$(head_of "$w/main")
+  add_sm_worktree "$w" sm-fresh "$c2"
+  printf 'launch_head=%s\n' "$c2" >> "$w/home/state/sm-fresh.meta"
+  # sm-readme's agent launched at c1 but its home already moved to c2 without
+  # it, so the sweep's own README-only advance is not what decides.
+  add_sm_worktree "$w" sm-readme "$c2"
+  printf 'launch_head=%s\n' "$c1" >> "$w/home/state/sm-readme.meta"
+  bump_primary "$w" readme
+
+  fakebin=$(make_fake_toolchain "$w")
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_SEND_SETTLE=0 FM_SECONDMATE_PERSIST_WAIT=0 FM_SECONDMATE_PERSIST_POLL=1 \
+    "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  info=$(printf '%s\n' "$out" | grep '^BOOTSTRAP_INFO: restarting ' || true)
+  [ -n "$info" ] || fail "no restart for a live mate behind a launch-surface change (got: $out)"
+  assert_contains "$info" "sm-stale" "a mate launched before the launch-surface change must restart"
+  assert_contains "$info" "sm-readme" "a recorded older launch must restart even when the sweep itself only moved README"
+  assert_not_contains "$info" "sm-fresh" "a mate launched on the current launch surface must not restart"
+
+  log="$w/home/state/.secondmate-restart.log"
+  i=0
+  while [ "$i" -lt 200 ] && ! grep -q '^summary:' "$log" 2>/dev/null; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  assert_grep '^summary:' "$log" "the detached restart pass did not finish"
+  assert_contains "$(cat "$w/home/state/sm-stale.inbox/"*.msg)" "about to restart your agent" \
+    "the restart must pass through the persist gate"
+  assert_grep 'check: secondmate restart pass left' "$w/home/state/.wake-queue" \
+    "a mate the unattended pass did not restart must reach supervision"
+  pass "T11d the sweep restarts exactly the live mates whose agent predates their launch surface"
+}
+
 # --- T12: a freshly seeded home reads clean once the primary ignores the marker -
 # The seed marker used to leave every home permanently dirty: bin/fm-fleet-sync.sh
 # and any other plain `git status --porcelain` check counts the untracked marker,
@@ -1360,6 +1465,9 @@ test_nudge_retry_uses_fresh_herdr_endpoint_after_respawn
 test_bootstrap_sweep_surfaces_skipped_home
 test_spawn_fast_forwards_before_launch
 test_spawn_warns_when_sync_skipped_before_launch
+test_untracked_path_does_not_block_sync
+test_rewritten_history_reconciles
+test_bootstrap_restarts_mate_on_launch_surface_change
 test_seed_marker_clean_when_gitignored
 test_seed_marker_converges_existing_home
 test_seed_marker_does_not_mask_real_dirt

@@ -52,13 +52,20 @@
 # restart transaction, its checkpoint, its journal, and its rollback; a refusal
 # before the agent is stopped leaves the mate running exactly as it was.
 #
-# Restart candidacy itself belongs to bin/fm-update.sh, which knows which homes
-# the update pass actually left on the target commit; this command re-checks
-# capability on its own argv rather than trusting a caller's list.
+# Restart candidacy belongs to the caller that knows which homes it left on the
+# new bytes: bin/fm-update.sh after an update pass, and bin/fm-bootstrap.sh's
+# session-start sweep for a live mate whose harness launch surface changed after
+# its agent started. This command re-checks capability on its own argv rather
+# than trusting a caller's list, and holds a per-mate lock for its whole pass, so
+# a mate another pass is already restarting is reported unreached, never
+# restarted twice.
 #
 # Environment knobs:
 #   FM_SECONDMATE_PERSIST_WAIT  seconds to wait for one mate's persist answer (900)
 #   FM_SECONDMATE_PERSIST_POLL  seconds between checks of that answer (5)
+#   FM_SECONDMATE_RESTART_WAKE  <log-path>: an unattended pass whose output goes
+#                               to that log queues one `check:` wake naming it
+#                               in this home when a mate was not restarted
 #
 # Exit status: 0 every named mate restarted; 3 at least one was nudged or left
 # unreached and every mate was still accounted for; 1 the input itself is
@@ -69,7 +76,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
-  sed -n '2,65{s/^# \{0,1\}//;p;}' "$0"
+  sed -n '2,72{s/^# \{0,1\}//;p;}' "$0"
 }
 
 case "${1:-}" in
@@ -91,6 +98,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
 # shellcheck source=bin/fm-pending-reply-lib.sh
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 
 PERSIST_WAIT=${FM_SECONDMATE_PERSIST_WAIT:-900}
 PERSIST_POLL=${FM_SECONDMATE_PERSIST_POLL:-5}
@@ -244,9 +253,26 @@ harvest_restarts() {
 # Every request goes out before any restart, so the fleet persists concurrently
 # and one busy mate delays only itself.
 
+LOCKS=()
+# shellcheck disable=SC2329 # invoked from the EXIT traps below
+release_restart_locks() {
+  local lock
+  for lock in "${LOCKS[@]:-}"; do
+    [ -z "$lock" ] || fm_lock_release "$lock"
+  done
+}
+trap release_restart_locks EXIT
+
 i=0
 while [ "$i" -lt "${#IDS[@]}" ]; do
   id=${IDS[$i]}
+  if ! fm_lock_try_acquire "$STATE/.secondmate-restart-$id.lock"; then
+    report_unreached "$id" "another restart pass (pid ${FM_LOCK_HELD_PID:-unknown}) is already restarting it"
+    PLAN[i]="done"
+    i=$((i + 1))
+    continue
+  fi
+  LOCKS+=("$STATE/.secondmate-restart-$id.lock")
   PLAN[i]="fallback"
   REASON[i]=""
   CORR[i]=""
@@ -312,14 +338,14 @@ RESULT_DIR=$(mktemp -d "$STATE/.secondmate-restart.XXXXXX") || {
   echo "error: could not create restart result directory under $STATE" >&2
   exit 1
 }
-trap 'rm -rf -- "$RESULT_DIR"' EXIT
+trap 'rm -rf -- "$RESULT_DIR"; release_restart_locks' EXIT
 pending_count=0
 restart_active_count=0
 i=0
 while [ "$i" -lt "${#IDS[@]}" ]; do
   if [ "${PLAN[i]}" = persisted-pending ]; then
     pending_count=$((pending_count + 1))
-  else
+  elif [ "${PLAN[i]}" != "done" ]; then
     fall_back_to_nudge "${IDS[$i]}" "${REASON[i]}"
     PLAN[i]="done"
   fi
@@ -373,5 +399,11 @@ done
 
 printf 'summary: %d of %d restarted, %d nudged, %d unreached\n' \
   "$restarted_count" "${#IDS[@]}" "$nudged_count" "$unreached_count"
-[ "$((nudged_count + unreached_count))" -eq 0 ] || exit 3
+if [ "$((nudged_count + unreached_count))" -gt 0 ]; then
+  [ -z "${FM_SECONDMATE_RESTART_WAKE:-}" ] \
+    || fm_wake_append check "secondmate-restart:$(date +%s)" \
+      "check: secondmate restart pass left $nudged_count nudged and $unreached_count unreached of ${#IDS[@]}; see $FM_SECONDMATE_RESTART_WAKE" \
+    || true
+  exit 3
+fi
 exit 0

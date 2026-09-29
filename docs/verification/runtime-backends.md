@@ -2330,3 +2330,14 @@ A throwaway scout was spawned through `bin/fm-spawn.sh --scout --harness omp --m
 6. `bin/fm-control.sh <id> exit` stopped the agent and `bin/fm-teardown.sh` returned the worktree and closed the item.
 
 `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence; the worker path above is refreshed by repeating the scout dispatch after any omp upgrade.
+
+### Launch-time extension loading
+
+On 2026-09-29, against omp 18.4.2 on Linux x64, a real rpc session in an isolated lab directory and `HOME`, driven by a local deterministic model with no credential read and no provider call, loaded a `.omp/extensions` file that recorded `v1` after each turn.
+After the file was rewritten to record `v2`, the running agent's next turn still recorded `v1`, and a replacement agent started in the same directory recorded `v2`.
+That is why `launch_surface_paths` in `bin/fm-ff-lib.sh` lists `.omp/extensions` as omp's launch surface, and why a live second mate whose home changes it is restarted rather than steered.
+
+```sh
+bin/fm-test-run.sh tests/fm-omp-extension-launch-load-live-e2e.test.sh
+# ok - omp/18.4.2 reads .omp/extensions only at launch: a running agent kept v1, its replacement loaded v2
+```

@@ -121,6 +121,9 @@ phase_spawn() {
   assert_grep 'kind=secondmate' "$meta" "spawn meta did not record kind=secondmate"
   assert_grep "home=$SUB_ABS" "$meta" "spawn meta did not record the subhome"
   assert_grep 'projects=alpha, beta, gamma' "$meta" "spawn meta did not record the project list"
+  [ -n "$(git -C "$SUB" rev-parse HEAD 2>/dev/null)" ] || fail "precondition: the subhome is not a git checkout"
+  assert_grep "launch_head=$(git -C "$SUB" rev-parse HEAD)" "$meta" \
+    "spawn meta did not record the commit the agent read its launch surface from"
   # Launch ran in the subhome, with the persistent charter and cleared overrides,
   # and never ran a project-style treehouse get.
   assert_grep "FM_HOME='$SUB_ABS'" "$LOG" "secondmate launch did not set FM_HOME to the subhome"

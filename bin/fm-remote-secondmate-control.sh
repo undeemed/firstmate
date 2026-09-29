@@ -345,7 +345,7 @@ import_home_commit() { # <home> <commit>
 }
 
 cmd_sync() {
-  local id=$1 commit report out
+  local id=$1 commit report out meta from recorded launch=''
   validate_id "$id"
   validate_home "$id"
   if [ "$#" -ge 2 ]; then
@@ -359,17 +359,29 @@ cmd_sync() {
     || die "remote home could not import $commit from this host's Firstmate copy or the home's origin; run /updatefirstmate to refresh this host's copy, or push that commit first"
   # ff_target publishes its verdict in FF_STATUS, so it must run in THIS shell.
   report=$(mktemp "${TMPDIR:-/tmp}/fm-remote-sync.XXXXXX") || die "cannot stage the sync report"
-  ff_target "$TARGET_HOME" "remote home" "$commit" yes yes "$id" "$TARGET_HOME/state" > "$report" 2>&1
+  from=$(git -C "$TARGET_HOME" rev-parse --verify --quiet HEAD 2>/dev/null || true)
+  ff_target "$TARGET_HOME" "remote home" "$commit" yes "$id" "$TARGET_HOME/state" > "$report" 2>&1
   out=$(cat "$report")
   rm -f "$report"
+  # launch=stale says the agent this host launched in the home has not loaded
+  # the harness launch surface the home now carries, so the parent restarts it;
+  # this host's own record of that launch is the only one that tracks relaunches,
+  # and an agent launched before that record existed ran at best <from>.
+  meta=$(meta_path "$id")
+  if [ "$FF_STATUS" != skipped ] && [ -f "$meta" ]; then
+    recorded=$(fm_meta_get "$meta" launch_head)
+    if launch_surface_stale "$TARGET_HOME" "${recorded:-$from}" HEAD "$(fm_meta_get "$meta" harness)"; then
+      launch=' launch=stale'
+    fi
+  fi
   case "$FF_STATUS" in
     # instr= names the watched instruction paths this advance changed, with no
     # spaces so the whole result stays one parseable line. The parent needs it to
     # decide whether the running agent must reload; an older parent ignores the
     # suffix, and an older HOST omits it, which a parent must read as unknown
     # rather than as "nothing changed".
-    updated) printf 'synced: %s instr=%s\n' "$commit" "$(printf '%s' "$FF_INSTR" | tr -d ' ')" ;;
-    current) printf 'current: %s\n' "$commit" ;;
+    updated) printf 'synced: %s instr=%s%s\n' "$commit" "$(printf '%s' "$FF_INSTR" | tr -d ' ')" "$launch" ;;
+    current) printf 'current: %s%s\n' "$commit" "$launch" ;;
     *) die "remote secondmate home sync skipped: ${out#remote home: skipped: }" ;;
   esac
 }

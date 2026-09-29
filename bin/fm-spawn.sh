@@ -2971,7 +2971,7 @@ if [ "$KIND" = secondmate ]; then
   if [ "${FM_SKIP_SECONDMATE_SYNC:-0}" = 1 ]; then
     :
   elif sm_primary_head=$(primary_head_commit "$FM_ROOT"); then
-    sm_ff_out=$(ff_target "$PROJ_ABS" "secondmate $ID" "$sm_primary_head" yes yes "$ID" "$STATE" 2>&1 || true)
+    sm_ff_out=$(ff_target "$PROJ_ABS" "secondmate $ID" "$sm_primary_head" yes "$ID" "$STATE" 2>&1 || true)
     case "$sm_ff_out" in
     *': skipped:'*)
       sm_ff_line=$(first_line "$sm_ff_out")
@@ -4979,7 +4979,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp build_cache model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp build_cache model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects launch_head control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5032,6 +5032,10 @@ preserve_relaunch_meta() {
   if [ "$KIND" = secondmate ]; then
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
+    # The commit this agent's launch surface was read from; the session-start
+    # sweep restarts a live mate whose home later changes that surface
+    # (launch_surface_stale in bin/fm-ff-lib.sh).
+    echo "launch_head=$(git -C "$PROJ_ABS" rev-parse HEAD 2>/dev/null || true)"
   fi
   if [ "$RELAUNCH" -eq 1 ]; then
     preserve_relaunch_meta

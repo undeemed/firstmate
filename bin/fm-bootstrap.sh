@@ -394,7 +394,7 @@ firstmate_origin_sync() {
   # The status line goes through a file, not a command substitution: a subshell
   # would swallow the FF_STATUS and FF_INSTR the branches below read.
   tmp=$(mktemp "${TMPDIR:-/tmp}/fm-firstmate-sync.XXXXXX" 2>/dev/null) || return 0
-  ff_target "$FM_ROOT" "firstmate" origin no no >"$tmp"
+  ff_target "$FM_ROOT" "firstmate" origin no >"$tmp"
   line=$(cat "$tmp")
   rm -f "$tmp"
   case "$FF_STATUS" in
@@ -457,6 +457,7 @@ secondmate_sync() {
   fi
   FF_NUDGE_WINDOWS=""
   FF_SEEN_HOMES=""
+  RELOAD_IDS=""
   SECOND_MATE_NUDGE_MESSAGE=$FM_SECOND_MATE_NUDGE_MESSAGE
   REMOTE_SECOND_MATE_NUDGE_MESSAGE=$FM_REMOTE_SECOND_MATE_NUDGE_MESSAGE
   SECOND_MATE_NUDGE_PENDING_DIR="$STATE/.secondmate-nudge-pending"
@@ -492,6 +493,17 @@ secondmate_sync() {
   fm_ff_after_instruction_update() {
     local id=$1 home=$2 _window=$3 instr=$4
     secondmate_send_nudge "$id" "$home" "$primary_head" "$instr"
+  }
+
+  # A live mate whose agent launched before a change to its harness launch
+  # surface is restarted onto it (secondmate_reload_start). An agent launched
+  # before spawns recorded launch_head ran at best the commit this sweep found.
+  fm_ff_after_secondmate_settled() {  # <id> <home> <window> <status> <instr> <from>
+    local meta="$STATE/$1.meta" launch
+    launch=$(fm_meta_get "$meta" launch_head)
+    if launch_surface_stale "$2" "${launch:-$6}" HEAD "$(fm_meta_get "$meta" harness)"; then
+      RELOAD_IDS="$RELOAD_IDS $1"
+    fi
   }
 
   secondmate_retry_pending_nudges() {
@@ -575,7 +587,7 @@ secondmate_sync() {
     esac
   done < "$tmp"
   rm -f "$tmp"
-  unset -f fm_ff_after_instruction_update
+  unset -f fm_ff_after_instruction_update fm_ff_after_secondmate_settled
   # Inheritance propagation: push the primary-authoritative local inheritance
   # surface into every VALIDATED live secondmate home swept above.
   # FF_SEEN_HOMES is exactly that set, and fm-config-inherit-lib.sh owns the
@@ -684,6 +696,7 @@ secondmate_sync() {
     if sync_out=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh sync "$id" \
       "$primary_head" < /dev/null 2>&1); then
       case "$sync_out" in synced:*) nudge_needed=1 ;; esac
+      case "$sync_out" in *' launch=stale') printf '%s\n' "$id" >>"$reload_remote" ;; esac
     else
       sync_rc=$?
       echo "SECONDMATE_SYNC: secondmate $id: skipped: remote tracked-file sync failed on $remote_host: $(remote_sync_failure_reason "$sync_rc" "$sync_out")"
@@ -723,7 +736,9 @@ secondmate_sync() {
   # authoritative for tracked files, while inherited files come from this
   # primary home; no local path probe or local fast-forward is attempted for
   # either remote surface.
-  local remote_host __fm_timing_stamp parallel=0
+  local remote_host __fm_timing_stamp parallel=0 reload_remote
+  # Remote legs may run in parallel subshells, so each stale id lands in a file.
+  reload_remote=$(mktemp "${TMPDIR:-/tmp}/fm-secondmate-reload.XXXXXX" 2>/dev/null) || reload_remote=/dev/null
   if bootstrap_parallel_begin; then
     parallel=1
   fi
@@ -737,6 +752,10 @@ secondmate_sync() {
     fi
   done < <(live_secondmate_meta_records "$STATE" "$DATA/secondmates.md")
   [ "$parallel" -eq 0 ] || bootstrap_parallel_finish
+  RELOAD_IDS="$RELOAD_IDS $(tr '\n' ' ' <"$reload_remote")"
+  [ "$reload_remote" = /dev/null ] || rm -f "$reload_remote"
+  # shellcheck disable=SC2086 # a word list of validated ids
+  [ -z "${RELOAD_IDS// /}" ] || secondmate_reload_start $RELOAD_IDS
   return 0
 }
 
@@ -748,6 +767,23 @@ secondmate_sync() {
 report_relaunch() {  # <id> <cause> <where>
   [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] || ! local_phase || return 0
   echo "BOOTSTRAP_INFO: secondmate $1 relaunched after $2 ($3)"
+}
+
+# A live mate whose agent started before a change to its harness launch surface
+# (launch_surface_stale in bin/fm-ff-lib.sh) never loads that change on its own,
+# so the sweep replaces it through the persist-then-restart pass /updatefirstmate
+# uses. That pass waits for each mate's persist answer, which comes only once the
+# mate's current turn ends, so it runs detached in its own process group, outside
+# this bounded sweep, and reports a mate it did not restart as a check wake.
+secondmate_reload_start() {  # <id>...
+  local log="$STATE/.secondmate-restart.log" monitor_was_on=0
+  case $- in *m*) monitor_was_on=1 ;; esac
+  set -m 2>/dev/null || true
+  # shellcheck disable=SC2094 # the wake knob only names the log; nothing reads it here
+  FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" FM_SECONDMATE_RESTART_WAKE="$log" \
+    nohup "$SCRIPT_DIR/fm-secondmate-restart.sh" "$@" >>"$log" 2>&1 </dev/null &
+  [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+  echo "BOOTSTRAP_INFO: restarting $* onto changed launch-time code once each answers its persist request (log: $log)"
 }
 
 secondmate_liveness_sweep() {
