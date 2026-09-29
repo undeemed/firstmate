@@ -55,6 +55,25 @@ Both tracked `.omp/extensions/*.ts` files loaded by auto-discovery alone (no `-e
 omp's `session_start` payload carries no reason field, so the adapter derives the source: the first start of the process is `startup` (or `resume` from a `--continue`/`--resume` launch line) and a later in-process start is `clear`; `tests/fm-omp-harness.test.sh` pins that mapping over a fake omp API.
 A file named both by `-e` and by auto-discovery loads twice (two factory calls, doubled `session_stop` continuations), which is why the secondmate launch names no `-e` and the per-task worker extension lives in `state/`.
 
+omp 18.4.2 times out every extension handler after 30 seconds (`EXTENSION_HANDLER_TIMEOUT_MS` in its extension runner), which an unbounded `before_agent_start` wait on a slow first startup exceeded.
+The bounded wait was verified on 2026-09-29 against omp 18.4.2 on Linux x64, in an isolated lab checkout and `HOME` driven by a local deterministic OpenAI-compatible model, with no credential read and no provider call, and a stub digest sleeping 35 seconds.
+
+```sh
+bin/fm-test-run.sh tests/fm-omp-sessionstart-bound-live-e2e.test.sh
+tests/fm-omp-harness.test.sh
+```
+
+Observed output:
+
+```text
+ok - omp/18.4.2 delivers a session-start digest slower than the handler cap once, as a turn, with no handler timeout
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=119826
+ok - .omp turn-end guard: a digest slower than the wait bound releases the handler and is sent exactly once
+```
+
+Against the previous extension, on the same day and host, an earlier revision of this guard that sent a second prompt printed `not ok - omp/18.4.2: the next request carried the slow digest 0 times, not once`, because omp abandoned the timed-out handler's result after the claim had already marked the digest delivered.
+The current guard requires the late digest to start its own turn in the idle session, which `sendMessage` with `triggerTurn` does.
+
 ### Run-tier source vocabulary and context-reset injection
 
 The run tier depends on three facts only the vendor can supply: the session-open source it reports, whether hook stdout reaches model context on a context-RESET open rather than only a cold one, and whether a worker the hook detaches survives the hook returning.

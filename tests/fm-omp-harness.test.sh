@@ -536,6 +536,89 @@ EOF
   pass ".omp turn-end guard: digest delivery, seatbelt block, one compelled continuation, flagged stop stands down"
 }
 
+# omp times out any extension handler after 30s, so a digest slower than the
+# wait bound must release the handler and still arrive exactly once.
+test_turnend_guard_extension_bounds_a_slow_digest() {
+  local repo home out status
+  repo="$TMP_ROOT/slow-digest/repo"; home="$TMP_ROOT/slow-digest/home"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/bin/fm-turnend-guard.sh"
+  # shellcheck disable=SC2016 # expands in the generated script
+  printf '#!/usr/bin/env bash\nd=$(cat "$FM_HOME/state/delay")\nsleep "$d"\nprintf "OMP DIGEST source=%%s delay=%%s\\n" "$2" "$d"\n' > "$repo/bin/fm-sessionstart-run.sh"
+  chmod +x "$repo/bin/"*.sh
+  out=$(FM_HOME="$home" FM_OMP_SESSIONSTART_WAIT_MS=200 EXT="$repo/.omp/extensions/fm-primary-turnend-guard.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync } from "node:fs";
+const handlers = new Map();
+const sent = [];
+const pi = { on(e, h) { handlers.set(e, h); }, sendMessage(m) { sent.push(m.content); } };
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const ctx = { sessionManager: { getSessionId: () => "s1" } };
+const delay = (s) => writeFileSync(`${process.env.FM_HOME}/state/delay`, `${s}\n`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const timed = async (name, event, limitMs = 1000) => {
+  const started = Date.now();
+  const result = await handlers.get(name)(event, ctx);
+  if (Date.now() - started > limitMs) throw new Error(`${name} blocked past ${limitMs}ms`);
+  return result;
+};
+const waitSent = async (n) => { for (let i = 0; i < 50 && sent.length < n; i += 1) await sleep(100); };
+
+// Slower than the bound: the handler returns bare, the digest follows once.
+delay(1.5);
+handlers.get("session_start")({ type: "session_start" }, ctx);
+if ((await timed("before_agent_start", { prompt: "hi" })) !== undefined) throw new Error("slow digest was injected");
+if ((await timed("before_agent_start", { prompt: "again" }, 100)) !== undefined) throw new Error("second slow wait was injected");
+await waitSent(1);
+await sleep(300);
+if (sent.length !== 1 || !sent[0].includes("OMP DIGEST source=startup")) throw new Error(`slow startup delivered ${JSON.stringify(sent)}`);
+if ((await timed("before_agent_start", { prompt: "later" })) !== undefined) throw new Error("slow digest was delivered twice");
+
+// A replacement supersedes a pending slow digest; only the successor lands,
+// injected or sent depending on how fast its own run is.
+handlers.get("session_start")({ type: "session_start" }, ctx);
+await timed("before_agent_start", { prompt: "pending" });
+delay(0);
+handlers.get("session_start")({ type: "session_start" }, ctx);
+const fresh = await timed("before_agent_start", { prompt: "fresh" });
+await sleep(2500);
+const clears = [fresh?.message?.content, ...sent.slice(1)].filter(Boolean);
+if (clears.length !== 1 || !clears[0].includes("source=clear delay=0")) throw new Error(`replacement delivered ${JSON.stringify(clears)}`);
+sent.splice(1);
+
+// Slow compaction releases its handler and still sends once.
+delay(1);
+await timed("session_compact", {});
+await waitSent(2);
+await sleep(300);
+if (sent.length !== 2 || !sent[1].includes("source=compact")) throw new Error(`slow compaction delivered ${JSON.stringify(sent)}`);
+
+// Shutdown drops a pending slow digest.
+delay(1);
+handlers.get("session_start")({ type: "session_start" }, ctx);
+await timed("before_agent_start", { prompt: "doomed" });
+await handlers.get("session_shutdown")({}, ctx);
+await sleep(1500);
+if (sent.length !== 2) throw new Error(`shut-down digest was delivered: ${JSON.stringify(sent)}`);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp slow session-start digest: $out"
+  [ -z "$out" ] || fail "omp slow digest test printed output: $out"
+  out=$(FM_HOME="$home" FM_OMP_SESSIONSTART_WAIT_MS=40000 EXT="$repo/.omp/extensions/fm-primary-turnend-guard.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.env.EXT).href);
+if (mod.sessionstartInjectWaitMs !== 20000) throw new Error(`oversized wait override was used: ${mod.sessionstartInjectWaitMs}`);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp oversized session-start wait override: $out"
+  [ -z "$out" ] || fail "omp oversized wait override test printed output: $out"
+  pass ".omp turn-end guard: a digest slower than the wait bound releases the handler and is sent exactly once"
+}
+
 test_watch_extension_arms_and_delivers() {
   local repo home out status
   repo="$TMP_ROOT/watch/repo"; home="$TMP_ROOT/watch/home"
@@ -880,6 +963,7 @@ test_busy_extension_lifecycle
 test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation
+test_turnend_guard_extension_bounds_a_slow_digest
 test_watch_extension_arms_and_delivers
 test_watch_extension_delivers_by_session_state
 test_watch_extension_runs_the_supervision_host
