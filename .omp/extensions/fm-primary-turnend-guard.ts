@@ -124,7 +124,14 @@ const sessionstartManualFallback =
   "Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions.";
 const sessionstartIneligibleExit = 3;
 const sessionstartRetireTimeoutMs = 1000;
-const sessionstartInjectWaitMs = Number(process.env.FM_OMP_SESSIONSTART_WAIT_MS) || 20000;
+const sessionstartDefaultInjectWaitMs = 20000;
+const sessionstartWaitOverride = Number(process.env.FM_OMP_SESSIONSTART_WAIT_MS);
+export const sessionstartInjectWaitMs =
+  Number.isInteger(sessionstartWaitOverride) &&
+  sessionstartWaitOverride > 0 &&
+  sessionstartWaitOverride <= sessionstartDefaultInjectWaitMs
+    ? sessionstartWaitOverride
+    : sessionstartDefaultInjectWaitMs;
 
 // One active generation owns native startup from child launch through context
 // claim. Replacement activates first, serially retires every predecessor, and

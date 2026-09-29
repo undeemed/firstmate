@@ -607,6 +607,15 @@ EOF
   status=$?
   expect_code 0 "$status" "omp slow session-start digest: $out"
   [ -z "$out" ] || fail "omp slow digest test printed output: $out"
+  out=$(FM_HOME="$home" FM_OMP_SESSIONSTART_WAIT_MS=40000 EXT="$repo/.omp/extensions/fm-primary-turnend-guard.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.env.EXT).href);
+if (mod.sessionstartInjectWaitMs !== 20000) throw new Error(`oversized wait override was used: ${mod.sessionstartInjectWaitMs}`);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp oversized session-start wait override: $out"
+  [ -z "$out" ] || fail "omp oversized wait override test printed output: $out"
   pass ".omp turn-end guard: a digest slower than the wait bound releases the handler and is sent exactly once"
 }
 
